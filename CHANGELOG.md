@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.67.1 - 2026-05-19
+
+### Performance
+
+- **Incremental delta processing**: EventProcessor now tracks fragment counts and only processes new fragments per animation frame, replacing the previous approach of re-concatenating and re-parsing the entire accumulated buffer on every frame. Eliminates O(N²) cumulative work during long streaming responses.
+- **Skip redundant JSON.parse during streaming**: Tool parameter deltas no longer attempt JSON.parse on incomplete JSON every frame. The command preview is extracted once via regex and cached; full parsing deferred to tool execution start where it already existed.
+
+### Fixes
+
+- **Generation shelf on foreground tasks**: Completed tasks are now removed from the generation task map when the user is viewing the project, preventing the shelf from showing stale "done" cards after navigating away and back.
+
 ## v1.67.0 - 2026-05-18
 
 ### Server-Side Generation (Server Mode)

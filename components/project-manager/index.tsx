@@ -352,7 +352,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
             return;
           }
         }
-      } catch {}
+      } catch (e) { logger.warn('[ProjectManager] Quota check failed:', e); }
     }
 
     try {

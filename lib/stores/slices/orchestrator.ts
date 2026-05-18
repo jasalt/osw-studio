@@ -58,6 +58,10 @@ function flushSave(projectId: string, events: DebugEvent[]) {
   });
 }
 
+function isTabVisible(): boolean {
+  return typeof document !== 'undefined' && !document.hidden;
+}
+
 function deriveScalarFields(tasks: Map<string, GenerationTask>, viewedProjectId: string) {
   const viewedTask = tasks.get(viewedProjectId);
   return {
@@ -489,17 +493,19 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           api_error_count: result.apiErrorCount ?? 0,
         });
 
+        const isForeground = isTabVisible() && get().projectId === projectId;
         const successTasks = new Map(get().generationTasks);
-        const successTask = successTasks.get(projectId);
-        if (successTask) {
-          successTasks.set(projectId, { ...successTask, result: 'completed' });
-          set({ generationTasks: successTasks, ...deriveScalarFields(successTasks, get().projectId) });
-        }
-        if (document.hidden || get().projectId !== projectId) {
-          playTaskCompleteSound();
+        if (isForeground) {
+          successTasks.delete(projectId);
         } else {
-          playTaskCompleteSoundSubtle();
+          const successTask = successTasks.get(projectId);
+          if (successTask) {
+            successTasks.set(projectId, { ...successTask, result: 'completed' });
+          }
+          playTaskCompleteSound();
         }
+        set({ generationTasks: successTasks, ...deriveScalarFields(successTasks, get().projectId) });
+        if (isForeground) playTaskCompleteSoundSubtle();
         toast.success('Task completed');
       } else {
         track('task_fail', {
@@ -509,12 +515,17 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           api_error_count: result.apiErrorCount ?? 0,
         });
 
+        const failForeground = isTabVisible() && get().projectId === projectId;
         const failTasks = new Map(get().generationTasks);
-        const failTask = failTasks.get(projectId);
-        if (failTask) {
-          failTasks.set(projectId, { ...failTask, result: 'failed' });
-          set({ generationTasks: failTasks, ...deriveScalarFields(failTasks, get().projectId) });
+        if (failForeground) {
+          failTasks.delete(projectId);
+        } else {
+          const failTask = failTasks.get(projectId);
+          if (failTask) {
+            failTasks.set(projectId, { ...failTask, result: 'failed' });
+          }
         }
+        set({ generationTasks: failTasks, ...deriveScalarFields(failTasks, get().projectId) });
         toast.error(result.summary || 'Generation failed', { duration: 5000, position: 'bottom-center' });
       }
     } catch (error) {
@@ -525,12 +536,17 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
         duration_ms: Date.now() - taskStartTime, task_id: taskId,
       });
 
+      const errorForeground = isTabVisible() && get().projectId === projectId;
       const errorTasks = new Map(get().generationTasks);
-      const errorTask = errorTasks.get(projectId);
-      if (errorTask) {
-        errorTasks.set(projectId, { ...errorTask, result: 'failed' });
-        set({ generationTasks: errorTasks, ...deriveScalarFields(errorTasks, get().projectId) });
+      if (errorForeground) {
+        errorTasks.delete(projectId);
+      } else {
+        const errorTask = errorTasks.get(projectId);
+        if (errorTask) {
+          errorTasks.set(projectId, { ...errorTask, result: 'failed' });
+        }
       }
+      set({ generationTasks: errorTasks, ...deriveScalarFields(errorTasks, get().projectId) });
       get().addDebugEvent('error', { message: errorMessage }, projectId);
       toast.error(errorMessage, { duration: 5000, position: 'bottom-center' });
     } finally {
@@ -549,6 +565,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       } else {
         flushSave(projectId, get().debugEvents);
       }
+      backgroundEventsMap.delete(projectId);
 
       if (typeof globalThis.dispatchEvent === 'function') {
         globalThis.dispatchEvent(new CustomEvent('generationStateChanged', { detail: { generating: false, projectId } }));
@@ -714,11 +731,16 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
             const result = data.result === 'success' || data.result === 'stopped'
               ? 'completed' as const
               : 'failed' as const;
-            tasks.set(task.projectId, { ...task, result, orchestratorInstance: null });
+            const serverForeground = isTabVisible() && get().projectId === projectId;
+            if (serverForeground) {
+              tasks.delete(task.projectId);
+            } else {
+              tasks.set(task.projectId, { ...task, result, orchestratorInstance: null });
+            }
             set({ generationTasks: tasks, ...deriveScalarFields(tasks, get().projectId) });
             if (result === 'completed') {
               if (data.result !== 'stopped') {
-                if (document.hidden || get().projectId !== projectId) {
+                if (!serverForeground) {
                   playTaskCompleteSound();
                 } else {
                   playTaskCompleteSoundSubtle();

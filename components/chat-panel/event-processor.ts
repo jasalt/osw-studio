@@ -35,6 +35,11 @@ export interface Turn {
   taskStartTime?: number;
 }
 
+interface DeltaAccum {
+  text: string;
+  fragmentCount: number;
+}
+
 interface ProcessorState {
   result: Turn[];
   currentTurn: Turn;
@@ -43,6 +48,9 @@ interface ProcessorState {
   taskStartTime: number;
   prevTaskCumulativeTokens: number;
   prevTaskCumulativeCost: number;
+  textAccum: Map<string, DeltaAccum>;
+  toolParamAccum: Map<string, DeltaAccum>;
+  toolCmdCache: Map<string, string | null>;
 }
 
 function extractPartialCmd(raw: string): string | null {
@@ -80,6 +88,9 @@ function freshState(): ProcessorState {
     taskStartTime: 0,
     prevTaskCumulativeTokens: 0,
     prevTaskCumulativeCost: 0,
+    textAccum: new Map(),
+    toolParamAccum: new Map(),
+    toolCmdCache: new Map(),
   };
 }
 
@@ -171,24 +182,28 @@ export class EventProcessor {
           break;
 
         case 'reasoning_delta': {
-          const reasoningDeltaItems = event.data?.all || [event.data];
-          const allReasoningText = reasoningDeltaItems.map((d: any) => d?.text || '').join('');
-          const trimmedReasoningText = allReasoningText.trim();
-          if (!trimmedReasoningText) {
+          const reasoningItems = event.data?.all || [event.data];
+          const accum = state.textAccum.get(event.id) || { text: '', fragmentCount: 0 };
+          for (let i = accum.fragmentCount; i < reasoningItems.length; i++) {
+            accum.text += reasoningItems[i]?.text || '';
+          }
+          accum.fragmentCount = reasoningItems.length;
+          state.textAccum.set(event.id, accum);
+          if (!accum.text.trim()) {
             state.currentTurn.items = state.currentTurn.items.filter(item => item.type !== 'waiting');
             break;
           }
-          let matchingReasoningItem = state.currentTurn.items.find(
+          const matchingReasoningItem = state.currentTurn.items.find(
             item => item.type === 'reasoning' && item.eventId === event.id
           );
           if (matchingReasoningItem) {
-            matchingReasoningItem.data = allReasoningText;
+            matchingReasoningItem.data = accum.text;
           } else {
             state.currentTurn.items.push({
               id: `item-${state.itemIdCounter++}`,
               type: 'reasoning',
               timestamp: event.timestamp,
-              data: allReasoningText,
+              data: accum.text,
               eventId: event.id,
             });
           }
@@ -268,23 +283,33 @@ export class EventProcessor {
 
         case 'tool_param_delta': {
           const paramDeltaItems = event.data?.all || [event.data];
-          const fragmentsByTool = new Map<string, string>();
-          for (const paramDelta of paramDeltaItems) {
-            const { toolId, fragment, partialArguments } = paramDelta || {};
+          const globalAccum = state.textAccum.get(event.id) || { text: '', fragmentCount: 0 };
+          const seenTools = new Set<string>();
+          for (let i = globalAccum.fragmentCount; i < paramDeltaItems.length; i++) {
+            const { toolId, fragment, partialArguments } = paramDeltaItems[i] || {};
             if (!toolId) continue;
-            const text = fragment ?? partialArguments ?? '';
-            fragmentsByTool.set(toolId, (fragmentsByTool.get(toolId) || '') + text);
+            const accum = state.toolParamAccum.get(toolId) || { text: '', fragmentCount: 0 };
+            accum.text += fragment ?? partialArguments ?? '';
+            accum.fragmentCount++;
+            seenTools.add(toolId);
+            state.toolParamAccum.set(toolId, accum);
           }
-          for (const [toolId, cumulative] of fragmentsByTool) {
+          globalAccum.fragmentCount = paramDeltaItems.length;
+          state.textAccum.set(event.id, globalAccum);
+          for (const toolId of seenTools) {
+            const accum = state.toolParamAccum.get(toolId)!;
             const toolItem = state.currentTurn.items.find(
               item => item.type === 'tool' && (item.data as ToolCall)?.id === toolId
             );
             if (toolItem) {
               const tool = toolItem.data as ToolCall;
-              try { tool.parameters = JSON.parse(cumulative); } catch {
-                const partialCmd = extractPartialCmd(cumulative);
-                tool.parameters = partialCmd !== null ? { cmd: partialCmd, _raw: cumulative } : { _raw: cumulative };
+              if (!state.toolCmdCache.has(toolId)) {
+                state.toolCmdCache.set(toolId, extractPartialCmd(accum.text));
               }
+              const cachedCmd = state.toolCmdCache.get(toolId);
+              tool.parameters = cachedCmd !== null && cachedCmd !== undefined
+                ? { cmd: cachedCmd, _raw: accum.text }
+                : { _raw: accum.text };
             }
           }
           break;
@@ -295,19 +320,24 @@ export class EventProcessor {
             if (item.type === 'reasoning') item.complete = true;
           });
           const deltaItems = event.data?.all || [event.data];
-          let matchingTextItem = state.currentTurn.items.find(
-            item => item.type === 'text' && item.eventId === event.id
-          );
-          const allText = deltaItems.map((d: any) => d?.text || '').join('');
-          if (allText.trim()) {
+          const accum = state.textAccum.get(event.id) || { text: '', fragmentCount: 0 };
+          for (let i = accum.fragmentCount; i < deltaItems.length; i++) {
+            accum.text += deltaItems[i]?.text || '';
+          }
+          accum.fragmentCount = deltaItems.length;
+          state.textAccum.set(event.id, accum);
+          if (accum.text.trim()) {
+            const matchingTextItem = state.currentTurn.items.find(
+              item => item.type === 'text' && item.eventId === event.id
+            );
             if (matchingTextItem) {
-              matchingTextItem.data = allText;
+              matchingTextItem.data = accum.text;
             } else {
               state.currentTurn.items.push({
                 id: `item-${state.itemIdCounter++}`,
                 type: 'text',
                 timestamp: event.timestamp,
-                data: allText,
+                data: accum.text,
                 eventId: event.id,
               });
             }
