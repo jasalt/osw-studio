@@ -186,6 +186,16 @@ export interface ConversationNode {
   };
 }
 
+export interface ContextBreakdown {
+  systemPromptChars: number;
+  userMessageChars: number;
+  assistantTextChars: number;
+  toolCallArgChars: number;
+  toolResultChars: number;
+  reasoningChars: number;
+  totalChars: number;
+}
+
 export interface MultiAgentResult {
   success: boolean;
   summary: string;
@@ -199,6 +209,8 @@ export interface MultiAgentResult {
   turnCount?: number;
   /** Telemetry: number of API errors encountered (including retried ones) */
   apiErrorCount?: number;
+  /** Per-API-call context breakdown snapshots (last value = final state before last call) */
+  contextBreakdowns?: ContextBreakdown[];
 }
 
 /**
@@ -245,6 +257,7 @@ export class MultiAgentOrchestrator {
   private turnCount = 0; // Telemetry: total LLM turns completed
   private apiErrorCount = 0; // Telemetry: total API errors encountered
   private serverContext: ServerOrchestratorContext | null = null;
+  private contextBreakdowns: ContextBreakdown[] = [];
 
   /** Check if the current model supports native tool/function calling */
   private checkModelSupportsTools(): boolean {
@@ -571,6 +584,7 @@ export class MultiAgentOrchestrator {
         toolCount: this.toolCallCount,
         turnCount: this.turnCount,
         apiErrorCount: this.apiErrorCount,
+        contextBreakdowns: this.contextBreakdowns.length > 0 ? this.contextBreakdowns : undefined,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -596,6 +610,7 @@ export class MultiAgentOrchestrator {
         toolCount: this.toolCallCount,
         turnCount: this.turnCount,
         apiErrorCount: this.apiErrorCount,
+        contextBreakdowns: this.contextBreakdowns.length > 0 ? this.contextBreakdowns : undefined,
       };
     }
   }
@@ -1404,18 +1419,22 @@ export class MultiAgentOrchestrator {
           'ls', 'tree', 'cat', 'head', 'tail', 'rg', 'grep', 'find',
           'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'sed', 'ss', 'wc',
           'sort', 'uniq', 'tr', 'curl', 'sqlite3', 'python', 'python3',
-          'lua', 'preview', 'build', 'status', 'delegate', 'runtime'
+          'lua', 'preview', 'build', 'status', 'delegate', 'runtime',
+          'ask',
         ]);
+        const setupOnlyCommands = new Set(['brief', 'spec', 'propose-create']);
+        const isSetupCommand = setupOnlyCommands.has(toolId);
+        const isShellCommand = knownShellCommands.has(toolId) || (isSetupCommand && agent.type === 'setup');
         let errorMsg: string;
         if (toolId === 'ss') {
-          // ss is a very common misfire — give a concrete example
           errorMsg = `Error: "ss" is not a tool — it is a shell command. Call it via the shell tool:\n\n  shell({ cmd: "ss /file << 'EOF'\\nsearch text\\n===\\nreplacement text\\nEOF" })`;
-        } else if (knownShellCommands.has(toolId)) {
-          // Model hallucinated a shell command as a tool name
+        } else if (isShellCommand) {
           errorMsg = `Error: "${toolId}" is not a tool — it is a shell command. Use the shell tool to run it:\n\n  shell({ cmd: "${toolId} ..." })`;
         } else {
-          // Completely unknown tool — list available tools and commands
-          errorMsg = `Error: Unknown tool "${toolId}". Available tools: shell.\n\nThe shell tool supports these commands: ls, tree, cat, head, tail, rg, grep, find, mkdir, touch, rm, mv, cp, echo, sed, ss, wc, sort, uniq, tr, curl, sqlite3, python, python3, lua, preview, build, status`;
+          const commandList = agent.type === 'setup'
+            ? 'brief, spec, ask, propose-create'
+            : 'ls, tree, cat, head, tail, rg, grep, find, mkdir, touch, rm, mv, cp, echo, sed, ss, wc, sort, uniq, tr, curl, sqlite3, python, python3, lua, preview, build, status';
+          errorMsg = `Error: Unknown tool "${toolId}". Available tools: shell.\n\nThe shell tool supports these commands: ${commandList}`;
         }
         results.push({
           role: 'tool',
@@ -1728,6 +1747,10 @@ Please revise your approach.`;
     // Check if reasoning is enabled for this model
     const reasoningEnabled = this.getConfig().getReasoningEnabled(model);
 
+    const breakdown = this.measureContextBreakdown(sanitizedMessages);
+    this.contextBreakdowns.push(breakdown);
+    this.onProgress?.('context_breakdown', breakdown);
+
     const requestBody = {
       messages: sanitizedMessages,
       apiKey,
@@ -1927,6 +1950,51 @@ DO NOT use ss with << 'EOF' blocks. Try again with sed or simpler commands.`
     });
 
     return checkpoint;
+  }
+
+  private measureContextBreakdown(messages: AgentMessage[]): ContextBreakdown {
+    let systemPromptChars = 0;
+    let userMessageChars = 0;
+    let assistantTextChars = 0;
+    let toolCallArgChars = 0;
+    let toolResultChars = 0;
+    let reasoningChars = 0;
+
+    for (const msg of messages) {
+      const contentLen = typeof msg.content === 'string'
+        ? msg.content.length
+        : JSON.stringify(msg.content).length;
+
+      switch (msg.role) {
+        case 'system':
+          systemPromptChars += contentLen;
+          break;
+        case 'user':
+          userMessageChars += contentLen;
+          break;
+        case 'assistant':
+          assistantTextChars += contentLen;
+          if (msg.tool_calls) {
+            for (const tc of msg.tool_calls) {
+              toolCallArgChars += (tc.function.arguments || '').length;
+            }
+          }
+          if (msg.reasoning_details) {
+            for (const rd of msg.reasoning_details) {
+              reasoningChars += (rd.text || '').length + (rd.signature || '').length;
+            }
+          }
+          break;
+        case 'tool':
+          toolResultChars += contentLen;
+          break;
+      }
+    }
+
+    const totalChars = systemPromptChars + userMessageChars + assistantTextChars
+      + toolCallArgChars + toolResultChars + reasoningChars;
+
+    return { systemPromptChars, userMessageChars, assistantTextChars, toolCallArgChars, toolResultChars, reasoningChars, totalChars };
   }
 
   /**
@@ -2345,6 +2413,16 @@ DO NOT use ss with << 'EOF' blocks. Try again with sed or simpler commands.`
       const usage = result.usage;
       if (!usage.provider) usage.provider = provider;
       if (!usage.model) usage.model = model;
+
+      // Use actual cost from OpenRouter response header when available
+      const reportedCost = response.headers.get('x-openrouter-cost');
+      if (reportedCost) {
+        const parsed = parseFloat(reportedCost);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          usage.cost = parsed;
+          usage.isEstimated = false;
+        }
+      }
 
       const cost = CostCalculator.calculateCost(usage, provider, model, true);
       usage.cost = cost;

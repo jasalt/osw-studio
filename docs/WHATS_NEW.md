@@ -6,6 +6,23 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.68.0 - Accurate Cost Tracking (2026-05-23)
+
+Cost tracking now uses actual costs reported by providers instead of estimates from static pricing tables. Models that were previously off by 3–4x (like MiniMax) now show correct costs. The AI also recovers better from chained file write errors — when one write in a batch fails, the model knows which writes succeeded.
+
+### Cost Tracking
+- **Accurate provider costs** — Reads actual cost from OpenRouter responses instead of computing from static pricing. Unknown models report $0 instead of fabricated estimates
+
+### AI Orchestration
+- **Chained heredoc error reporting** — When multiple file writes are chained and one fails, the error now reports which writes succeeded
+- **Fixed streaming parser** — Tool call arguments are no longer silently lost when a provider omits the tool index on subsequent chunks
+
+### Benchmark
+- **Test sequences** — Multiple test steps run on a single agent session, reducing token cost and setup overhead. 12 sequences replace 62 standalone tests
+- **Parallel execution** — Tests run concurrently with configurable concurrency (1–8)
+
+---
+
 ## v1.67.0 - Server-Side Generation (2026-05-18)
 
 In Server Mode, AI generation tasks now continue on the server if you close your browser tab. Reopen the tab and the completed work is already there. File changes sync back incrementally after each tool call.

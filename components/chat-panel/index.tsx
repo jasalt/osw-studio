@@ -1043,8 +1043,8 @@ interface ReasoningDisplayProps {
 
 function ReasoningDisplay({ content, isComplete, isExpanded, onToggle }: ReasoningDisplayProps) {
   const lines = (content || '').split('\n').filter(l => l.trim());
-  const headPreview = lines[0]?.substring(0, 60) || 'Reasoning...';
-  const tailPreview = lines.length > 0 ? lines[lines.length - 1].slice(-120) : '';
+  const headPreview = lines.join(' ').substring(0, 80) || 'Reasoning...';
+  const tailPreview = lines.length > 0 ? lines.slice(-3).join(' ').slice(-120) : '';
   const isStreaming = !isComplete;
   const streamingLabel = tailPreview || 'Thinking...';
 

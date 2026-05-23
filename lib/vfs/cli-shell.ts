@@ -22,13 +22,11 @@ type ShellResult = {
   exitReason?: string;
 };
 
-const TRUNCATE_CHARS = 100000;
+const TRUNCATE_CHARS = 100_000;
 
 function truncate(out: string): string {
-  if (out.length > TRUNCATE_CHARS) {
-    return out.slice(0, TRUNCATE_CHARS) + "\n… [truncated]";
-  }
-  return out;
+  if (out.length <= TRUNCATE_CHARS) return out;
+  return out.slice(0, TRUNCATE_CHARS) + `\n\n… [${out.length - TRUNCATE_CHARS} chars truncated] …`;
 }
 
 function normalizePath(p?: string): string | undefined {
@@ -1115,6 +1113,12 @@ async function vfsShellExecuteSingle(
 
           if (path.startsWith('/-')) {
             errorMessages.push(`cat: invalid path "${path}" (looks like an option)`);
+            hadError = true;
+            continue;
+          }
+
+          if (path === '/<<' || path?.startsWith('/<<') || path === '<<' || path?.startsWith('<<')) {
+            errorMessages.push(`cat: heredoc syntax error — the << operator was not parsed correctly. Write each file in a separate tool call instead of chaining multiple heredocs.`);
             hadError = true;
             continue;
           }

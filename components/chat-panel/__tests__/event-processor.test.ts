@@ -315,31 +315,20 @@ describe('EventProcessor', () => {
     });
   });
 
-  describe('assistant text and tool calls', () => {
-    it('processes assistant_delta into text items', () => {
-      const events = [
-        userMsg('hi'),
-        evt('assistant_delta', { text: 'Hello!' }),
-      ];
-      const turns = proc.process(events);
-      expect(turns[0].items.some(i => i.type === 'text' && i.data === 'Hello!')).toBe(true);
-    });
-
-    it('processes toolCalls and tool_status', () => {
-      const events = [
-        userMsg('list files'),
-        evt('toolCalls', {
-          toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '{"cmd":"ls /"}' } }],
-        }),
-        evt('tool_status', { toolIndex: 0, status: 'executing' }),
-        evt('tool_status', { toolIndex: 0, status: 'completed', result: 'index.html\nstyles.css' }),
-      ];
-      const turns = proc.process(events);
-      const toolItems = turns[0].items.filter(i => i.type === 'tool');
-      expect(toolItems).toHaveLength(1);
-      expect(toolItems[0].data.status).toBe('completed');
-      expect(toolItems[0].data.parameters.cmd).toBe('ls /');
-    });
+  it('processes toolCalls and tool_status', () => {
+    const events = [
+      userMsg('list files'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '{"cmd":"ls /"}' } }],
+      }),
+      evt('tool_status', { toolIndex: 0, status: 'executing' }),
+      evt('tool_status', { toolIndex: 0, status: 'completed', result: 'index.html\nstyles.css' }),
+    ];
+    const turns = proc.process(events);
+    const toolItems = turns[0].items.filter(i => i.type === 'tool');
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0].data.status).toBe('completed');
+    expect(toolItems[0].data.parameters.cmd).toBe('ls /');
   });
 
   describe('edge cases', () => {
@@ -428,5 +417,174 @@ describe('classifyShellCommand', () => {
   it('handles array input', () => {
     expect(classifyShellCommand(['delegate', 'task', '"prompt"'])).toBe('delegate');
     expect(classifyShellCommand(['ls', '-la'])).toBe('shell');
+  });
+});
+
+describe('reasoning accumulation', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('accumulates multiple reasoning deltas into one item', () => {
+    const id = 'r1';
+    const events = [
+      userMsg('hello'),
+      evt('reasoning_delta', { text: 'First ' }, { id }),
+      evt('reasoning_delta', { all: [{ text: 'First ' }, { text: 'second ' }] }, { id }),
+      evt('reasoning_delta', { all: [{ text: 'First ' }, { text: 'second ' }, { text: 'third' }] }, { id }),
+    ];
+    const turns = proc.process(events);
+    const reasoning = turns[0].items.find(i => i.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    expect(reasoning!.data).toBe('First second third');
+  });
+
+  it('marks reasoning complete on reasoning_complete event', () => {
+    const id = 'r2';
+    const events = [
+      userMsg('hello'),
+      evt('reasoning_delta', { text: 'thinking' }, { id }),
+      evt('reasoning_complete', { reasoning: 'thinking' }),
+    ];
+    const turns = proc.process(events);
+    const reasoning = turns[0].items.find(i => i.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    expect(reasoning!.complete).toBe(true);
+  });
+
+  it('marks reasoning complete when toolCalls arrive', () => {
+    const id = 'r3';
+    const events = [
+      userMsg('hello'),
+      evt('reasoning_delta', { text: 'analyzing' }, { id }),
+      evt('toolCalls', { toolCalls: [{ id: 'tc1', function: { name: 'shell', arguments: '{"cmd":"ls"}' } }] }),
+    ];
+    const turns = proc.process(events);
+    const reasoning = turns[0].items.find(i => i.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    expect(reasoning!.complete).toBe(true);
+  });
+
+  it('skips reasoning item when text is only whitespace', () => {
+    const events = [
+      userMsg('hello'),
+      evt('waiting'),
+      evt('reasoning_delta', { text: '   \n  ' }),
+    ];
+    const turns = proc.process(events);
+    expect(turns[0].items.some(i => i.type === 'reasoning')).toBe(false);
+    expect(turns[0].items.some(i => i.type === 'waiting')).toBe(false);
+  });
+});
+
+describe('tool_param_delta accumulation', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('accumulates fragments into tool parameters with raw text', () => {
+    const id = 'pd1';
+    const events = [
+      userMsg('list files'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '' } }],
+      }),
+      evt('tool_param_delta', { toolId: 'tc-1', fragment: '{"cmd":"ls /' }, { id }),
+      evt('tool_param_delta', { all: [
+        { toolId: 'tc-1', fragment: '{"cmd":"ls /' },
+        { toolId: 'tc-1', fragment: '"}' },
+      ] }, { id }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem).toBeDefined();
+    expect(toolItem!.data.parameters.cmd).toBe('ls /');
+    expect(toolItem!.data.parameters._raw).toBe('{"cmd":"ls /"}');
+  });
+
+  it('handles multiple tools interleaved in one event stream', () => {
+    const id = 'pd2';
+    const events = [
+      userMsg('do stuff'),
+      evt('toolCalls', {
+        toolCalls: [
+          { id: 'tc-a', function: { name: 'shell', arguments: '' } },
+          { id: 'tc-b', function: { name: 'shell', arguments: '' } },
+        ],
+      }),
+      evt('tool_param_delta', { toolId: 'tc-a', fragment: '{"cmd":"ls"}' }, { id }),
+      evt('tool_param_delta', { all: [
+        { toolId: 'tc-a', fragment: '{"cmd":"ls"}' },
+        { toolId: 'tc-b', fragment: '{"cmd":"pwd"}' },
+      ] }, { id }),
+    ];
+    const turns = proc.process(events);
+    const tools = turns[0].items.filter(i => i.type === 'tool');
+    expect(tools).toHaveLength(2);
+    expect(tools[0].data.parameters.cmd).toBe('ls');
+    expect(tools[1].data.parameters.cmd).toBe('pwd');
+  });
+
+  it('caches cmd extraction from first fragment', () => {
+    const id = 'pd3';
+    const events = [
+      userMsg('write file'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '' } }],
+      }),
+      evt('tool_param_delta', { toolId: 'tc-1', fragment: '{"cmd":"cat > /f' }, { id }),
+      evt('tool_param_delta', { all: [
+        { toolId: 'tc-1', fragment: '{"cmd":"cat > /f' },
+        { toolId: 'tc-1', fragment: 'ile.txt"}' },
+      ] }, { id }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    // cmd is cached from first fragment (partial match "cat > /f"), not re-parsed
+    expect(toolItem!.data.parameters.cmd).toBe('cat > /f');
+    // _raw has full accumulated text
+    expect(toolItem!.data.parameters._raw).toBe('{"cmd":"cat > /file.txt"}');
+  });
+});
+
+describe('assistant_delta accumulation', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('accumulates multiple assistant deltas into one text item', () => {
+    const id = 'ad1';
+    const events = [
+      userMsg('hi'),
+      evt('assistant_delta', { text: 'Hello' }, { id }),
+      evt('assistant_delta', { all: [{ text: 'Hello' }, { text: ' world' }] }, { id }),
+      evt('assistant_delta', { all: [{ text: 'Hello' }, { text: ' world' }, { text: '!' }] }, { id }),
+    ];
+    const turns = proc.process(events);
+    const textItems = turns[0].items.filter(i => i.type === 'text');
+    expect(textItems).toHaveLength(1);
+    expect(textItems[0].data).toBe('Hello world!');
+  });
+
+  it('marks reasoning complete when assistant_delta arrives', () => {
+    const rid = 'r-ad';
+    const aid = 'a-ad';
+    const events = [
+      userMsg('hi'),
+      evt('reasoning_delta', { text: 'thinking...' }, { id: rid }),
+      evt('assistant_delta', { text: 'Here is my answer' }, { id: aid }),
+    ];
+    const turns = proc.process(events);
+    const reasoning = turns[0].items.find(i => i.type === 'reasoning');
+    expect(reasoning!.complete).toBe(true);
   });
 });

@@ -10,17 +10,9 @@ description: Read when starting new projects. Covers the full workflow — readi
 
 # Project Workflow
 
-How to plan and build complete projects efficiently. This covers the full lifecycle from reading the brief to final polish. Runtime-specific guidance (file structure, imports, component patterns) lives in .PROMPT.md — read it before anything else.
+How to plan and build complete projects efficiently. This covers the full lifecycle from planning to final polish. Runtime-specific guidance (file structure, imports, component patterns) is already in your system prompt via .PROMPT.md — you don't need to read it separately.
 
-## Step 1: Read the Brief
-
-Before writing any code:
-${"```"}bash
-cat /.PROMPT.md
-${"```"}
-This tells you the runtime's file structure, component patterns, and import rules. Your entire plan must follow these constraints.
-
-## Step 2: Explore the Project
+## Step 1: Explore the Project
 
 Understand what exists before creating anything:
 ${"```"}bash
@@ -28,7 +20,7 @@ tree -L 2 /
 ${"```"}
 Check for existing files, templates, and structure. Don't recreate files that already exist.
 
-## Step 3: Create PLAN.md
+## Step 2: Create PLAN.md
 
 **Always create ${"```"}/PLAN.md${"```"} before writing code.** This is the project roadmap:
 
@@ -122,7 +114,7 @@ ${"```"}
 
 ## Visible Progress First
 
-The user sees a live preview that updates as you write files — **you cannot see it**. You are blind to the rendered output. ${"```"}curl localhost/${"```"} returns raw HTML, which tells you nothing about whether a visual project (game, animation, styled layout) renders correctly.
+The user sees a live preview that updates as you write files. Use ${"```"}curl localhost/[path]${"```"} to fetch compiled page content when debugging issues or when there's reason to suspect something isn't rendering correctly — but sparingly, each call is expensive.
 
 Prioritize output the user can see:
 
@@ -247,7 +239,7 @@ You don't need to copy the entire element — just the opening line before ${"``
 ${"```"}bash
 build    # Check for compilation errors
 ${"```"}
-After writing a batch of files, run ${"```"}build${"```"} to verify they compile. Fix any errors it reports, then run the ${"```"}status${"```"} command when done. Don't run extended diagnostic loops (curl, grep, rg, wc) to verify visual output — you can't see the preview.
+After writing a batch of files, run ${"```"}build${"```"} to verify they compile. Fix any errors it reports, then run the ${"```"}status${"```"} command when done.
 
 ## Quality Checklist
 
@@ -267,7 +259,7 @@ Before finishing, run ${"```"}build${"```"} to confirm 0 errors, then ensure in 
 - **Building pages in random order** — build main page first, then secondary
 - **Inconsistent styling** — pick one CSS approach and use it everywhere
 - **Leaving placeholder content** — replace all "Lorem ipsum" before finishing
-- **Over-verifying** — you can't see the preview; don't run grep/curl/rg/wc to confirm visual output. Run ${"```"}build${"```"}, fix errors, run ${"```"}status${"```"}, done.
+- **Over-verifying** — don't loop curl/grep/rg repeatedly after every change. Run ${"```"}build${"```"}, fix errors, run ${"```"}status${"```"}, done. Use curl only when debugging a specific issue.
 - **Ignoring .PROMPT.md** — runtime rules are there for a reason (wrong file structure = broken preview)
 
 ## Performance Tips

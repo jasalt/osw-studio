@@ -120,6 +120,9 @@ export async function parseStreamingResponse(
   const contentBlockIndexToToolId: Record<number, string> = {};
   let anthropicThinkingBlockIndex: number | null = null;  // Track active thinking block
 
+  // Last indexed tool call key — fallback for chunks that drop tc.index
+  let lastIndexedToolKey: string | null = null;
+
   // Stream read timeout — if the provider hangs (no data for STREAM_READ_TIMEOUT_MS),
   // treat whatever we have as the complete response. Some providers (e.g., Qwen via
   // OpenRouter/Alibaba) hang mid-stream without sending [DONE] or finish_reason.
@@ -444,6 +447,7 @@ export async function parseStreamingResponse(
                 for (const tc of delta.tool_calls) {
                   if (tc.index !== undefined) {
                     const key = `idx_${tc.index}`;
+                    lastIndexedToolKey = key;
                     const isNewTool = !toolCallsById[key];
 
                     if (isNewTool) {
@@ -493,13 +497,29 @@ export async function parseStreamingResponse(
                     }
                   } else if (tc.function?.arguments) {
                     const argFragment = tc.function.arguments;
-                    toolCallBuffer += argFragment;
 
-                    if (!suppressAssistantDelta && currentToolCall) {
-                      onProgress?.('tool_param_delta', {
-                        toolId: currentToolCall.id,
-                        fragment: argFragment
-                      });
+                    // Fallback: if an indexed tool call was created (PATH A) but
+                    // subsequent chunks dropped tc.index, route arguments directly
+                    // into the indexed entry instead of the orphaned toolCallBuffer.
+                    if (!currentToolCall && lastIndexedToolKey && toolCallsById[lastIndexedToolKey]) {
+                      const indexed = toolCallsById[lastIndexedToolKey];
+                      indexed.function.arguments += argFragment;
+
+                      if (!suppressAssistantDelta) {
+                        onProgress?.('tool_param_delta', {
+                          toolId: indexed.id,
+                          fragment: argFragment
+                        });
+                      }
+                    } else {
+                      toolCallBuffer += argFragment;
+
+                      if (!suppressAssistantDelta && currentToolCall) {
+                        onProgress?.('tool_param_delta', {
+                          toolId: currentToolCall.id,
+                          fragment: argFragment
+                        });
+                      }
                     }
                   }
 
@@ -512,12 +532,16 @@ export async function parseStreamingResponse(
 
             // Parse usage info (OpenAI-compatible format; Anthropic handled above)
             if (json.usage && provider !== 'anthropic') {
+              const reportedCost = typeof json.usage.cost === 'number' && json.usage.cost > 0
+                ? json.usage.cost : undefined;
               usageInfo = {
                 promptTokens: json.usage.prompt_tokens || 0,
                 completionTokens: json.usage.completion_tokens || 0,
                 totalTokens: json.usage.total_tokens || 0,
-                cachedTokens: json.usage.cached_tokens,
+                cachedTokens: json.usage.cached_tokens ?? json.usage.prompt_tokens_details?.cached_tokens,
                 reasoningTokens: json.usage.reasoning_tokens || json.usage.completion_tokens_details?.reasoning_tokens || 0,
+                cost: reportedCost,
+                isEstimated: reportedCost === undefined,
                 model: options.model,
                 provider
               };

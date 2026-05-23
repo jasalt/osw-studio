@@ -42,7 +42,7 @@ Commands:
 - propose-create
   Signal the project is ready to create. The brief must contain name, runtime, and template. Enables the user's "Create now" button. The user may continue adjusting after this; call again if needed.
 
-One command at a time as a single string.`;
+All commands are passed as the argument to the shell tool. Do NOT call brief, spec, ask, or propose-create as separate tools — they are shell commands, not standalone tools.`;
 
 interface ToolExecutor {
   /**
@@ -136,13 +136,19 @@ One command at a time as a single string.`,
             const multiCmds = splitNewlineCommands(cmdString);
             if (multiCmds.length > 1) {
               const outputs: string[] = [];
+              let completedCount = 0;
               for (const singleCmd of multiCmds) {
                 const lineResult = await this.get('shell')!.executor.execute(projectId, { cmd: singleCmd }, context);
                 if (lineResult && lineResult !== 'Command succeeded with no output') {
                   outputs.push(lineResult);
                 }
-                // Stop on error (same as && semantics)
-                if (lineResult.startsWith('Error')) break;
+                if (lineResult.startsWith('Error')) {
+                  if (completedCount > 0) {
+                    outputs.unshift(`(${completedCount}/${multiCmds.length} commands succeeded before this error)`);
+                  }
+                  break;
+                }
+                completedCount++;
               }
               return outputs.length > 0 ? outputs.join('\n') : 'Command succeeded with no output';
             }
@@ -784,7 +790,7 @@ function hasUnbalancedQuotes(text: string): boolean {
  * preserving heredoc blocks and multiline quoted strings as part of their parent command.
  * E.g., "mkdir -p dir\ncat > file << 'EOF'\ncontent\nEOF\nls" → 3 commands
  */
-function splitNewlineCommands(cmdStr: string): string[] {
+export function splitNewlineCommands(cmdStr: string): string[] {
   const lines = cmdStr.split('\n');
   const commands: string[] = [];
   let current = '';

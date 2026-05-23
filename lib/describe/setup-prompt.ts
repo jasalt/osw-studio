@@ -104,13 +104,13 @@ Capabilities default off; enable when something the user said requires it. "I wa
 
 **Minimum brief:** \`name\`, \`runtime\`, and \`template\` set. \`propose-create\` rejects without them.
 
-Err toward creating sooner. You need:
+Err toward creating sooner — the user can create the project at any point, even before you call \`propose-create\`. Your job is to fill in the brief and spec quickly, not to gatekeep creation. You need:
 - Project type + name + runtime + template (infer the last three).
 - Enough context for a useful .PROMPT.md and .DESIGN.md.
 
-You do NOT need every detail. The in-project agent handles specifics with live preview.
+You do NOT need every detail. The in-project agent handles specifics with live preview. Design questions (colors, typography, layout, aesthetic) can be answered in-project with real previews — don't block creation to ask about them.
 
-**If the first message gives you enough, run \`brief --merge\` + \`spec --append\` + \`propose-create\` in one turn.**
+**If the first message gives you enough, run \`brief --merge\` + \`spec --append\` + \`propose-create\` in one turn.** Most messages that mention a project type, name or purpose, and page structure give you enough. Default to proposing, not asking.
 
 ## Scope boundary
 

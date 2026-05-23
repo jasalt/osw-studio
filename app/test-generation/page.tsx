@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { MultiAgentOrchestrator } from '@/lib/llm/multi-agent-orchestrator';
-import { testScenarios, testTracks } from '@/lib/testing/test-scenarios';
-import type { AssertionResult } from '@/lib/testing/types';
-import { ArrowLeft, Play, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronUp, Square, Download, Minus, Plus, AlertCircle } from 'lucide-react';
+import { MultiAgentOrchestrator, type ContextBreakdown } from '@/lib/llm/multi-agent-orchestrator';
+import { testScenarios, testTracks, testSequences } from '@/lib/testing/test-scenarios';
+import type { AssertionResult, TestSequence } from '@/lib/testing/types';
+import { ArrowLeft, Play, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronUp, Square, Download, Minus, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ModelSettingsPanel } from '@/components/settings/model-settings';
@@ -21,6 +21,7 @@ interface ToolCallDetail {
   name: string;
   status: 'success' | 'failed';
   args?: string;
+  shellCommand?: string;
 }
 
 const KNOWN_TOOLS = new Set(['shell']);
@@ -32,10 +33,12 @@ interface ToolStats {
   invalid: number;
   invalidNames: string[];
   breakdown: Record<string, { total: number; success: number; failed: number }>;
+  shellCommands: Record<string, number>;
 }
 
 function computeToolStats(details: ToolCallDetail[]): ToolStats {
   const breakdown: Record<string, { total: number; success: number; failed: number }> = {};
+  const shellCommands: Record<string, number> = {};
   let success = 0, failed = 0, invalid = 0;
   const invalidNameSet = new Set<string>();
 
@@ -53,9 +56,13 @@ function computeToolStats(details: ToolCallDetail[]): ToolStats {
     breakdown[d.name].total++;
     if (d.status === 'success') breakdown[d.name].success++;
     else breakdown[d.name].failed++;
+
+    if (d.shellCommand) {
+      shellCommands[d.shellCommand] = (shellCommands[d.shellCommand] || 0) + 1;
+    }
   }
 
-  return { total: details.length, success, failed, invalid, invalidNames: [...invalidNameSet], breakdown };
+  return { total: details.length, success, failed, invalid, invalidNames: [...invalidNameSet], breakdown, shellCommands };
 }
 
 function formatCost(amount: number): string {
@@ -94,6 +101,9 @@ interface TestResult {
   selfEvalCorrect?: boolean;
   exitReason?: string;
   nudgeCount?: number;
+  contextBreakdowns?: ContextBreakdown[];
+  sequenceId?: string;
+  isSequenceHeader?: boolean;
 }
 
 interface RoundResult {
@@ -115,6 +125,9 @@ interface RoundResult {
   details?: string;
   exitReason?: string;
   nudgeCount?: number;
+  contextBreakdowns?: ContextBreakdown[];
+  sequenceId?: string;
+  isSequenceHeader?: boolean;
 }
 
 interface AggregatedTestResult {
@@ -137,16 +150,31 @@ interface AggregatedTestResult {
 
 const allScenarioIds = testScenarios.map(s => s.id);
 
+function buildSequenceResults(sequences: TestSequence[]): TestResult[] {
+  const results: TestResult[] = [];
+  for (const seq of sequences) {
+    results.push({ id: seq.id, name: seq.name, status: 'pending', isSequenceHeader: true });
+    for (const step of seq.steps) {
+      results.push({ id: step.id, name: step.name, status: 'pending', sequenceId: seq.id });
+    }
+  }
+  return results;
+}
+
+const allSequenceStepIds = testSequences.flatMap(s => [s.id, ...s.steps.map(st => st.id)]);
+
 export default function TestGenerationPage() {
   const router = useRouter();
-  const [testResults, setTestResults] = useState<TestResult[]>(
-    testScenarios.map(scenario => ({
+  const [testResults, setTestResults] = useState<TestResult[]>([
+    ...testScenarios.map(scenario => ({
       id: scenario.id,
       name: scenario.name,
-      status: 'pending'
-    }))
-  );
-  const [runningTest, setRunningTest] = useState<string | null>(null);
+      status: 'pending' as const,
+    })),
+    ...buildSequenceResults(testSequences),
+  ]);
+  const [runningTests, setRunningTests] = useState<Set<string>>(new Set());
+  const [concurrency, setConcurrency] = useState(3);
   const [activeTrack, setActiveTrack] = useState<string | null>(null);
   const orchestratorInstances = useRef<Map<string, MultiAgentOrchestrator>>(new Map());
   const [expandedTests, setExpandedTests] = useState<Set<string>>(new Set());
@@ -176,6 +204,7 @@ export default function TestGenerationPage() {
   const [currentRound, setCurrentRound] = useState(0);
   const [roundHistory, setRoundHistory] = useState<RoundResult[][]>([]);
   const [benchmarkComplete, setBenchmarkComplete] = useState(false);
+  const [showBenchmarkInfo, setShowBenchmarkInfo] = useState(false);
   const testResultsRef = useRef<TestResult[]>([]);
 
   useEffect(() => { testResultsRef.current = testResults; }, [testResults]);
@@ -201,7 +230,7 @@ export default function TestGenerationPage() {
     const key = scenarioId;
 
     const startTime = Date.now();
-    setRunningTest(key);
+    setRunningTests(prev => new Set([...prev, key]));
     setExpandedTests(prev => new Set([...prev, key]));
 
     // Update status to running
@@ -247,12 +276,22 @@ export default function TestGenerationPage() {
       let exitReason: string | undefined;
       let nudgeCount = 0;
       let delegateStartTime = 0;
+      let reasoningBuffer = '';
+
+      const flushReasoning = () => {
+        if (!reasoningBuffer.trim()) { reasoningBuffer = ''; return; }
+        const text = reasoningBuffer.trim().replace(/\n{2,}/g, '\n');
+        const preview = text.length > 300 ? text.substring(0, 150) + ' … ' + text.substring(text.length - 147) : text;
+        appendOutput(scenarioId, `[thinking] ${preview}\n`);
+        reasoningBuffer = '';
+      };
 
       const orchestrator = new MultiAgentOrchestrator(
         projectId,
         scenario.agentType || 'orchestrator',
         (message, step) => {
           if (message === 'assistant_delta') {
+            flushReasoning();
             const delta = step as ProgressDelta;
             const deltaText = delta?.text;
             const snapshot = delta?.snapshot;
@@ -276,7 +315,15 @@ export default function TestGenerationPage() {
             }, 0);
           }
 
+          if (message === 'reasoning_delta') {
+            const data = step as { text?: string };
+            if (data?.text) {
+              reasoningBuffer += data.text;
+            }
+          }
+
           if (message === 'tool_status') {
+            flushReasoning();
             const data = step as ProgressToolStatus;
             const toolName = data?.toolName || 'unknown';
             if (data?.status === 'executing') {
@@ -337,6 +384,7 @@ export default function TestGenerationPage() {
           }
 
           if (message === 'exit_reason') {
+            flushReasoning();
             const data = step as Record<string, unknown>;
             exitReason = String(data?.reason || 'unknown');
             appendOutput(scenarioId, `\n[exit] ${exitReason} (iteration ${data?.iteration})\n`);
@@ -375,10 +423,13 @@ export default function TestGenerationPage() {
           if (msg.tool_calls) {
             for (const tc of msg.tool_calls) {
               let argSnippet = '';
+              let shellCommand: string | undefined;
               try {
                 const parsed = JSON.parse(tc.function.arguments);
                 if (tc.function.name === 'shell') {
                   argSnippet = parsed.cmd || parsed.command || '';
+                  const firstWord = argSnippet.trimStart().split(/\s+/)[0];
+                  if (firstWord) shellCommand = firstWord;
                 }
               } catch {}
               const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
@@ -389,6 +440,7 @@ export default function TestGenerationPage() {
                 name: tc.function.name,
                 status: succeeded ? 'success' : 'failed',
                 args: argSnippet,
+                shellCommand,
               });
             }
           }
@@ -474,6 +526,7 @@ export default function TestGenerationPage() {
               selfEvalCorrect: assertionResults.length > 0 ? result.success === testPassed : undefined,
               exitReason,
               nudgeCount: nudgeCount > 0 ? nudgeCount : undefined,
+              contextBreakdowns: result.contextBreakdowns,
             }
           : testResult
       ));
@@ -512,29 +565,460 @@ export default function TestGenerationPage() {
       } catch {}
     }
 
-    setRunningTest(null);
+    setRunningTests(prev => { const next = new Set(prev); next.delete(key); return next; });
+  };
+
+  const checkSequenceRequirements = (sequence: typeof testSequences[0]): string | null => {
+    if (!sequence.requires) return null;
+    const provider = configManager.getSelectedProvider();
+    for (const req of sequence.requires) {
+      if (req === 'compaction' && !configManager.isCompactionEnabled(provider)) {
+        return 'Compaction must be enabled in Settings for this test. Enable it for the current provider and try again.';
+      }
+    }
+    return null;
+  };
+
+  const runSequence = async (sequenceId: string) => {
+    const sequence = testSequences.find(s => s.id === sequenceId);
+    if (!sequence) return;
+
+    const requirementError = checkSequenceRequirements(sequence);
+    if (requirementError) {
+      setTestResults(prev => prev.map(r =>
+        r.id === sequenceId
+          ? { ...r, status: 'stopped', errors: [requirementError], details: requirementError }
+          : r.sequenceId === sequenceId
+            ? { ...r, status: 'stopped', details: 'Skipped — prerequisite not met' }
+            : r
+      ));
+      toast.error(`Skipped: ${sequence.name} — ${requirementError}`);
+      return;
+    }
+
+    const startTime = Date.now();
+    setRunningTests(prev => new Set([...prev, sequenceId]));
+    setExpandedTests(prev => new Set([...prev, sequenceId]));
+
+    setTestResults(prev => prev.map(r =>
+      r.id === sequenceId
+        ? { ...r, status: 'running', generationOutput: '' }
+        : r.sequenceId === sequenceId
+          ? { ...r, status: 'pending', generationOutput: '' }
+          : r
+    ));
+
+    let projectId = '';
+    const allToolDetails: ToolCallDetail[] = [];
+
+    try {
+      projectId = `test-seq-${Date.now()}`;
+
+      if (!sequence.skipProjectSetup) {
+        const { vfs } = await import('@/lib/vfs');
+        await vfs.init();
+        await vfs.createProject(`Test Seq: ${sequence.name}`, undefined, projectId);
+
+        if (sequence.setupFiles) {
+          for (const [filePath, content] of Object.entries(sequence.setupFiles)) {
+            await vfs.createFile(projectId, filePath, content);
+          }
+        }
+      }
+
+      const appendOutput = (resultId: string, text: string) => {
+        setTestResults(prev => prev.map(result =>
+          result.id === resultId
+            ? { ...result, generationOutput: (result.generationOutput || '') + text }
+            : result
+        ));
+        setTimeout(() => {
+          const outputElement = generationOutputRefs.current.get(resultId);
+          if (outputElement) {
+            outputElement.scrollTop = outputElement.scrollHeight;
+          }
+        }, 0);
+      };
+
+      let exitReason: string | undefined;
+      let nudgeCount = 0;
+      let delegateStartTime = 0;
+      let reasoningBuffer = '';
+      let activeStepId = sequenceId;
+
+      const flushReasoning = () => {
+        if (!reasoningBuffer.trim()) { reasoningBuffer = ''; return; }
+        const text = reasoningBuffer.trim().replace(/\n{2,}/g, '\n');
+        const preview = text.length > 300 ? text.substring(0, 150) + ' … ' + text.substring(text.length - 147) : text;
+        appendOutput(activeStepId, `[thinking] ${preview}\n`);
+        reasoningBuffer = '';
+      };
+
+      const stepToolDetails: ToolCallDetail[] = [];
+
+      const orchestrator = new MultiAgentOrchestrator(
+        projectId,
+        sequence.agentType || 'orchestrator',
+        (message, step) => {
+          if (message === 'assistant_delta') {
+            flushReasoning();
+            const delta = step as ProgressDelta;
+            const deltaText = delta?.text;
+            const snapshot = delta?.snapshot;
+            if (!deltaText && !snapshot) return;
+
+            if (snapshot !== undefined) {
+              setTestResults(prev => prev.map(result =>
+                result.id === activeStepId
+                  ? { ...result, generationOutput: snapshot }
+                  : result
+              ));
+            } else if (deltaText) {
+              appendOutput(activeStepId, deltaText);
+            }
+          }
+
+          if (message === 'reasoning_delta') {
+            const data = step as { text?: string };
+            if (data?.text) reasoningBuffer += data.text;
+          }
+
+          if (message === 'tool_status') {
+            flushReasoning();
+            const data = step as ProgressToolStatus;
+            const toolName = data?.toolName || 'unknown';
+            if (data?.status === 'executing') {
+              let argSnippet = '';
+              let shellCommand: string | undefined;
+              if (data?.args) {
+                try {
+                  const parsed = JSON.parse(data.args);
+                  if (toolName === 'shell') {
+                    argSnippet = parsed.cmd || parsed.command || '';
+                    const firstWord = argSnippet.trimStart().split(/\s+/)[0];
+                    if (firstWord) shellCommand = firstWord;
+                  }
+                } catch {}
+                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
+                if (!isVerboseCmd && argSnippet.length > 80) argSnippet = argSnippet.substring(0, 77) + '...';
+              }
+              stepToolDetails.push({ name: toolName, status: 'success', args: argSnippet, shellCommand });
+              delegateStartTime = 0;
+              appendOutput(activeStepId, `\n[tool] ${toolName}${argSnippet ? ` — ${argSnippet}` : ' ...'}\n`);
+            } else if (data?.status === 'completed') {
+              appendOutput(activeStepId, `[tool] ${toolName} done\n`);
+            } else if (data?.status === 'failed') {
+              const last = [...stepToolDetails].reverse().find(d => d.name === toolName);
+              if (last) last.status = 'failed';
+              appendOutput(activeStepId, `[tool] ${toolName} failed\n`);
+            }
+          }
+
+          if (message === 'delegate_progress') {
+            const data = step as Record<string, unknown>;
+            const innerEvent = data?.event as string;
+            const agentIndex = data?.agentIndex as number || 1;
+            const innerData = data?.data as Record<string, unknown>;
+            const promptLabel = String(data?.delegatePrompt || '');
+
+            if (!delegateStartTime) delegateStartTime = Date.now();
+            const t = ((Date.now() - delegateStartTime) / 1000).toFixed(1);
+            const label = `subagent ${agentIndex} +${t}s`;
+
+            if (innerEvent === 'agent_start') {
+              const preview = promptLabel.length > 80 ? promptLabel.substring(0, 77) + '...' : promptLabel;
+              appendOutput(activeStepId, `  [${label}] started — "${preview}"\n`);
+            } else if (innerEvent === 'agent_done') {
+              const elapsed = innerData?.elapsed || '?';
+              const bodyPreview = String(innerData?.bodyPreview || '(no output)');
+              const preview = bodyPreview.length > 100 ? bodyPreview.substring(0, 97) + '...' : bodyPreview;
+              appendOutput(activeStepId, `  [${label}] done (${elapsed}s) — ${preview}\n`);
+            } else if (innerEvent === 'tool_status' && innerData?.status === 'executing') {
+              let cmd = '';
+              try {
+                const parsed = JSON.parse(String(innerData.args || '{}'));
+                cmd = parsed?.cmd || '';
+              } catch { cmd = String(innerData.args || ''); }
+              const cmdPreview = cmd.length > 100 ? cmd.substring(0, 97) + '...' : cmd;
+              appendOutput(activeStepId, `  [${label}] ${cmdPreview}\n`);
+            } else if (innerEvent === 'tool_status' && innerData?.status === 'completed') {
+              appendOutput(activeStepId, `  [${label}] tool done\n`);
+            } else if (innerEvent === 'tool_status' && innerData?.status === 'failed') {
+              appendOutput(activeStepId, `  [${label}] tool failed\n`);
+            }
+          }
+
+          if (message === 'exit_reason') {
+            flushReasoning();
+            const data = step as Record<string, unknown>;
+            exitReason = String(data?.reason || 'unknown');
+            appendOutput(activeStepId, `\n[exit] ${exitReason} (iteration ${data?.iteration})\n`);
+          }
+
+          if (message === 'nudge') {
+            const data = step as Record<string, unknown>;
+            nudgeCount = Number(data?.attempt || 0);
+            appendOutput(activeStepId, `[nudge] ${data?.attempt}/${data?.max}\n`);
+          }
+        },
+        { chatMode: false }
+      );
+
+      orchestratorInstances.current.set(sequenceId, orchestrator);
+
+      let totalPromptTokens = 0;
+      let totalCompletionTokens = 0;
+      let totalTokens = 0;
+      let totalCost = 0;
+      let allContextBreakdowns: ContextBreakdown[] = [];
+      let sequencePassed = true;
+      let prevPromptTokens = 0;
+      let prevCompletionTokens = 0;
+      let prevTotalTokens = 0;
+      let prevCost = 0;
+
+      for (const step of sequence.steps) {
+        if (batchCancelledRef.current) break;
+
+        activeStepId = step.id;
+        stepToolDetails.length = 0;
+        exitReason = undefined;
+
+        setTestResults(prev => prev.map(r =>
+          r.id === step.id ? { ...r, status: 'running', generationOutput: '' } : r
+        ));
+        setExpandedTests(prev => new Set([...prev, step.id]));
+
+        appendOutput(step.id, `[step] ${step.name}\n[prompt] ${step.prompt}\n`);
+
+        const stepStart = Date.now();
+        const result = await orchestrator.execute(step.prompt);
+
+        const stepTime = Date.now() - stepStart;
+        const stepPromptTokens = result.totalUsage.promptTokens - prevPromptTokens;
+        const stepCompletionTokens = result.totalUsage.completionTokens - prevCompletionTokens;
+        const stepTotalTokens = result.totalUsage.totalTokens - prevTotalTokens;
+        const stepCost = result.totalCost - prevCost;
+        prevPromptTokens = result.totalUsage.promptTokens;
+        prevCompletionTokens = result.totalUsage.completionTokens;
+        prevTotalTokens = result.totalUsage.totalTokens;
+        prevCost = result.totalCost;
+        totalPromptTokens += stepPromptTokens;
+        totalCompletionTokens += stepCompletionTokens;
+        totalTokens += stepTotalTokens;
+        totalCost += stepCost;
+        if (result.contextBreakdowns) {
+          allContextBreakdowns = [...allContextBreakdowns, ...result.contextBreakdowns];
+        }
+
+        const conversationToolDetails: ToolCallDetail[] = [];
+        const toolResultMap = new Map<string, boolean>();
+        for (const node of (result.conversation || [])) {
+          for (const msg of node.messages) {
+            if (msg.role === 'tool' && msg.tool_call_id) {
+              const content = typeof msg.content === 'string' ? msg.content : '';
+              toolResultMap.set(msg.tool_call_id, !content.startsWith('Error:'));
+            }
+          }
+          for (const msg of node.messages) {
+            if (msg.tool_calls) {
+              for (const tc of msg.tool_calls) {
+                let argSnippet = '';
+                let shellCommand: string | undefined;
+                try {
+                  const parsed = JSON.parse(tc.function.arguments);
+                  if (tc.function.name === 'shell') {
+                    argSnippet = parsed.cmd || parsed.command || '';
+                    const firstWord = argSnippet.trimStart().split(/\s+/)[0];
+                    if (firstWord) shellCommand = firstWord;
+                  }
+                } catch {}
+                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
+                if (!isVerboseCmd && argSnippet.length > 80) argSnippet = argSnippet.substring(0, 77) + '...';
+
+                const succeeded = toolResultMap.has(tc.id) ? toolResultMap.get(tc.id)! : true;
+                conversationToolDetails.push({
+                  name: tc.function.name,
+                  status: succeeded ? 'success' : 'failed',
+                  args: argSnippet,
+                  shellCommand,
+                });
+              }
+            }
+          }
+        }
+
+        const finalStepTools = conversationToolDetails.length > 0 ? conversationToolDetails : [...stepToolDetails];
+        allToolDetails.push(...finalStepTools);
+
+        let assertionResults: AssertionResult[] = [];
+        if (step.assertions && step.assertions.length > 0) {
+          try {
+            const { runAssertions } = await import('@/lib/testing/assertion-runner');
+            assertionResults = await runAssertions(projectId, result.conversation || [], step.assertions);
+          } catch (err) {
+            console.warn('Assertion runner error:', err);
+          }
+        }
+
+        const judgeAssertions = step.assertions?.filter(a => a.type === 'judge') || [];
+        if (judgeAssertions.length > 0 && judgeModel) {
+          try {
+            const { vfs: vfsInst } = await import('@/lib/vfs');
+            const files = await vfsInst.listFiles(projectId);
+            const fileContents: Record<string, string> = {};
+            for (const f of files) {
+              if (typeof f.content === 'string') fileContents[f.path] = f.content;
+            }
+            const judgeProvider = configManager.getSelectedProvider();
+            const judgeApiKey = configManager.getProviderApiKey(judgeProvider) || '';
+            const { runJudgeEvaluation } = await import('@/lib/testing/judge');
+            const judgeResult = await runJudgeEvaluation(
+              judgeAssertions[0].criteria,
+              { prompt: step.prompt, files: fileContents, summary: result.summary },
+              { provider: judgeProvider, apiKey: judgeApiKey, model: judgeModel }
+            );
+            assertionResults.push({
+              assertion: judgeAssertions[0],
+              passed: judgeResult.passed,
+              actual: judgeResult.reasoning,
+            });
+          } catch (err) {
+            console.warn('Judge evaluation error:', err);
+          }
+        }
+
+        const assertionScore = assertionResults.length > 0
+          ? (assertionResults.filter(r => r.passed).length / assertionResults.length) * 100
+          : undefined;
+
+        const stepPassed = assertionResults.length > 0
+          ? assertionResults.every(r => r.passed)
+          : result.success;
+
+        if (!stepPassed) sequencePassed = false;
+
+        const toolCallCount = (result.conversation || []).reduce((count, node) => {
+          return count + node.messages.reduce((msgCount, msg) => {
+            return msgCount + (msg.tool_calls?.length || 0);
+          }, 0);
+        }, 0);
+
+        setTestResults(prev => prev.map(r =>
+          r.id === step.id
+            ? {
+                ...r,
+                status: stepPassed ? 'success' : 'failed',
+                executionTime: stepTime,
+                errors: stepPassed
+                  ? undefined
+                  : assertionResults.length > 0
+                    ? assertionResults.filter(a => !a.passed).map(a => a.assertion.description + (a.actual ? ` — ${a.actual}` : ''))
+                    : [result.summary],
+                details: result.summary,
+                toolCalls: toolCallCount,
+                totalCost: stepCost,
+                promptTokens: stepPromptTokens,
+                completionTokens: stepCompletionTokens,
+                totalTokens: stepTotalTokens,
+                toolCallDetails: finalStepTools,
+                assertionResults: assertionResults.length > 0 ? assertionResults : undefined,
+                assertionScore,
+                exitReason,
+                contextBreakdowns: result.contextBreakdowns,
+              }
+            : r
+        ));
+
+        if (stepPassed) {
+          toast.success(`Step passed: ${step.name}`);
+        } else {
+          toast.error(`Step failed: ${step.name}`);
+        }
+      }
+
+      setTestResults(prev => prev.map(r =>
+        r.id === sequenceId
+          ? {
+              ...r,
+              status: sequencePassed ? 'success' : 'failed',
+              executionTime: Date.now() - startTime,
+              toolCalls: allToolDetails.length,
+              totalCost,
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+              totalTokens,
+              toolCallDetails: allToolDetails,
+              contextBreakdowns: allContextBreakdowns.length > 0 ? allContextBreakdowns : undefined,
+              details: `${sequence.steps.length} steps — ${sequencePassed ? 'all passed' : 'some failed'}`,
+            }
+          : r
+      ));
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      setTestResults(prev => prev.map(r =>
+        r.id === sequenceId
+          ? {
+              ...r,
+              status: 'failed',
+              executionTime: Date.now() - startTime,
+              errors: [errorMessage],
+              details: `Error: ${errorMessage}`,
+            }
+          : r
+      ));
+
+      toast.error(`Sequence error: ${sequence.name}`);
+    }
+
+    orchestratorInstances.current.delete(sequenceId);
+
+    if (projectId && !sequence.skipProjectSetup) {
+      try {
+        const { vfs } = await import('@/lib/vfs');
+        await vfs.deleteProject(projectId);
+      } catch {}
+    }
+
+    setRunningTests(prev => { const next = new Set(prev); next.delete(sequenceId); return next; });
   };
 
   const stopTest = (scenarioId: string) => {
     const orchestrator = orchestratorInstances.current.get(scenarioId);
     if (orchestrator) {
       orchestrator.stop();
-      toast.info(`Stopping test: ${testScenarios.find(s => s.id === scenarioId)?.name}`);
+      toast.info(`Stopping test: ${testScenarios.find(s => s.id === scenarioId)?.name || testSequences.find(s => s.id === scenarioId)?.name}`);
     }
   };
 
   /** Build initial pending result entries */
-  const buildPendingResults = (scenarioIds: string[]): TestResult[] => {
+  const buildPendingResults = (scenarioIds: string[], sequenceIds?: string[]): TestResult[] => {
+    const results: TestResult[] = [];
     const scenarios = testScenarios.filter(s => scenarioIds.includes(s.id));
-    return scenarios.map(s => ({ id: s.id, name: s.name, status: 'pending' as const }));
+    results.push(...scenarios.map(s => ({ id: s.id, name: s.name, status: 'pending' as const })));
+    if (sequenceIds && sequenceIds.length > 0) {
+      results.push(...buildSequenceResults(testSequences.filter(s => sequenceIds.includes(s.id))));
+    }
+    return results;
   };
 
   const runTrack = async (trackId: string) => {
-    const scenarioIds = trackId === 'all'
-      ? allScenarioIds
-      : testTracks.find(t => t.id === trackId)?.scenarioIds || [];
+    const isSequenceTrack = trackId === 'sequences';
+    const isAllTrack = trackId === 'all';
 
-    if (scenarioIds.length === 0) return;
+    const scenarioIds = isSequenceTrack
+      ? []
+      : isAllTrack
+        ? allScenarioIds
+        : testTracks.find(t => t.id === trackId)?.scenarioIds || [];
+
+    const sequenceIds = isSequenceTrack || isAllTrack
+      ? testSequences.map(s => s.id)
+      : [];
+
+    if (scenarioIds.length === 0 && sequenceIds.length === 0) return;
 
     setActiveTrack(trackId);
     batchCancelledRef.current = false;
@@ -545,16 +1029,26 @@ export default function TestGenerationPage() {
       if (batchCancelledRef.current) break;
       setCurrentRound(round);
 
-      // Reset test results to pending for this round
-      setTestResults(buildPendingResults(scenarioIds));
+      setTestResults(buildPendingResults(scenarioIds, sequenceIds));
 
-      for (const testId of scenarioIds) {
-        if (batchCancelledRef.current) break;
-        await runSingleTest(testId);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
+      // Build task queue: standalone tests first, then sequences
+      const tasks: (() => Promise<void>)[] = [
+        ...scenarioIds.map(id => () => runSingleTest(id)),
+        ...sequenceIds.map(id => () => runSequence(id)),
+      ];
 
-      // Snapshot completed results for this round
+      // Run with concurrency limit
+      const limit = concurrency;
+      let idx = 0;
+      const runNext = async (): Promise<void> => {
+        while (idx < tasks.length) {
+          if (batchCancelledRef.current) return;
+          const task = tasks[idx++];
+          await task();
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => runNext()));
+
       const snapshot: RoundResult[] = testResultsRef.current
         .filter(r => r.status === 'success' || r.status === 'failed' || r.status === 'stopped')
         .map(r => ({
@@ -576,6 +1070,9 @@ export default function TestGenerationPage() {
           details: r.details,
           exitReason: r.exitReason,
           nudgeCount: r.nudgeCount,
+          contextBreakdowns: r.contextBreakdowns,
+          sequenceId: r.sequenceId,
+          isSequenceHeader: r.isSequenceHeader,
         }));
       setRoundHistory(prev => [...prev, snapshot]);
     }
@@ -584,10 +1081,10 @@ export default function TestGenerationPage() {
     setActiveTrack(null);
   };
 
-  // Derive overall stats from testResults reactively
+  // Derive overall stats from testResults reactively (exclude sequence headers to avoid double-counting)
   useEffect(() => {
-    const completed = testResults.filter(r => r.status !== 'pending' && r.status !== 'running');
-    const passed = testResults.filter(r => r.status === 'success');
+    const completed = testResults.filter(r => r.status !== 'pending' && r.status !== 'running' && !r.isSequenceHeader);
+    const passed = testResults.filter(r => r.status === 'success' && !r.isSequenceHeader);
 
     const totalCost = completed.reduce((sum, r) => sum + (r.totalCost || 0), 0);
     const promptTokens = completed.reduce((sum, r) => sum + (r.promptTokens || 0), 0);
@@ -618,9 +1115,9 @@ export default function TestGenerationPage() {
 
   const resetTests = () => {
     stopBenchmark();
-    setTestResults(buildPendingResults(allScenarioIds));
-    setOverallStats({ total: 0, passed: 0, failed: 0, successRate: 0, totalCost: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, toolStats: { total: 0, success: 0, failed: 0, invalid: 0, invalidNames: [], breakdown: {} } });
-    setRunningTest(null);
+    setTestResults(buildPendingResults(allScenarioIds, testSequences.map(s => s.id)));
+    setOverallStats({ total: 0, passed: 0, failed: 0, successRate: 0, totalCost: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, toolStats: { total: 0, success: 0, failed: 0, invalid: 0, invalidNames: [], breakdown: {}, shellCommands: {} } });
+    setRunningTests(new Set());
     setActiveTrack(null);
     orchestratorInstances.current = new Map();
     setExpandedTests(new Set());
@@ -753,12 +1250,16 @@ export default function TestGenerationPage() {
 
   const aggregatedOverallStats = useMemo(() => {
     if (aggregatedResults.length === 0) return null;
-    const totalTests = aggregatedResults.reduce((sum, r) => sum + r.roundCount, 0);
-    const totalPassed = aggregatedResults.reduce((sum, r) => sum + r.passCount, 0);
-    const totalFailed = aggregatedResults.reduce((sum, r) => sum + r.failCount, 0);
-    const totalCost = aggregatedResults.reduce((sum, r) => sum + r.totalCost, 0);
+    const nonHeaders = aggregatedResults.filter(r => {
+      const orig = testResults.find(tr => tr.id === r.id);
+      return !orig?.isSequenceHeader;
+    });
+    const totalTests = nonHeaders.reduce((sum, r) => sum + r.roundCount, 0);
+    const totalPassed = nonHeaders.reduce((sum, r) => sum + r.passCount, 0);
+    const totalFailed = nonHeaders.reduce((sum, r) => sum + r.failCount, 0);
+    const totalCost = nonHeaders.reduce((sum, r) => sum + r.totalCost, 0);
 
-    const allResults = roundHistory.flat();
+    const allResults = roundHistory.flat().filter(r => !r.isSequenceHeader);
     const totalTokens = allResults.reduce((sum, r) => sum + (r.totalTokens || 0), 0);
     const promptTokens = allResults.reduce((sum, r) => sum + (r.promptTokens || 0), 0);
     const completionTokens = allResults.reduce((sum, r) => sum + (r.completionTokens || 0), 0);
@@ -779,7 +1280,7 @@ export default function TestGenerationPage() {
     };
   }, [aggregatedResults, roundHistory]);
 
-  const isRunning = runningTest !== null;
+  const isRunning = runningTests.size > 0;
 
   // Export helpers
   const buildExportData = () => {
@@ -787,30 +1288,33 @@ export default function TestGenerationPage() {
     const model = currentModel;
     const dateStr = new Date().toISOString();
 
+    const mapResultForExport = (r: RoundResult | TestResult) => ({
+      id: r.id,
+      name: r.name,
+      status: r.status as 'success' | 'failed' | 'stopped',
+      executionTime: r.executionTime,
+      totalCost: r.totalCost,
+      promptTokens: r.promptTokens,
+      completionTokens: r.completionTokens,
+      totalTokens: r.totalTokens,
+      toolCalls: r.toolCalls,
+      toolStats: r.toolCallDetails ? computeToolStats(r.toolCallDetails) : undefined,
+      contextBreakdowns: r.contextBreakdowns,
+      assertionScore: r.assertionScore,
+      selfEvalCorrect: r.selfEvalCorrect,
+      exitReason: r.exitReason,
+      nudgeCount: r.nudgeCount,
+      errors: r.errors,
+      details: r.details,
+    });
+
     const rounds = roundHistory.length > 0
-      ? roundHistory.map((round, i) => ({ round: i + 1, results: round }))
+      ? roundHistory.map((round, i) => ({ round: i + 1, results: round.filter(r => !r.isSequenceHeader).map(mapResultForExport) }))
       : [{
           round: 1,
           results: testResults
-            .filter(r => r.status === 'success' || r.status === 'failed' || r.status === 'stopped')
-            .map(r => ({
-              id: r.id,
-              name: r.name,
-              status: r.status as 'success' | 'failed' | 'stopped',
-              executionTime: r.executionTime,
-              totalCost: r.totalCost,
-              promptTokens: r.promptTokens,
-              completionTokens: r.completionTokens,
-              totalTokens: r.totalTokens,
-              toolCalls: r.toolCalls,
-              toolStats: r.toolCallDetails ? computeToolStats(r.toolCallDetails) : undefined,
-              assertionScore: r.assertionScore,
-              selfEvalCorrect: r.selfEvalCorrect,
-              exitReason: r.exitReason,
-              nudgeCount: r.nudgeCount,
-              errors: r.errors,
-              details: r.details,
-            }))
+            .filter(r => (r.status === 'success' || r.status === 'failed' || r.status === 'stopped') && !r.isSequenceHeader)
+            .map(mapResultForExport)
         }];
 
     const aggregated = aggregatedResults.length > 0
@@ -956,6 +1460,42 @@ export default function TestGenerationPage() {
       }
     }
 
+    // Shell command breakdown
+    const allRoundResults = data.rounds.flatMap(r => r.results);
+    const allShellCmds: Record<string, number> = {};
+    for (const r of allRoundResults) {
+      if (r.toolStats?.shellCommands) {
+        for (const [cmd, count] of Object.entries(r.toolStats.shellCommands)) {
+          allShellCmds[cmd] = (allShellCmds[cmd] || 0) + count;
+        }
+      }
+    }
+    if (Object.keys(allShellCmds).length > 0) {
+      lines.push('');
+      lines.push('## Shell Command Breakdown');
+      lines.push('');
+      lines.push('| Command | Count |');
+      lines.push('|---------|-------|');
+      const sorted = Object.entries(allShellCmds).sort((a, b) => b[1] - a[1]);
+      for (const [cmd, count] of sorted) {
+        lines.push(`| ${cmd} | ${count} |`);
+      }
+    }
+
+    // Context breakdown (last snapshot per test = final state before last API call)
+    const testsWithBreakdown = allRoundResults.filter(r => r.contextBreakdowns && r.contextBreakdowns.length > 0);
+    if (testsWithBreakdown.length > 0) {
+      lines.push('');
+      lines.push('## Context Breakdown (chars at final API call)');
+      lines.push('');
+      lines.push('| Test | System | User | Asst Text | Tool Args | Tool Results | Reasoning | Total |');
+      lines.push('|------|--------|------|-----------|-----------|-------------|-----------|-------|');
+      for (const r of testsWithBreakdown) {
+        const b = r.contextBreakdowns![r.contextBreakdowns!.length - 1];
+        lines.push(`| ${r.name} | ${b.systemPromptChars.toLocaleString()} | ${b.userMessageChars.toLocaleString()} | ${b.assistantTextChars.toLocaleString()} | ${b.toolCallArgChars.toLocaleString()} | ${b.toolResultChars.toLocaleString()} | ${b.reasoningChars.toLocaleString()} | ${b.totalChars.toLocaleString()} |`);
+      }
+    }
+
     lines.push('');
     lines.push('---');
     lines.push('*Generated by OSW Studio Benchmark*');
@@ -977,7 +1517,7 @@ export default function TestGenerationPage() {
   return (
     <div className="h-screen flex flex-col">
       <AppHeader
-        leftText="OSWS Benchmark"
+        leftText={<>OSWS Benchmark <span className="text-xs font-normal text-muted-foreground ml-1">v260520</span></>}
         onLogoClick={() => router.push('/')}
         actions={headerActions}
       />
@@ -985,41 +1525,62 @@ export default function TestGenerationPage() {
       <div className="flex-1 overflow-auto bg-background p-6">
         <div className="max-w-6xl mx-auto">
 
-        {/* Info Banner */}
-        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-1">How to Interpret Benchmark Results</h3>
-              <p className="text-sm text-blue-800 dark:text-blue-200">
-                This benchmark evaluates how well a model performs with OSW Studio&apos;s agentic tools (shell + status).
-                A <strong>passing test</strong> means the model completed the task using the right tools.
-                A <strong>failing test</strong> means the model couldn&apos;t complete the task or encountered errors.
-              </p>
-              <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
-                <strong>Tip:</strong> Select your preferred provider and model below to benchmark specific configurations.
-                The generation output will show you what the AI is doing during execution.
+        {/* Benchmark Info */}
+        <div className="border rounded-lg mb-6 overflow-hidden">
+          <div className="px-4 py-3 text-sm">
+            Evaluates how well a model performs with OSW Studio&apos;s agentic tool system.
+            Select a provider and model, then run individual tracks or all tests.
+            Sequences chain multiple prompts in one agent session to test multi-step workflows.
+            Results include hard assertions (tool usage patterns, file state) and an optional judge model assessment.
+          </div>
+          {showBenchmarkInfo && (
+            <div className="px-4 pb-4 text-sm border-t pt-3 space-y-3">
+              <div>
+                <h4 className="font-medium text-foreground mb-1">How it works</h4>
+                <p>
+                  Each test creates a virtual file system project, initializes an AI orchestrator with the selected model,
+                  and sends one or more prompts. The orchestrator has access to a <code className="text-xs bg-muted px-1 py-0.5 rounded">shell</code> tool
+                  for file operations (cat, sed, grep, mkdir, etc.) and a <code className="text-xs bg-muted px-1 py-0.5 rounded">status</code> command
+                  for signaling task completion. After execution, assertions verify that the model used the right tools and produced correct output.
+                </p>
+              </div>
+              <div>
+                <h4 className="font-medium text-foreground mb-1">Standalone vs Sequences</h4>
+                <p>
+                  <strong>Standalone tests</strong> run a single prompt on a fresh project &mdash; used for setup agent tests
+                  where each scenario needs an isolated environment.
+                  <strong> Sequences</strong> chain multiple prompts on the same project and orchestrator, testing multi-turn
+                  capabilities (read &rarr; edit &rarr; verify) in a single agent session. This mirrors real usage and
+                  reduces token overhead by sharing the system prompt across steps.
+                </p>
+              </div>
+              <div>
+                <h4 className="font-medium text-foreground mb-1">Assertions</h4>
+                <p>
+                  <strong>Hard assertions</strong> check tool call arguments (<code className="text-xs bg-muted px-1 py-0.5 rounded">tool_args_match</code>),
+                  file existence (<code className="text-xs bg-muted px-1 py-0.5 rounded">file_exists</code> / <code className="text-xs bg-muted px-1 py-0.5 rounded">file_not_exists</code>),
+                  file content (<code className="text-xs bg-muted px-1 py-0.5 rounded">file_content_match</code>),
+                  and model output (<code className="text-xs bg-muted px-1 py-0.5 rounded">output_matches</code>).
+                  The optional <strong>judge model</strong> provides a second-opinion quality assessment on top of hard assertions.
+                </p>
+              </div>
+              <div>
+                <h4 className="font-medium text-foreground mb-1">Cost</h4>
+                <p>
+                  Running the full benchmark uses significant API tokens. A full &ldquo;All&rdquo; run typically costs $0.30&ndash;$1.00+
+                  depending on the model. Sequences are more token-efficient than running equivalent standalone tests since they
+                  share a single system prompt across multiple steps. Run individual tracks to keep costs down while iterating.
+                </p>
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* Cost Warning Banner */}
-        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mb-6">
-          <div className="flex items-start gap-3">
-            <div className="text-amber-600 dark:text-amber-400 mt-0.5">💡</div>
-            <div className="flex-1">
-              <h3 className="font-medium text-amber-900 dark:text-amber-100 mb-1">Cost Warning</h3>
-              <p className="text-sm text-amber-800 dark:text-amber-200">
-                Running benchmarks can be <strong>very expensive</strong> and likely isn&apos;t necessary.
-                It&apos;s cheaper and easier to just use good models and research community feedback about agentic capabilities.
-              </p>
-              <p className="text-sm text-amber-800 dark:text-amber-200 mt-2">
-                This benchmark is for evaluating how models perform with OSW Studio&apos;s agentic system
-                and using those results to improve it.
-              </p>
-            </div>
-          </div>
+          )}
+          <button
+            onClick={() => setShowBenchmarkInfo(!showBenchmarkInfo)}
+            className="w-full px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors flex items-center justify-center gap-1 border-t"
+          >
+            {showBenchmarkInfo ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {showBenchmarkInfo ? 'Less' : 'More'}
+          </button>
         </div>
 
         {/* Round progress indicator */}
@@ -1189,6 +1750,26 @@ export default function TestGenerationPage() {
             </button>
           </div>
 
+          <div className="inline-flex items-center rounded-md border border-input">
+            <button
+              onClick={() => setConcurrency(c => Math.max(1, c - 1))}
+              disabled={isRunning || concurrency <= 1}
+              className="h-9 w-8 inline-flex items-center justify-center rounded-l-md hover:bg-accent disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <Minus className="h-3 w-3" />
+            </button>
+            <span className="h-9 px-2 inline-flex items-center justify-center text-sm font-medium min-w-[5rem] border-x border-input select-none">
+              {concurrency}x Parallel
+            </span>
+            <button
+              onClick={() => setConcurrency(c => Math.min(8, c + 1))}
+              disabled={isRunning || concurrency >= 8}
+              className="h-9 w-8 inline-flex items-center justify-center rounded-r-md hover:bg-accent disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+          </div>
+
           {testTracks.map(track => (
             <Button
               key={track.id}
@@ -1201,12 +1782,20 @@ export default function TestGenerationPage() {
             </Button>
           ))}
           <Button
+            onClick={() => runTrack('sequences')}
+            disabled={isRunning}
+            variant={activeTrack === 'sequences' ? 'default' : 'outline'}
+          >
+            <Play className="h-4 w-4 mr-2" />
+            Sequences ({testSequences.length})
+          </Button>
+          <Button
             onClick={() => runTrack('all')}
             disabled={isRunning}
             variant={activeTrack === 'all' ? 'default' : 'outline'}
           >
             <Play className="h-4 w-4 mr-2" />
-            All ({allScenarioIds.length})
+            All ({allScenarioIds.length + testSequences.length})
           </Button>
           {isRunning ? (
             <Button variant="destructive" onClick={stopBenchmark}>
@@ -1235,8 +1824,215 @@ export default function TestGenerationPage() {
           )}
         </div>
 
-        {/* Test Results — grouped by track */}
+        {/* Test Results — grouped by track + sequences */}
         <div className="space-y-8">
+          {/* Sequences */}
+          {testResults.some(r => r.isSequenceHeader || r.sequenceId) && (
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="h-px flex-1 bg-border" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                  Sequences
+                </h2>
+                <span className="text-xs text-muted-foreground">Multi-step chained tests</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
+              <div className="grid gap-4">
+                {testSequences.map(seq => {
+                  const headerResult = testResults.find(r => r.id === seq.id && r.isSequenceHeader);
+                  const stepResults = testResults.filter(r => r.sequenceId === seq.id);
+                  if (!headerResult) return null;
+
+                  return (
+                    <div key={seq.id} className="bg-card border rounded-lg overflow-hidden">
+                      {/* Sequence header */}
+                      <div className="p-4">
+                        <div className="flex items-center justify-between mb-1">
+                          <div>
+                            <div className="flex items-center gap-2 font-medium">
+                              {getStatusIcon(headerResult.status)}
+                              {seq.name}
+                              <span className="text-sm font-normal text-muted-foreground">
+                                ({seq.steps.length} steps)
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {headerResult.executionTime && (
+                              <span className="text-sm text-muted-foreground">
+                                {(headerResult.executionTime / 1000).toFixed(1)}s
+                              </span>
+                            )}
+                            {headerResult.status === 'running' && runningTests.has(seq.id) ? (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => stopTest(seq.id)}
+                              >
+                                <Square className="h-3 w-3 mr-1" />
+                                Stop
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => runSequence(seq.id)}
+                                disabled={isRunning}
+                              >
+                                <Play className="h-3 w-3 mr-1" />
+                                Run
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setExpandedTests(prev => {
+                                  const newSet = new Set(prev);
+                                  if (newSet.has(seq.id)) {
+                                    newSet.delete(seq.id);
+                                  } else {
+                                    newSet.add(seq.id);
+                                  }
+                                  return newSet;
+                                });
+                              }}
+                            >
+                              {expandedTests.has(seq.id) ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Aggregate stats for completed sequence */}
+                        {(headerResult.status === 'success' || headerResult.status === 'failed') && (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground mt-1">
+                            {headerResult.totalCost !== undefined && (
+                              <span><strong className="text-foreground">Cost:</strong> {formatCost(headerResult.totalCost)}</span>
+                            )}
+                            {headerResult.totalTokens !== undefined && (
+                              <span><strong className="text-foreground">Tokens:</strong> {headerResult.totalTokens.toLocaleString()}</span>
+                            )}
+                            {headerResult.toolCalls !== undefined && (
+                              <span><strong className="text-foreground">Tools:</strong> {headerResult.toolCalls}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Step rows */}
+                      {expandedTests.has(seq.id) && stepResults.length > 0 && (
+                        <div className="border-t">
+                          {stepResults.map(stepResult => {
+                            const stepDef = seq.steps.find(s => s.id === stepResult.id);
+                            return (
+                              <div key={stepResult.id} className="border-b last:border-b-0">
+                                <div className="px-4 py-3 bg-muted/20">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2 text-sm">
+                                      {getStatusIcon(stepResult.status)}
+                                      <span className="font-medium">{stepResult.name}</span>
+                                      {stepDef && (
+                                        <span className="text-xs text-muted-foreground truncate max-w-md">
+                                          — {stepDef.prompt.substring(0, 80)}{stepDef.prompt.length > 80 ? '...' : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {stepResult.executionTime && (
+                                        <span className="text-xs text-muted-foreground">
+                                          {(stepResult.executionTime / 1000).toFixed(1)}s
+                                        </span>
+                                      )}
+                                      {stepResult.totalTokens !== undefined && (
+                                        <span className="text-xs text-muted-foreground">
+                                          {stepResult.totalTokens.toLocaleString()} tok
+                                        </span>
+                                      )}
+                                      {(stepResult.generationOutput || expandedTests.has(stepResult.id)) && (
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          className="h-6 w-6 p-0"
+                                          onClick={() => {
+                                            setExpandedTests(prev => {
+                                              const newSet = new Set(prev);
+                                              if (newSet.has(stepResult.id)) {
+                                                newSet.delete(stepResult.id);
+                                              } else {
+                                                newSet.add(stepResult.id);
+                                              }
+                                              return newSet;
+                                            });
+                                          }}
+                                        >
+                                          {expandedTests.has(stepResult.id) ? (
+                                            <ChevronUp className="h-3 w-3" />
+                                          ) : (
+                                            <ChevronDown className="h-3 w-3" />
+                                          )}
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Step assertions */}
+                                  {stepResult.assertionResults && stepResult.assertionResults.length > 0 && (
+                                    <div className="mt-1 space-y-0.5 font-mono text-xs">
+                                      {stepResult.assertionResults.map((ar, i) => (
+                                        <div key={i} className="flex items-start gap-1.5">
+                                          <span className={ar.passed ? 'text-green-500' : 'text-red-500'}>
+                                            {ar.passed ? '✓' : '✗'}
+                                          </span>
+                                          <span className={ar.passed ? 'text-muted-foreground' : 'text-foreground'}>
+                                            {ar.assertion.description}
+                                          </span>
+                                          {!ar.passed && ar.actual && (
+                                            <span className="text-red-400 truncate max-w-sm">— {ar.actual}</span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {stepResult.errors && stepResult.errors.length > 0 && (
+                                    <div className="mt-1 text-xs text-red-600">
+                                      {stepResult.errors.join(', ')}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Step generation output */}
+                                {expandedTests.has(stepResult.id) && stepResult.generationOutput && (
+                                  <div className="px-4 py-2 bg-muted/10">
+                                    <div
+                                      className="bg-muted/50 rounded-md p-3 max-h-48 overflow-y-auto"
+                                      ref={(el) => {
+                                        if (el) generationOutputRefs.current.set(stepResult.id, el);
+                                      }}
+                                    >
+                                      <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/80">
+                                        {stepResult.generationOutput}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {testTracks.map(track => {
             const report = trackReports[track.id];
             return (
@@ -1279,7 +2075,7 @@ export default function TestGenerationPage() {
                                 {(result.executionTime / 1000).toFixed(1)}s
                               </span>
                             )}
-                            {result.status === 'running' && runningTest === result.id ? (
+                            {result.status === 'running' && runningTests.has(result.id) ? (
                               <Button
                                 size="sm"
                                 variant="destructive"

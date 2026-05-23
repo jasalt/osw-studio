@@ -33,7 +33,7 @@ interface AppHeaderProps {
   mobileMenuContent?: React.ReactNode;
   desktopOnlyContent?: React.ReactNode; // Content shown only on desktop
   className?: string;
-  leftText?: string; // Text to show next to logo on desktop, centered on mobile
+  leftText?: React.ReactNode; // Text to show next to logo on desktop, centered on mobile
   leftSubtext?: string; // Secondary line below leftText on mobile (e.g. active panel name)
   mobileVisibleActions?: string[]; // Action IDs to show outside dropdown on mobile
   viewTabs?: ViewTab[]; // View tabs for switching between sections

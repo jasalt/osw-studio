@@ -79,5 +79,8 @@ project_dump.txt
 *.dump
 analysis.md
 
+# Dev scripts (not shipped)
+/scripts/
+
 # Development planning docs
 docs/superpowers/

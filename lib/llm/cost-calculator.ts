@@ -62,7 +62,7 @@ export const PROVIDER_PRICING: Record<string, { input: number; output: number; r
   'lmstudio/local': { input: 0, output: 0 },
 };
 
-const DEFAULT_PRICING = { input: 1.00, output: 2.00 };
+const ZERO_PRICING = { input: 0, output: 0 };
 const MIN_MEANINGFUL_COST = 0.000001;
 
 export class CostCalculator {
@@ -88,10 +88,6 @@ export class CostCalculator {
     const dynamicPricing = this.getDynamicPricing(provider, model);
     const staticPricing = PROVIDER_PRICING[pricingKey];
     const pricing = dynamicPricing || staticPricing || this.findBestPricingMatch(provider, model);
-
-    if (!dynamicPricing && !staticPricing) {
-      logger.warn(`[CostCalculator] Falling back to default pricing for ${pricingKey}`);
-    }
 
     let computedCost = 0;
 
@@ -139,10 +135,6 @@ export class CostCalculator {
       }
     }
 
-    if (usageInfo.isEstimated && (provider === 'openrouter' || provider.toString().includes('openrouter'))) {
-      logger.debug('[CostCalculator] Using token-based cost estimate for OpenRouter (no cost in response headers).');
-    }
-
     return finalCost;
   }
   
@@ -160,9 +152,9 @@ export class CostCalculator {
   /**
    * Find best matching pricing for a model
    */
-  private static findBestPricingMatch(provider: string, model: string): typeof DEFAULT_PRICING {
+  private static findBestPricingMatch(provider: string, model: string): { input: number; output: number; reasoning?: number } {
     const searchKey = `${provider}/`;
-    
+
     for (const [key, pricing] of Object.entries(PROVIDER_PRICING)) {
       if (key.startsWith(searchKey)) {
         const modelPart = key.substring(searchKey.length);
@@ -171,12 +163,8 @@ export class CostCalculator {
         }
       }
     }
-    
-    if (provider === 'ollama' || provider === 'lmstudio') {
-      return { input: 0, output: 0 };
-    }
-    
-    return DEFAULT_PRICING;
+
+    return ZERO_PRICING;
   }
 
   private static getDynamicPricing(provider: string, model: string): ProviderPricingEntry | null {
@@ -220,7 +208,7 @@ export class CostCalculator {
   /**
    * Get pricing info for a specific model
    */
-  static getPricing(provider: string, model: string): typeof DEFAULT_PRICING {
+  static getPricing(provider: string, model: string): { input: number; output: number; reasoning?: number } {
     const pricingKey = this.getPricingKey(provider, model);
     return PROVIDER_PRICING[pricingKey] || this.findBestPricingMatch(provider, model);
   }

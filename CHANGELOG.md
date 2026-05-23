@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.68.0 - 2026-05-23
+
+### Benchmark
+
+- **Test sequences**: Multiple test steps run on a single orchestrator/project, reducing redundant system prompt cost and setup overhead. 12 sequences with ~51 steps replace 62 standalone tests. Grouped row UI with expandable step details and per-step generation output.
+- **Parallel test execution**: Tests run concurrently with a configurable concurrency limit (1–8, default 3).
+- **Per-component context breakdown**: Each API call records char counts for system prompt, user messages, assistant text, tool call args, tool results, and reasoning. Exported as per-test tables in benchmark reports.
+- **Shell command breakdown**: Export includes per-command usage counts (cat, rg, ss, grep, etc.) across all tests.
+- **Reasoning display**: Reasoning/thinking deltas appear in generation output as `[thinking]` blocks with middle-out truncation (300 char cap).
+- **Benchmark info panel**: Collapsible info section replaces static banners. Four-line summary visible by default; expandable details on how the benchmark works.
+- **Benchmark version label**: Header shows version identifier for tracking configuration changes across runs.
+- **Setup agent improvements**: Setup prompt prefers proposing project creation over asking clarifying questions. Agent-type-aware error messages for hallucinated tool calls.
+- **Fixed sequence token double-counting**: Steps were adding cumulative totals instead of per-step deltas, inflating reported tokens by ~2x.
+- **Fixed export double-counting**: Markdown/JSON export summed both sequence headers and step rows, producing ~2x the real cost.
+
+### Cost Tracking
+
+- **Accurate provider costs**: Reads actual cost from OpenRouter responses (`json.usage.cost` and `x-openrouter-cost` header) instead of computing from static pricing tables. Previously unknown models used a $1/$2-per-million fallback — off by 3–4x for cheap models. Unknown models now report $0 instead of fabricated estimates. Also extracts `cached_tokens` from `prompt_tokens_details` for accurate cache hit reporting.
+
+### AI Orchestration
+
+- **Chained heredoc error reporting**: When multiple heredoc writes are chained and a later one fails, the output reports how many commands succeeded before the error. Also detects heredoc parsing failures (`<<` as file path) and returns actionable guidance.
+- **Fixed streaming parser losing tool call arguments**: When a provider omitted `tc.index` on subsequent tool call chunks, argument fragments were routed to an orphaned buffer and silently lost. The parser now tracks the last indexed tool call as fallback.
+
+### UI
+
+- **Reasoning preview**: Joins lines with spaces for a meaningful summary instead of showing just the first word of a reasoning block.
+
 ## v1.67.1 - 2026-05-19
 
 ### Performance

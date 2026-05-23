@@ -32,6 +32,25 @@ export interface TestScenario {
   skipProjectSetup?: boolean;
 }
 
+export interface TestStep {
+  id: string;
+  name: string;
+  prompt: string;
+  assertions?: TestAssertion[];
+  timeout?: number;
+}
+
+export interface TestSequence {
+  id: string;
+  name: string;
+  category: string;
+  setupFiles?: Record<string, string>;
+  steps: TestStep[];
+  agentType?: import('@/lib/llm/agent').AgentType;
+  skipProjectSetup?: boolean;
+  requires?: ('compaction')[];
+}
+
 export interface TestTrack {
   id: string;
   name: string;

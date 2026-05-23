@@ -359,7 +359,7 @@ Reuse snippets from earlier in the conversation when possible.
 
 The user sees a live preview that updates as you write files — you cannot see it.
 After writing code, run build to check for errors, then run status when done.
-Do not run diagnostic loops (repeated curl/grep/rg/wc) to verify visual output — you cannot assess rendering from raw HTML.
+Use curl to inspect compiled page content when needed, but sparingly — each call is expensive. Avoid repeated curl/grep loops; one targeted fetch is usually enough.
 
 Delegate to keep your context focused — sub-agents explore or edit independently and return a summary:
   ${modelSupportsTools ? 'shell({ cmd: "delegate explore \'What colors are used?\' \'What fonts?\' \'What layout patterns?\'" })' : '```bash\ndelegate explore \'What colors are used?\' \'What fonts?\' \'What layout patterns?\'\n```'}
