@@ -471,7 +471,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
         <div>
           <div className="text-sm font-medium">Auto-compact</div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Summarize conversation history when approaching the context limit
+            Summarize conversation when reaching 60% of the model&apos;s context limit
           </p>
         </div>
         <Switch
@@ -490,7 +490,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
             Compaction limit (tokens)
           </label>
           <p className="text-xs text-muted-foreground">
-            Leave empty for automatic detection (model default or 128K fallback).
+            Leave empty to auto-detect (60% of model context). Manual values are used as-is.
           </p>
           <input
             type="number"

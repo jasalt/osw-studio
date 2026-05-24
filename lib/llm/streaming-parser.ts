@@ -407,9 +407,21 @@ export async function parseStreamingResponse(
                     if (rd.signature) {
                       reasoningDetails[existingIdx].signature = rd.signature;
                     }
+                  } else if (!rd.id && rd.text && !rd.signature && reasoningDetails.length > 0) {
+                    // No id, text-only, and we already have entries — this is an
+                    // incremental streaming chunk. Merge into the last entry of the
+                    // same type to avoid creating one array element per token.
+                    const last = reasoningDetails[reasoningDetails.length - 1];
+                    if (last.type === rd.type && !last.signature && !last.id) {
+                      last.text = (last.text || '') + rd.text;
+                    } else {
+                      reasoningDetails.push(rd as ReasoningDetail);
+                    }
+                    if (rd.text && !suppressAssistantDelta && !handledReasoningDelta) {
+                      onProgress?.('reasoning_delta', { text: rd.text });
+                    }
                   } else {
                     reasoningDetails.push(rd as ReasoningDetail);
-                    // Emit delta for new reasoning detail — gated as above.
                     if (rd.text && !suppressAssistantDelta && !handledReasoningDelta) {
                       onProgress?.('reasoning_delta', { text: rd.text });
                     }
@@ -589,6 +601,17 @@ export async function parseStreamingResponse(
       wasTruncated = true;
     }
     onProgress?.('stream_timeout', {});
+  }
+
+  // Ensure reasoning text is preserved in reasoningDetails for multi-turn replay.
+  // If delta.reasoning populated the reasoning buffer but reasoningDetails has no
+  // text entries (e.g., DeepSeek without structured details, or Anthropic thinking),
+  // create a synthetic entry so the next turn can pass it back via reasoning_content.
+  if (reasoning) {
+    const hasTextEntry = reasoningDetails.some(rd => rd.text && rd.text.length > 0);
+    if (!hasTextEntry) {
+      reasoningDetails.unshift({ type: 'thinking', text: reasoning });
+    }
   }
 
   // Pass tool calls as-is - let tool-registry handle JSON repair with smart strategies

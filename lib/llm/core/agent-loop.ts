@@ -1,0 +1,625 @@
+// lib/llm/core/agent-loop.ts
+// Portable agent execution loop — no browser imports, no VFS, no Next.js, no configManager.
+// Coordinates: ProviderAdapter, ToolExecutor, ContextManager, ProgressReporter, CostTracker.
+
+import type {
+  ProviderAdapter,
+  ToolExecutor,
+  ContextManager,
+  ProgressReporter,
+  CostTracker,
+  AgentLoopConfig,
+  AgentLoopResult,
+  ParsedResponse,
+  ToolResult,
+  ToolCall,
+  ToolExecContext,
+  ContentBlock,
+} from './types';
+
+// --- Helper functions ---
+
+/** Harmony format token pattern (GPT-OSS and other harmony-format models) */
+const HARMONY_TOKEN_RE = /<\|[^|]*\|>/;
+
+/**
+ * Detect if content contains malformed tool calls written as text/markdown
+ * instead of proper function calling invocations.
+ */
+function detectMalformedToolCalls(content: string): boolean {
+  if (!content) return false;
+
+  const patterns = [
+    /```(?:shell|bash|sh)\s*\n[\s\S]*?\n```/,
+    /^shell\s*\{\s*["']?cmd["']?\s*:/m,
+    /^shell\s*\[\s*["']/m,
+    /```json\s*\n\s*\{\s*["']?cmd["']?\s*:/,
+  ];
+
+  const hasPattern = patterns.some(p => p.test(content));
+  if (!hasPattern) return false;
+
+  const trimmed = content.trim();
+  if (trimmed.length < 200) return true;
+
+  const endsWithToolPattern = /shell\s*\{\s*["']?cmd["']?\s*:.*\}\s*$/.test(trimmed) ||
+                               /```(?:shell|bash|sh)\s*\n[\s\S]*?\n```\s*$/.test(trimmed);
+  return endsWithToolPattern;
+}
+
+/**
+ * Extract shell commands from text when the model doesn't support native tool calling.
+ */
+function extractToolCallsFromText(content: string): ToolCall[] | undefined {
+  if (!content) return undefined;
+
+  const commands: string[] = [];
+  let match;
+
+  // Pattern 1: ```bash/shell/sh code blocks
+  const bashBlockRe = /```(?:bash|shell|sh)\s*\n([\s\S]*?)\n```/g;
+  while ((match = bashBlockRe.exec(content)) !== null) {
+    const block = match[1].trim();
+    if (block) commands.push(block);
+  }
+
+  // Pattern 2: ```tool_code blocks (Gemini-style)
+  const toolCodeRe = /```tool_code\s*\n([\s\S]*?)\n```/g;
+  while ((match = toolCodeRe.exec(content)) !== null) {
+    const block = match[1].trim();
+    const runCmdMatch = block.match(/shell\.run_command\(["']([\s\S]*?)["']\)/);
+    if (runCmdMatch) {
+      commands.push(runCmdMatch[1].replace(/\\"/g, '"'));
+    }
+  }
+
+  // Pattern 3: shell{"cmd": "..."} or shell({"cmd": "..."})
+  const shellJsonRe = /shell\s*\(?\s*\{\s*["']?cmd["']?\s*:\s*["']([\s\S]*?)["']\s*\}\s*\)?/g;
+  while ((match = shellJsonRe.exec(content)) !== null) {
+    if (match[1].trim()) commands.push(match[1].trim());
+  }
+
+  if (commands.length === 0) return undefined;
+
+  return commands.map((cmd, i) => ({
+    id: `text-tool-${Date.now()}-${i}`,
+    type: 'function' as const,
+    function: {
+      name: 'shell',
+      arguments: JSON.stringify({ cmd }),
+    },
+  }));
+}
+
+/**
+ * Generate a normalized signature for a tool call to detect duplicates.
+ */
+function getToolCallSignature(toolCall: ToolCall): string {
+  const toolName = toolCall.function?.name || 'unknown';
+  try {
+    const args = JSON.parse(toolCall.function.arguments);
+    if (toolName === 'shell') {
+      const cmd = Array.isArray(args.cmd)
+        ? args.cmd.join(' ')
+        : String(args.cmd || '');
+      return `${toolName}:${cmd}`;
+    }
+    return `${toolName}:${toolCall.function.arguments}`;
+  } catch {
+    return `${toolName}:${toolCall.function.arguments}`;
+  }
+}
+
+/**
+ * Detect repeating patterns in a window of tool call signatures.
+ * Checks for cycles of length 2-4 that repeat at least `threshold` times.
+ * Returns the cycle length if found, null otherwise.
+ */
+function detectRepeatingPattern(signatures: string[], threshold: number): number | null {
+  const len = signatures.length;
+  for (let cycleLen = 2; cycleLen <= 4; cycleLen++) {
+    if (len < cycleLen * threshold) continue;
+    const checkLen = cycleLen * threshold;
+    const tail = signatures.slice(len - checkLen);
+    const cycle = tail.slice(0, cycleLen);
+    let isRepeating = true;
+    for (let i = cycleLen; i < checkLen; i++) {
+      if (tail[i] !== cycle[i % cycleLen]) {
+        isRepeating = false;
+        break;
+      }
+    }
+    if (isRepeating) return cycleLen;
+  }
+  return null;
+}
+
+// --- Constants ---
+
+const MALFORMED_TOOL_CALL_ERROR = `⛔ CRITICAL ERROR: You wrote a tool call as TEXT instead of invoking it.
+
+This is WRONG - you wrote text like:
+  shell{"cmd": "..."}
+  \`\`\`shell
+  command
+  \`\`\`
+
+This is RIGHT - invoke tools directly via function calling:
+  Call shell tool with parameter cmd="your command"
+
+You MUST use function calling. DO NOT write tool syntax as text.
+STOP writing text. START invoking tools. Try again NOW.`;
+
+const MALFORMED_TOOL_CALL_PERSISTENT_REMINDER = `
+
+⚠️ REMINDER: You have been writing tool calls as text instead of invoking them.
+EVERY time you want to use a tool, you MUST invoke it via function calling.
+DO NOT write shell{"cmd":...} as text - INVOKE the tools directly.`;
+
+const NUDGE_MESSAGE = 'Before finishing, run the status command:\n  status --task "..." --done "..." --remaining "..." --complete';
+
+const TOOL_ERROR_RETRY_MESSAGE = 'Your previous command failed (likely a streaming issue). Continue your work — retry writing the file. If the file is large, split it into multiple smaller cat commands.';
+
+const MAX_MALFORMED_RETRIES = 2;
+const MALFORMED_THRESHOLD_FOR_REMINDER = 3;
+const PATTERN_REPEAT_THRESHOLD = 2;
+const PATTERN_WINDOW_SIZE = 8;
+
+// --- Status result type ---
+
+interface StatusResult {
+  task: string;
+  done: string;
+  remaining: string;
+  complete: boolean;
+  hasExplicitFlag: boolean;
+}
+
+// --- AgentLoop class ---
+
+export class AgentLoop {
+  private stopped = false;
+  private abortController = new AbortController();
+  private turnCount = 0;
+  private toolCallCount = 0;
+  private nudgeCount = 0;
+  private malformedToolCallRetries = 0;
+  private totalMalformedToolCalls = 0;
+  private lastToolCallSignature: string | null = null;
+  private duplicateToolCallCount = 0;
+  private recentToolSignatures: string[] = [];
+  private lastIterationHadToolError = false;
+  private lastStatusResult: StatusResult | null = null;
+
+  private config: AgentLoopConfig;
+  private provider: ProviderAdapter;
+  private executor: ToolExecutor;
+  private context: ContextManager;
+  private progress: ProgressReporter;
+  private cost: CostTracker;
+
+  constructor(deps: {
+    config: AgentLoopConfig;
+    provider: ProviderAdapter;
+    executor: ToolExecutor;
+    context: ContextManager;
+    progress: ProgressReporter;
+    cost: CostTracker;
+  }) {
+    this.config = deps.config;
+    this.provider = deps.provider;
+    this.executor = deps.executor;
+    this.context = deps.context;
+    this.progress = deps.progress;
+    this.cost = deps.cost;
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.abortController.abort();
+  }
+
+  async run(userPrompt: string | ContentBlock[]): Promise<AgentLoopResult> {
+    this.context.addUserMessage(userPrompt);
+    this.cost.resetTurn();
+
+    let exitReason = '';
+
+    for (let iteration = 0; iteration < this.config.maxIterations; iteration++) {
+      if (this.stopped) {
+        exitReason = 'stopped';
+        this.progress.onEvent('stopped', { reason: 'user' });
+        break;
+      }
+
+      this.progress.onEvent('iteration', {
+        current: iteration + 1,
+        max: this.config.maxIterations,
+        agent: this.config.agentType,
+      });
+      this.progress.onEvent('waiting', {});
+
+      // Call provider
+      let response: ParsedResponse;
+      try {
+        response = await this.provider.call({
+          messages: this.context.getMessages(),
+          tools: this.executor.getDefinitions(this.config.agentType),
+          signal: this.abortController.signal,
+        });
+      } catch (error) {
+        if (this.stopped) {
+          exitReason = 'stopped';
+          this.progress.onEvent('stopped', { reason: 'user' });
+          break;
+        }
+        if (this.config.onPausableError && error instanceof Error) {
+          const action = await this.config.onPausableError(error);
+          if (action === 'stop') {
+            exitReason = 'error_stop';
+            break;
+          }
+          // 'continue' - inject error feedback and retry
+          this.context.addUserMessage(`⚠️ ${error.message}\n\nPlease try a different approach.`);
+          continue;
+        }
+        throw error;
+      }
+
+      this.turnCount++;
+
+      // Record usage/cost
+      if (response.usage) {
+        this.cost.record(response.usage, this.provider.getProvider(), this.provider.getModel());
+      }
+
+      // Filter harmony artifacts from tool calls
+      if (response.toolCalls && response.toolCalls.length > 0) {
+        response.toolCalls = response.toolCalls.filter(tc => {
+          const rawName = tc.function?.name || '';
+          return !HARMONY_TOKEN_RE.test(rawName);
+        });
+        if (response.toolCalls.length === 0) {
+          response.toolCalls = undefined;
+        }
+      }
+
+      // For models without native tool support: extract tool calls from text
+      if (!this.provider.supportsTools() && response.content && (!response.toolCalls || response.toolCalls.length === 0)) {
+        const extracted = extractToolCallsFromText(response.content);
+        if (extracted && extracted.length > 0) {
+          response.toolCalls = extracted;
+        }
+      }
+
+      // Detect malformed tool calls (tools WERE sent but model wrote text)
+      if (this.provider.supportsTools() && response.content && (!response.toolCalls || response.toolCalls.length === 0)) {
+        if (detectMalformedToolCalls(response.content)) {
+          this.malformedToolCallRetries++;
+          this.totalMalformedToolCalls++;
+
+          if (this.malformedToolCallRetries <= MAX_MALFORMED_RETRIES) {
+            this.context.addAssistantTurn({ content: response.content });
+            let errorMessage = MALFORMED_TOOL_CALL_ERROR;
+            if (this.totalMalformedToolCalls >= MALFORMED_THRESHOLD_FOR_REMINDER) {
+              errorMessage += MALFORMED_TOOL_CALL_PERSISTENT_REMINDER;
+            }
+            this.context.addUserMessage(errorMessage);
+            this.progress.onEvent('malformed_tool_call', {
+              retry: this.malformedToolCallRetries,
+              maxRetries: MAX_MALFORMED_RETRIES,
+              totalFailures: this.totalMalformedToolCalls,
+            });
+            continue;
+          }
+          // Over consecutive limit - fall through
+        }
+      } else if (response.toolCalls && response.toolCalls.length > 0) {
+        this.malformedToolCallRetries = 0;
+      }
+
+      // --- NO TOOL CALLS: model wants to finish ---
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        const hasContent = !!(response.content && response.content.trim());
+
+        // Explore/plan/setup agents exit immediately
+        if (this.config.agentType === 'explore' || this.config.agentType === 'plan' || this.config.agentType === 'setup') {
+          if (hasContent) {
+            this.context.addAssistantTurn({ content: response.content });
+          }
+          exitReason = 'agent_type_exit';
+          break;
+        }
+
+        if (hasContent) {
+          this.context.addAssistantTurn({ content: response.content });
+        }
+
+        // Check structured status result
+        if (this.lastStatusResult) {
+          if (this.lastStatusResult.complete) {
+            const gateResult = await this.runCompletionGate();
+            if (gateResult) {
+              this.context.addUserMessage(gateResult);
+              this.lastStatusResult = null;
+              continue;
+            }
+            exitReason = 'status_complete';
+            this.progress.onEvent('exit_reason', { reason: 'status_complete', iteration });
+            break;
+          } else if (this.lastStatusResult.hasExplicitFlag) {
+            // Explicit --incomplete flag
+            this.lastStatusResult = null;
+            this.nudgeCount = 0;
+            continue;
+          } else {
+            // No flag - check remaining field
+            const rem = this.lastStatusResult.remaining.trim().toLowerCase();
+            if (!rem || rem === 'none' || rem === 'n/a' || rem === 'nothing') {
+              const gateResult = await this.runCompletionGate();
+              if (gateResult) {
+                this.context.addUserMessage(gateResult);
+                this.lastStatusResult = null;
+                continue;
+              }
+              exitReason = 'status_remaining_empty';
+              this.progress.onEvent('exit_reason', { reason: 'status_remaining_empty', iteration });
+              break;
+            } else {
+              this.lastStatusResult = null;
+              this.nudgeCount = 0;
+              continue;
+            }
+          }
+        }
+
+        // After tool error + empty response: inject retry prompt
+        if (this.lastIterationHadToolError && !hasContent) {
+          this.lastIterationHadToolError = false;
+          this.context.addUserMessage(TOOL_ERROR_RETRY_MESSAGE);
+          this.progress.onEvent('tool_error_retry', { iteration });
+          continue;
+        }
+
+        // Nudge: ask model to report status
+        if (this.nudgeCount < this.config.maxNudges) {
+          this.nudgeCount++;
+          this.progress.onEvent('nudge', { attempt: this.nudgeCount, max: this.config.maxNudges });
+          this.context.addUserMessage(NUDGE_MESSAGE);
+          continue;
+        }
+
+        // Exhausted nudges
+        exitReason = 'nudge_exhaustion';
+        this.progress.onEvent('exit_reason', { reason: 'nudge_exhaustion', nudges: this.config.maxNudges, iteration });
+        break;
+      }
+
+      // --- HAS TOOL CALLS: execute them ---
+      const toolResults = await this.executeToolCalls(response.toolCalls);
+
+      // If execution was terminated by duplicate detection
+      if (toolResults === null) {
+        exitReason = 'loop_detected';
+        break;
+      }
+
+      // Add assistant + tool results to context
+      this.context.addAssistantTurn(response);
+      this.context.addToolResults(toolResults);
+
+      // Track tool errors
+      this.lastIterationHadToolError = toolResults.some(r => !r.success);
+
+      // Check compaction — use reported prompt tokens, fall back to local estimate
+      const promptTokens = this.cost.getTotalUsage().promptTokens || this.context.getTokenEstimate();
+      if (this.context.needsCompaction(promptTokens)) {
+        const preTokens = promptTokens;
+        const compactionUsage = await this.context.compact(this.provider);
+        if (compactionUsage) {
+          this.cost.record(compactionUsage, this.provider.getProvider(), this.provider.getModel());
+        }
+        const postEstimate = this.context.getTokenEstimate();
+        this.progress.onEvent('compaction', { preCompactTokens: preTokens, postCompactEstimate: postEstimate });
+      }
+
+      // Check signals from tool results
+      let shouldBreak = false;
+      for (const result of toolResults) {
+        if (!result.signals) continue;
+
+        if (result.signals.statusComplete) {
+          this.lastStatusResult = result.signals.statusResult as StatusResult || {
+            task: '', done: '', remaining: 'none', complete: true, hasExplicitFlag: true,
+          };
+        }
+        if (result.signals.statusResult) {
+          this.lastStatusResult = result.signals.statusResult as StatusResult;
+        }
+        if (result.signals.setupComplete) {
+          exitReason = 'setup_complete';
+          shouldBreak = true;
+        }
+        if (result.signals.awaitingUser) {
+          exitReason = 'awaiting_user';
+          shouldBreak = true;
+        }
+      }
+
+      if (shouldBreak) break;
+
+      // If statusComplete found immediately after tool execution, check gate
+      if (this.lastStatusResult?.complete) {
+        const gateResult = await this.runCompletionGate();
+        if (gateResult) {
+          this.context.addUserMessage(gateResult);
+          this.lastStatusResult = null;
+          continue;
+        }
+        exitReason = 'status_complete_post_tool';
+        this.progress.onEvent('exit_reason', { reason: 'status_complete_post_tool', iteration });
+        break;
+      }
+    }
+
+    // Determine exit reason if loop exhausted
+    if (!exitReason) {
+      exitReason = 'max_iterations';
+      this.progress.onEvent('exit_reason', { reason: 'max_iterations', maxIterations: this.config.maxIterations });
+    }
+
+    const success = exitReason === 'status_complete' ||
+                    exitReason === 'status_complete_post_tool' ||
+                    exitReason === 'status_remaining_empty' ||
+                    exitReason === 'agent_type_exit' ||
+                    exitReason === 'setup_complete' ||
+                    exitReason === 'awaiting_user';
+
+    const summary = this.buildSummary(exitReason);
+
+    return {
+      success,
+      summary,
+      totalCost: this.cost.getTotalCost(),
+      totalUsage: this.cost.getTotalUsage(),
+      toolCount: this.toolCallCount,
+      turnCount: this.turnCount,
+    };
+  }
+
+  /**
+   * Execute tool calls with duplicate/pattern detection.
+   * Returns null if execution was terminated due to loop detection.
+   */
+  private async executeToolCalls(toolCalls: ToolCall[]): Promise<ToolResult[] | null> {
+    const results: ToolResult[] = [];
+    const execContext: ToolExecContext = {
+      agentType: this.config.agentType,
+      isReadOnly: this.config.isReadOnly,
+    };
+
+    for (const toolCall of toolCalls) {
+      if (this.stopped) break;
+
+      // Duplicate detection
+      const currentSignature = getToolCallSignature(toolCall);
+
+      if (this.lastToolCallSignature === currentSignature) {
+        this.duplicateToolCallCount++;
+
+        // Return error result for duplicate
+        results.push({
+          tool_call_id: toolCall.id,
+          content: `Loop detected: Duplicate tool call #${this.duplicateToolCallCount}. Please try a different approach.`,
+          success: false,
+        });
+
+        this.progress.onEvent('tool_status', {
+          toolIndex: results.length - 1,
+          status: 'failed',
+          error: `Loop detected - duplicate tool call #${this.duplicateToolCallCount}`,
+        });
+
+        // Terminate if too many consecutive duplicates
+        if (this.duplicateToolCallCount >= this.config.maxDuplicateToolCalls) {
+          this.progress.onEvent('exit_reason', { reason: 'loop_detected', duplicates: this.duplicateToolCallCount });
+          return null;
+        }
+
+        continue;
+      }
+
+      // Reset duplicate counter on non-duplicate
+      this.duplicateToolCallCount = 0;
+      this.lastToolCallSignature = currentSignature;
+
+      // Pattern detection (sliding window)
+      this.recentToolSignatures.push(currentSignature);
+      if (this.recentToolSignatures.length > PATTERN_WINDOW_SIZE) {
+        this.recentToolSignatures.shift();
+      }
+      if (this.recentToolSignatures.length === PATTERN_WINDOW_SIZE) {
+        const repeating = detectRepeatingPattern(this.recentToolSignatures, PATTERN_REPEAT_THRESHOLD);
+        if (repeating) {
+          this.progress.onEvent('exit_reason', { reason: 'pattern_detected', cycleLength: repeating });
+          return null;
+        }
+      }
+
+      // Execute the tool
+      this.progress.onEvent('tool_status', {
+        toolIndex: results.length,
+        toolName: toolCall.function?.name,
+        status: 'executing',
+        args: toolCall.function?.arguments,
+      });
+
+      try {
+        const result = await this.executor.execute(toolCall, execContext);
+        results.push(result);
+        this.toolCallCount++;
+
+        this.progress.onEvent('tool_status', {
+          toolIndex: results.length - 1,
+          toolName: toolCall.function?.name,
+          status: result.success ? 'completed' : 'failed',
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        results.push({
+          tool_call_id: toolCall.id,
+          content: `Error: ${errorMessage}`,
+          success: false,
+        });
+        this.progress.onEvent('tool_status', {
+          toolIndex: results.length - 1,
+          toolName: toolCall.function?.name,
+          status: 'failed',
+          error: errorMessage,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Run the completion gate if configured.
+   * Returns the error string if gate rejects, null if gate accepts (or not configured).
+   */
+  private async runCompletionGate(): Promise<string | null> {
+    if (!this.config.completionGate) return null;
+    return await this.config.completionGate();
+  }
+
+  private buildSummary(exitReason: string): string {
+    switch (exitReason) {
+      case 'status_complete':
+      case 'status_complete_post_tool':
+        return 'Completed successfully (status --complete)';
+      case 'status_remaining_empty':
+        return 'Completed (no remaining work)';
+      case 'agent_type_exit':
+        return `Completed (${this.config.agentType} agent finished)`;
+      case 'setup_complete':
+        return 'Setup complete';
+      case 'awaiting_user':
+        return 'Paused awaiting user input';
+      case 'stopped':
+        return 'Stopped by user';
+      case 'error_stop':
+        return 'Stopped due to error';
+      case 'nudge_exhaustion':
+        return `Exited after ${this.config.maxNudges} nudge attempts without status`;
+      case 'loop_detected':
+        return 'Terminated due to tool call loop detection';
+      case 'max_iterations':
+        return `Reached maximum iterations (${this.config.maxIterations})`;
+      default:
+        return `Exited: ${exitReason}`;
+    }
+  }
+}
+
+// Export helpers for testing
+export { detectMalformedToolCalls, extractToolCallsFromText, getToolCallSignature, detectRepeatingPattern };

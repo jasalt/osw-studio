@@ -443,16 +443,16 @@ class ConfigManager {
 
   isCompactionEnabled(provider: ProviderId): boolean {
     const settings = this.getSettings();
-    return settings.compactionEnabled?.[provider] ?? false; // default: disabled
+    return settings.compactionEnabled?.[provider] ?? true;
   }
 
   setCompactionEnabled(provider: ProviderId, enabled: boolean): void {
     const settings = this.getSettings();
     const map = { ...settings.compactionEnabled };
     if (enabled) {
-      map[provider] = true;
+      delete map[provider];
     } else {
-      delete map[provider]; // default is false, so remove to save space
+      map[provider] = false;
     }
     this.setSetting('compactionEnabled', map);
   }

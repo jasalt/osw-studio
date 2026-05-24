@@ -303,7 +303,7 @@ export class EventProcessor {
             );
             if (toolItem) {
               const tool = toolItem.data as ToolCall;
-              if (!state.toolCmdCache.has(toolId)) {
+              if (!state.toolCmdCache.has(toolId) || state.toolCmdCache.get(toolId) === null) {
                 state.toolCmdCache.set(toolId, extractPartialCmd(accum.text));
               }
               const cachedCmd = state.toolCmdCache.get(toolId);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider, getDefaultModel } from '@/lib/llm/providers/registry';
-import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock } from '@/lib/llm/types';
+import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock, ReasoningDetail } from '@/lib/llm/types';
 import { logger } from '@/lib/utils';
 import { handleCodexGeneration } from '@/lib/llm/codex-adapter';
 
@@ -292,11 +292,13 @@ Habits:
               content.push({ type: 'text', text: msg.content });
             }
             for (const toolCall of msg.tool_calls) {
+              let input = {};
+              try { input = JSON.parse(toolCall.function.arguments || '{}'); } catch { /* malformed args from truncated stream */ }
               content.push({
                 type: 'tool_use',
                 id: toolCall.id,
                 name: toolCall.function.name,
-                input: JSON.parse(toolCall.function.arguments || '{}')
+                input,
               });
             }
 
@@ -376,14 +378,12 @@ Habits:
 
       if (!response.ok) {
         const errorText = await response.text();
-        let cleanError = errorText;
+        let cleanError: string;
         try {
           const parsed = JSON.parse(errorText);
-          if (parsed.error?.message) cleanError = parsed.error.message;
+          cleanError = parsed.error?.message || `HTTP ${response.status}`;
         } catch {
-          if (errorText.trimStart().startsWith('<!') || errorText.trimStart().startsWith('<html')) {
-            cleanError = `HTTP ${response.status} — ${response.statusText || 'check your API key and try again'}`;
-          }
+          cleanError = `HTTP ${response.status} — ${response.statusText || 'check your API key and try again'}`;
         }
         return NextResponse.json(
           { error: `Google Gemini API error: ${cleanError}` },
@@ -403,6 +403,25 @@ Habits:
           'Connection': 'keep-alive',
         },
       });
+    }
+
+    // Convert reasoning_details → reasoning_content on assistant messages for providers
+    // that require reasoning to be passed back as a string (OpenRouter/DeepSeek/Zhipu).
+    // The streaming parser stores structured reasoning_details for internal use, but
+    // the API expects reasoning_content (string) on input messages for multi-turn replay.
+    if (selectedProvider !== 'anthropic') {
+      for (const msg of processedMessages) {
+        if (msg.role === 'assistant' && msg.reasoning_details?.length) {
+          const reasoningText = msg.reasoning_details
+            .filter((rd: ReasoningDetail) => rd.text)
+            .map((rd: ReasoningDetail) => rd.text)
+            .join('');
+          if (reasoningText) {
+            (msg as Record<string, unknown>).reasoning_content = reasoningText;
+          }
+          delete (msg as Record<string, unknown>).reasoning_details;
+        }
+      }
     }
 
     // --- All other providers: OpenAI-compatible request body ---

@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.69.0 - 2026-05-25
+
+### AI Orchestration
+
+- **Orchestrator modularization**: Extracted the agent loop into a portable core layer with typed interfaces (`AgentLoop`, `ContextManager`, `ProviderAdapter`, `ToolExecutor`, `CostTracker`), enabling future agent improvements. The orchestrator is now a thin facade wiring OSWS-specific dependencies to the portable core. Public API unchanged.
+- **Fixed context compaction**: Compaction is now enabled by default and fires at 60% of the model's context length. Fixed threshold double-application, token tracking semantics, missing usage fallback, compaction responses leaking into the chat stream, and compacted history not persisting across messages. Compaction cost is included in the session total.
+- **Improved compaction prompt**: Rewrote the summarization prompt with structured sections (Task, Accomplished, Files, Current State, Remaining). Iterative compactions build on previous summaries instead of re-summarizing from scratch.
+- **Fixed reasoning multi-turn replay**: Reasoning content from thinking models (DeepSeek, Gemini, etc.) no longer degrades across conversation turns. The streaming parser merges fragmented reasoning entries and converts to the format each provider expects on replay.
+- **System prompt conciseness**: Added directives for shorter prose, action-bias, and self-correction limits to reduce overthinking and repetitive analysis.
+
+### UI
+
+- **Compaction indicator**: Shows a dashed divider with pre/post token counts when compaction occurs during a session.
+- **Compaction settings**: Updated descriptions to reflect the 60% threshold and clarified that manual limits are used as-is.
+
 ## v1.68.0 - 2026-05-23
 
 ### Benchmark

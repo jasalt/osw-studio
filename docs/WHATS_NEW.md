@@ -6,6 +6,18 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.69.0 - Modular Orchestrator (2026-05-25)
+
+The AI orchestrator has been decomposed into a portable core with typed interfaces — agent loop, context management, provider calls, and tool execution are now separate modules. Context compaction is fixed and enabled by default, so long sessions no longer hit the context wall. Thinking models maintain reasoning quality across turns.
+
+### AI Orchestration
+- **Modular architecture** — Agent loop extracted into a portable core (`AgentLoop`, `ContextManager`, `ProviderAdapter`, `ToolExecutor`, `CostTracker`), enabling future agent improvements
+- **Fixed context compaction** — Enabled by default. Summarizes older messages at 60% of context limit, with a visual indicator when compaction occurs
+- **Reasoning replay** — Thinking models no longer lose reasoning quality across conversation turns
+- **Concise responses** — The AI defaults to shorter, action-oriented answers instead of verbose narration
+
+---
+
 ## v1.68.0 - Accurate Cost Tracking (2026-05-23)
 
 Cost tracking now uses actual costs reported by providers instead of estimates from static pricing tables. Models that were previously off by 3–4x (like MiniMax) now show correct costs. The AI also recovers better from chained file write errors — when one write in a batch fails, the model knows which writes succeeded.
