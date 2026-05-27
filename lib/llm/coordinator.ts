@@ -1,5 +1,5 @@
 // lib/llm/coordinator.ts
-// Multi-agent coordinator — intercepts `delegate` commands from the orchestrator loop
+// Multi-agent coordinator — intercepts `agent` commands from the orchestrator loop
 // and spawns child AgentLoops. Passes all other tool calls through to the inner executor.
 
 import { AgentLoop } from './core/agent-loop';
@@ -32,8 +32,9 @@ export class MultiAgentCoordinator {
   private innerExecutor: ToolExecutor;
   private runningChildren = new Set<AgentLoop>();
   private stopped = false;
+  private lastAgentKey = '';
 
-  private static readonly MAX_PARALLEL_DELEGATES = 8;
+  private static readonly MAX_PARALLEL_AGENTS = 8;
 
   constructor(private config: CoordinatorConfig) {
     this.innerExecutor = config.innerExecutor;
@@ -48,7 +49,7 @@ export class MultiAgentCoordinator {
   }
 
   /**
-   * Returns a ToolExecutor that intercepts `delegate` commands and spawns child loops,
+   * Returns a ToolExecutor that intercepts `agent` commands and spawns child loops,
    * passing everything else through to the inner executor.
    */
   createWrappedExecutor(): ToolExecutor {
@@ -56,11 +57,23 @@ export class MultiAgentCoordinator {
       getDefinitions: (agentType: string) => this.innerExecutor.getDefinitions(agentType),
       execute: async (toolCall: ToolCall, context: ToolExecContext): Promise<ToolResult> => {
         const cmd = this.extractCmd(toolCall);
-        const delegates = this.parseDelegateCommand(cmd);
-        if (delegates && context.agentType === 'orchestrator') {
-          const result = await this.runDelegates(delegates);
+        const agents = this.parseAgentCommand(cmd);
+        if (agents && context.agentType === 'orchestrator') {
+          // Dedup: some models emit the same agent command as multiple tool calls in one turn.
+          // Skip if the normalized prompt set matches the last agent call.
+          const key = agents.map(a => `${a.type}:${a.prompt.trim()}`).sort().join('|');
+          if (key === this.lastAgentKey) {
+            return {
+              tool_call_id: toolCall.id,
+              content: '(Duplicate agent call — already executed this turn. Results are above.)',
+              success: true,
+            };
+          }
+          this.lastAgentKey = key;
+          const result = await this.runAgents(agents);
           return { tool_call_id: toolCall.id, content: result, success: true };
         }
+        this.lastAgentKey = '';
         return this.innerExecutor.execute(toolCall, context);
       },
     };
@@ -71,32 +84,36 @@ export class MultiAgentCoordinator {
   private extractCmd(toolCall: ToolCall): string {
     try {
       const args = JSON.parse(toolCall.function.arguments);
-      return typeof args.cmd === 'string' ? args.cmd : '';
+      const cmd = args.command ?? args.cmd;
+      return typeof cmd === 'string' ? cmd : '';
     } catch {
       return '';
     }
   }
 
   /**
-   * Parse a delegate command string into typed prompts.
+   * Parse an agent command string into typed prompts.
+   * Accepts both `agent` (primary) and `delegate` (backward compat alias).
    *
    * Forms:
-   *   delegate task "do X" "do Y"          → 2 parallel task agents
-   *   delegate explore "single question"   → 1 agent
-   *   delegate explore unquoted text       → 1 agent (backward compat)
-   *   delegate type << 'EOF'\nprompt\nEOF  → 1 agent (heredoc)
+   *   agent task "do X" "do Y"          → 2 parallel task agents
+   *   agent explore "single question"   → 1 agent
+   *   agent explore unquoted text       → 1 agent (backward compat)
+   *   agent type << 'EOF'\nprompt\nEOF  → 1 agent (heredoc)
    */
-  private parseDelegateCommand(rawCmd: string): { type: string; prompt: string }[] | null {
-    if (!rawCmd || !rawCmd.trimStart().startsWith('delegate ')) return null;
+  private parseAgentCommand(rawCmd: string): { type: string; prompt: string }[] | null {
+    if (!rawCmd) return null;
+    const start = rawCmd.trimStart();
+    if (!start.startsWith('agent ') && !start.startsWith('delegate ')) return null;
     const trimmed = rawCmd.trim();
 
-    // Heredoc: delegate type << 'EOF'\nprompt\nEOF — always single agent
-    const heredocRe = /^delegate\s+(explore|task|plan)\s*<<-?\s*['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\2\s*$/;
+    // Heredoc: agent type << 'EOF'\nprompt\nEOF — always single agent
+    const heredocRe = /^(?:agent|delegate)\s+(explore|task|plan)\s*<<-?\s*['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\2\s*$/;
     const hm = trimmed.match(heredocRe);
     if (hm) return [{ type: hm[1], prompt: hm[3].trim() }];
 
-    // Inline: delegate type followed by prompt(s)
-    const inlineRe = /^delegate\s+(explore|task|plan)\s+([\s\S]+)$/;
+    // Inline: agent type followed by prompt(s)
+    const inlineRe = /^(?:agent|delegate)\s+(explore|task|plan)\s+([\s\S]+)$/;
     const im = trimmed.match(inlineRe);
     if (!im) return null;
 
@@ -120,7 +137,7 @@ export class MultiAgentCoordinator {
   }
 
   /**
-   * Extract top-level quoted strings from a delegate command's argument portion.
+   * Extract top-level quoted strings from an agent command's argument portion.
    * Uses a state machine to handle nested quotes in HTML/code content.
    * Only splits on quotes that start after whitespace (top-level boundary).
    */
@@ -148,6 +165,7 @@ export class MultiAgentCoordinator {
       //   - whitespace then end of string
       i++; // skip opening quote
       const start = i;
+      let foundClosing = false;
 
       while (i < input.length) {
         const ch = input[i];
@@ -175,6 +193,7 @@ export class MultiAgentCoordinator {
             // This is the closing quote
             prompts.push(input.slice(start, i).trim());
             i++; // skip closing quote
+            foundClosing = true;
             break;
           }
           // Otherwise it's an inner quote — keep scanning
@@ -184,7 +203,7 @@ export class MultiAgentCoordinator {
       }
 
       // If we ran off the end without finding a closing quote, take what we have
-      if (i >= input.length) {
+      if (!foundClosing && i >= input.length) {
         const content = input.slice(start).trim();
         if (content) prompts.push(content);
       }
@@ -194,9 +213,9 @@ export class MultiAgentCoordinator {
   }
 
   /**
-   * Run one delegate child agent. Creates a fresh AgentLoop with restricted config.
+   * Run one child agent. Creates a fresh AgentLoop with restricted config.
    */
-  private async runDelegateChild(
+  private async runAgentChild(
     type: string,
     prompt: string,
     agentIndex: number
@@ -206,11 +225,11 @@ export class MultiAgentCoordinator {
     }
 
     const promptLabel = prompt.length > 80 ? prompt.slice(0, 80) + '...' : prompt;
-    this.config.progress.onEvent('delegate_progress', {
+    this.config.progress.onEvent('agent_progress', {
       type,
       event: 'agent_start',
       agentIndex,
-      delegatePrompt: promptLabel,
+      agentPrompt: promptLabel,
     });
 
     // Create fresh context for child
@@ -229,21 +248,20 @@ export class MultiAgentCoordinator {
     const childLoop = new AgentLoop({
       config: childConfig,
       provider: this.config.provider,
-      executor: this.innerExecutor, // Inner — children cannot delegate
+      executor: this.innerExecutor, // Inner — children cannot spawn sub-agents
       context: childContext,
       progress: {
         onEvent: (event: string, data?: Record<string, unknown>) => {
-          // Forward selected events to parent's progress reporter
           const FORWARDED = new Set([
             'tool_status', 'tool_result', 'error', 'stopped', 'nudge', 'exit_reason',
           ]);
           if (FORWARDED.has(event)) {
-            this.config.progress.onEvent('delegate_progress', {
+            this.config.progress.onEvent('agent_progress', {
               type,
               event,
               data,
               agentIndex,
-              delegatePrompt: promptLabel,
+              agentPrompt: promptLabel,
             });
           }
         },
@@ -273,11 +291,11 @@ export class MultiAgentCoordinator {
       ? rawResult.slice(0, maxLen) + '\n... (truncated)'
       : rawResult;
 
-    this.config.progress.onEvent('delegate_progress', {
+    this.config.progress.onEvent('agent_progress', {
       type,
       event: 'agent_done',
       agentIndex,
-      delegatePrompt: promptLabel,
+      agentPrompt: promptLabel,
       data: { body: body.slice(0, 120), success: result.success },
     });
 
@@ -285,53 +303,48 @@ export class MultiAgentCoordinator {
   }
 
   /**
-   * Run delegates and combine their results into a single string for the parent context.
+   * Run sub-agents and combine their results into a single string for the parent context.
    */
-  private async runDelegates(delegates: { type: string; prompt: string }[]): Promise<string> {
-    if (delegates.length > MultiAgentCoordinator.MAX_PARALLEL_DELEGATES) {
-      const cap = MultiAgentCoordinator.MAX_PARALLEL_DELEGATES;
-      return `Error: Too many parallel delegates (${delegates.length}). Maximum is ${cap}. Break the work into smaller batches.`;
+  private async runAgents(agents: { type: string; prompt: string }[]): Promise<string> {
+    if (agents.length > MultiAgentCoordinator.MAX_PARALLEL_AGENTS) {
+      const cap = MultiAgentCoordinator.MAX_PARALLEL_AGENTS;
+      return `Error: Too many parallel agents (${agents.length}). Maximum is ${cap}. Break the work into smaller batches.`;
     }
 
-    // Single delegate — compact result
-    if (delegates.length === 1) {
-      const { type, prompt } = delegates[0];
-      const r = await this.runDelegateChild(type, prompt, 1);
+    if (agents.length === 1) {
+      const { type, prompt } = agents[0];
+      const r = await this.runAgentChild(type, prompt, 1);
       const label = prompt.length > 120 ? prompt.slice(0, 120) + '...' : prompt;
-      return `[delegate ${type} — done] "${label}"\n\n${r.body || '(no result)'}\n\n${this.getDelegateFooter(type)}`;
+      return `[agent ${type} — done] "${label}"\n\n${r.body || '(no result)'}\n\n${this.getAgentFooter(type)}`;
     }
 
-    // Multiple delegates — run in parallel
     const settled = await Promise.allSettled(
-      delegates.map(({ type, prompt }, i) => this.runDelegateChild(type, prompt, i + 1))
+      agents.map(({ type, prompt }, i) => this.runAgentChild(type, prompt, i + 1))
     );
 
-    const type = delegates[0].type;
+    const type = agents[0].type;
     const sections: string[] = [];
 
     for (let i = 0; i < settled.length; i++) {
       const s = settled[i];
-      const label = delegates[i].prompt.length > 100
-        ? delegates[i].prompt.slice(0, 100) + '...'
-        : delegates[i].prompt;
+      const label = agents[i].prompt.length > 100
+        ? agents[i].prompt.slice(0, 100) + '...'
+        : agents[i].prompt;
 
       if (s.status === 'fulfilled') {
-        sections.push(`[${i + 1}/${delegates.length}] "${label}"\n${s.value.body || '(no result)'}`);
+        sections.push(`[${i + 1}/${agents.length}] "${label}"\n${s.value.body || '(no result)'}`);
       } else {
-        sections.push(`[${i + 1}/${delegates.length}] "${label}"\nError: ${s.reason}`);
+        sections.push(`[${i + 1}/${agents.length}] "${label}"\nError: ${s.reason}`);
       }
     }
 
-    return `[delegate ${type} — done] ${delegates.length} agents completed\n\n${sections.join('\n\n')}\n\n${this.getDelegateFooter(type)}`;
+    return `[agent ${type} — done] ${agents.length} agents completed\n\n${sections.join('\n\n')}\n\n${this.getAgentFooter(type)}`;
   }
 
-  /**
-   * Type-specific footer appended to delegate results.
-   */
-  private getDelegateFooter(type: string): string {
+  private getAgentFooter(type: string): string {
     if (type === 'explore') return 'Use these findings to inform your next steps. The explore agent was read-only — no files were modified.';
     if (type === 'plan') return 'This is an analysis only — no files were modified. Implement the changes yourself based on this plan.';
-    if (type === 'task') return 'This specific sub-task is done and its files were modified. Do not repeat this same delegate.';
+    if (type === 'task') return 'This sub-task is done and its files were modified. Do not repeat this same agent call.';
     return '';
   }
 }

@@ -468,7 +468,7 @@ export class VirtualFileSystem {
 
   /**
    * Mount a single transient file
-   * @param isReadOnly - If false, the file can be edited via shell commands (edge functions, server functions)
+   * @param isReadOnly - If false, the file can be edited via bash commands (edge functions, server functions)
    */
   private mountTransientFile(path: string, content: string, isReadOnly = true): void {
     const file: VirtualFile = {

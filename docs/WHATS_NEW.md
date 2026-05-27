@@ -6,6 +6,21 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.70.0 - Tool Renames (2026-05-27)
+
+Benchmark powered experimenting showed that models produce significantly better tool calls with `bash` than with `shell`. The same principle was applied to sub-agents: `delegate` → `agent`. The shell also gives models better edit feedback — `sed` and `ss` now report whether substitutions actually matched, so failed edits no longer pass silently.
+
+### AI Orchestration
+- **Tool rename: shell → bash** — Benchmark-driven rename. Models produce more accurate tool calls with `bash` across all tested providers
+- **Sub-agent rename: delegate → agent** — Same principle applied to sub-agent commands
+- **Edit feedback** — `sed -i` reports substitution count and `ss` confirms replacements, so models know when a pattern didn't match
+
+### VFS Shell
+- **grep `-o`** — Extract only the matched portions of each line
+- **sed negate & grouping** — `!` inverts address matching, `{...}` applies multiple commands within a range
+
+---
+
 ## v1.69.0 - Modular Orchestrator (2026-05-25)
 
 The AI orchestrator has been decomposed into a portable core with typed interfaces — agent loop, context management, provider calls, and tool execution are now separate modules. Context compaction is fixed and enabled by default, so long sessions no longer hit the context wall. Thinking models maintain reasoning quality across turns.

@@ -135,7 +135,7 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
 
   // ---- Extract conversation transcript from events ----
   // Includes user replies, agent prose, and a summary of each setup-mode
-  // shell call (ask prompts, spec sections, propose-create) so the saved
+  // bash call (ask prompts, spec sections, propose-create) so the saved
   // .DESIGN-CONVERSATION.md captures the actual back-and-forth — without
   // tool-call summaries the file is just user fragments without context.
   const getConversation = useCallback((): Array<{ role: string; content: string }> => {
@@ -192,14 +192,14 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
           const cleaned = content.trim();
           if (cleaned) messages.push({ role: 'assistant', content: cleaned });
 
-          // Pull setup-shell tool calls into the transcript so ask prompts and
+          // Pull setup tool calls into the transcript so ask prompts and
           // spec entries aren't lost.
           if (Array.isArray(msg.tool_calls)) {
             for (const call of msg.tool_calls) {
-              if (call?.function?.name !== 'shell') continue;
+              if (call?.function?.name !== 'bash' && call?.function?.name !== 'shell') continue;
               try {
                 const parsedArgs = JSON.parse(call.function.arguments || '{}');
-                const cmd = typeof parsedArgs?.cmd === 'string' ? parsedArgs.cmd : '';
+                const cmd = typeof (parsedArgs?.command ?? parsedArgs?.cmd) === 'string' ? (parsedArgs.command ?? parsedArgs.cmd) : '';
                 const summary = summarizeShellCmd(cmd);
                 if (summary) messages.push({ role: 'assistant', content: summary });
               } catch {
@@ -219,7 +219,7 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
   }, [events]);
 
   // ---- Project ready (agent ran propose-create — show confirmation) ----
-  // The shell-based propose-create command emits an empty payload; the brief
+  // The bash-based propose-create command emits an empty payload; the brief
   // is already accumulated client-side from prior brief_update events.
   const applyProjectReady = useCallback(() => {
     setBriefState(prev => {

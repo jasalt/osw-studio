@@ -54,7 +54,7 @@ interface ProcessorState {
 }
 
 function extractPartialCmd(raw: string): string | null {
-  const match = raw.match(/^\s*\{\s*"cmd"\s*:\s*"((?:\\.|[^"\\])*)/);
+  const match = raw.match(/^\s*\{\s*"(?:command|cmd)"\s*:\s*"((?:\\.|[^"\\])*)/);
   if (!match) return null;
   try {
     return JSON.parse('"' + match[1] + '"');
@@ -63,10 +63,10 @@ function extractPartialCmd(raw: string): string | null {
   }
 }
 
-export function classifyShellCommand(cmd: string | string[] | undefined): 'shell' | 'write' | 'status' | 'delegate' {
-  if (!cmd) return 'shell';
+export function classifyBashCommand(cmd: string | string[] | undefined): 'bash' | 'write' | 'status' | 'agent' {
+  if (!cmd) return 'bash';
   const s = (Array.isArray(cmd) ? cmd.join(' ') : String(cmd)).trimStart();
-  if (/^delegate\b/.test(s)) return 'delegate';
+  if (/^(?:agent|delegate)\b/.test(s)) return 'agent';
   if (/^status\b/.test(s)) return 'status';
   if (/^build\b/.test(s)) return 'status';
   if (/^cat\s.*>/.test(s)) return 'write';
@@ -76,7 +76,7 @@ export function classifyShellCommand(cmd: string | string[] | undefined): 'shell
   if (/^ss\b/.test(s)) return 'write';
   if (/^(mkdir|touch|rm|mv|cp)\b/.test(s)) return 'write';
   if (/^echo\b.*>>?\s*\//.test(s)) return 'write';
-  return 'shell';
+  return 'bash';
 }
 
 function freshState(): ProcessorState {
@@ -230,7 +230,7 @@ export class EventProcessor {
             } catch {
               const raw = call.function?.arguments || '';
               const partialCmd = extractPartialCmd(raw);
-              parameters = partialCmd !== null ? { cmd: partialCmd, _raw: raw } : { _raw: raw };
+              parameters = partialCmd !== null ? { command: partialCmd, _raw: raw } : { _raw: raw };
             }
             const tool: ToolCall = {
               id: call.id || `tool-${state.currentIterationTools.length}`,
@@ -267,7 +267,7 @@ export class EventProcessor {
         case 'tool_healed': {
           const healedTool = state.currentIterationTools[event.data?.toolIndex];
           if (healedTool) {
-            healedTool.name = event.data.name || 'shell';
+            healedTool.name = event.data.name || 'bash';
             if (event.data.parameters) healedTool.parameters = event.data.parameters;
           }
           break;
@@ -308,7 +308,7 @@ export class EventProcessor {
               }
               const cachedCmd = state.toolCmdCache.get(toolId);
               tool.parameters = cachedCmd !== null && cachedCmd !== undefined
-                ? { cmd: cachedCmd, _raw: accum.text }
+                ? { command: cachedCmd, _raw: accum.text }
                 : { _raw: accum.text };
             }
           }
@@ -494,27 +494,27 @@ export class EventProcessor {
           });
           break;
 
-        case 'delegate_progress': {
+        case 'agent_progress': {
           const { event: innerEvent, data: innerData, agentIndex, parentToolIndex: pti } = event.data || {};
           const label = `subagent ${agentIndex || 1}`;
-          let delegateTool: ToolCall | undefined;
+          let agentTool: ToolCall | undefined;
           if (typeof pti === 'number') {
-            delegateTool = state.currentIterationTools[pti];
+            agentTool = state.currentIterationTools[pti];
           }
-          if (!delegateTool || classifyShellCommand(delegateTool.parameters?.cmd) !== 'delegate') {
-            delegateTool = state.currentIterationTools.find(
-              t => t.status === 'executing' && classifyShellCommand(t.parameters?.cmd) === 'delegate'
+          if (!agentTool || classifyBashCommand(agentTool.parameters?.command ?? agentTool.parameters?.cmd) !== 'agent') {
+            agentTool = state.currentIterationTools.find(
+              t => t.status === 'executing' && classifyBashCommand(t.parameters?.command ?? t.parameters?.cmd) === 'agent'
             );
           }
-          if (!delegateTool) break;
+          if (!agentTool) break;
           if (innerEvent === 'agent_start') {
-            delegateTool.result = `[${label}] starting...`;
+            agentTool.result = `[${label}] starting...`;
           } else if (innerEvent === 'agent_done') {
-            delegateTool.result = `[${label}] done (${innerData?.elapsed || '?'}s)`;
+            agentTool.result = `[${label}] done (${innerData?.elapsed || '?'}s)`;
           } else if (innerEvent === 'tool_status' && innerData?.status === 'executing') {
             let cmd = '';
-            try { cmd = JSON.parse(innerData.args || '{}')?.cmd || ''; } catch { cmd = innerData.args || ''; }
-            delegateTool.result = `[${label}] ${cmd.length > 100 ? cmd.slice(0, 100) + '...' : cmd}`;
+            try { const a = JSON.parse(innerData.args || '{}'); cmd = a?.command || a?.cmd || ''; } catch { cmd = innerData.args || ''; }
+            agentTool.result = `[${label}] ${cmd.length > 100 ? cmd.slice(0, 100) + '...' : cmd}`;
           }
           break;
         }

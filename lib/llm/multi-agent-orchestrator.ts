@@ -28,7 +28,7 @@ import { ToolCall, UsageInfo, ContentBlock } from './types';
 import { logger } from '@/lib/utils';
 import { buildFileTree, ReasoningDetail } from './streaming-parser';
 import { drainRuntimeErrors, formatRuntimeErrors, resetRuntimeErrors } from '@/lib/preview/runtime-errors';
-import { buildShellSystemPrompt, buildProjectContext, buildCompactionPrompt } from './system-prompt';
+import { buildSystemPrompt, buildProjectContext, buildCompactionPrompt } from './system-prompt';
 import { evaluateRelevantSkills } from './skill-evaluator';
 import { skillsService } from '@/lib/vfs/skills';
 import { track } from '@/lib/telemetry';
@@ -216,7 +216,7 @@ export class MultiAgentOrchestrator {
 
       const serverCtxMeta = this.getVFS().getServerContextMetadata();
       const modelSupportsTools = this.checkModelSupportsTools();
-      const systemPrompt = await buildShellSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools);
+      const systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools);
 
       const hasExistingSystemMessage = conversation.messages.some(m => m.role === 'system');
       if (!hasExistingSystemMessage) {
@@ -442,7 +442,7 @@ export class MultiAgentOrchestrator {
       compactionConfig,
       buildSystemPrompt: async (agentType: string) => {
         const serverCtxMeta = this.getVFS().getServerContextMetadata();
-        return buildShellSystemPrompt(
+        return buildSystemPrompt(
           this.chatMode || agentType === 'explore' || agentType === 'plan',
           serverCtxMeta, this.projectId, agentType as AgentType, true
         );

@@ -182,10 +182,10 @@ Guidelines:
 - Use relative paths; keep structure simple; prefer early returns.
 
 Capabilities:
-- One tool: shell({ cmd: string[] }) for commands and file editing.
-- Edit files with shell: cat > /file << 'EOF' for full rewrites, sed -i 's/old/new/g' for substitutions.
-- Supported shell commands: ls, cat, nl [-ba], grep (-n -i), find (-name), mkdir -p, rm [-rfv], rmdir [-v], mv, cp [-r], echo, sed [-i] 's/pat/repl/[g]'.
-- Shell supports pipes (|), redirects (> >>), and && chaining.
+- One tool: bash({ command: string }) for commands and file editing.
+- Edit files with bash: cat > /file << 'EOF' for full rewrites, sed -i 's/old/new/g' for substitutions.
+- Supported commands: ls, cat, nl [-ba], grep (-n -i), find (-name), mkdir -p, rm [-rfv], rmdir [-v], mv, cp [-r], echo, sed [-i] 's/pat/repl/[g]'.
+- Supports pipes (|), redirects (> >>), and && chaining.
 - No network; only /workspace paths exist.
   • Note: both '/path' and '/workspace/path' are accepted; '/workspace' is normalized to '/'.
 

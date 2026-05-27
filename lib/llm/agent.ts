@@ -51,33 +51,33 @@ export class AgentRegistry {
   private registerBuiltInAgents(): void {
     this.register(new Agent({
       type: 'orchestrator',
-      tools: ['shell'],
+      tools: ['bash'],
       maxIterations: 100
     }));
 
     this.register(new Agent({
       type: 'explore',
-      tools: ['shell'],
+      tools: ['bash'],
       maxIterations: 5,
       isReadOnly: true
     }));
 
     this.register(new Agent({
       type: 'task',
-      tools: ['shell'],
+      tools: ['bash'],
       maxIterations: 30
     }));
 
     this.register(new Agent({
       type: 'plan',
-      tools: ['shell'],
+      tools: ['bash'],
       maxIterations: 10,
       isReadOnly: true
     }));
 
     this.register(new Agent({
       type: 'setup',
-      tools: ['shell'],
+      tools: ['bash'],
       maxIterations: 20
     }));
   }

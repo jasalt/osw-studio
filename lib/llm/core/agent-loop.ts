@@ -31,9 +31,9 @@ function detectMalformedToolCalls(content: string): boolean {
 
   const patterns = [
     /```(?:shell|bash|sh)\s*\n[\s\S]*?\n```/,
-    /^shell\s*\{\s*["']?cmd["']?\s*:/m,
-    /^shell\s*\[\s*["']/m,
-    /```json\s*\n\s*\{\s*["']?cmd["']?\s*:/,
+    /^(?:bash|shell)\s*\{\s*["']?(?:command|cmd)["']?\s*:/m,
+    /^(?:bash|shell)\s*\[\s*["']/m,
+    /```json\s*\n\s*\{\s*["']?(?:command|cmd)["']?\s*:/,
   ];
 
   const hasPattern = patterns.some(p => p.test(content));
@@ -42,7 +42,7 @@ function detectMalformedToolCalls(content: string): boolean {
   const trimmed = content.trim();
   if (trimmed.length < 200) return true;
 
-  const endsWithToolPattern = /shell\s*\{\s*["']?cmd["']?\s*:.*\}\s*$/.test(trimmed) ||
+  const endsWithToolPattern = /(?:bash|shell)\s*\{\s*["']?(?:command|cmd)["']?\s*:.*\}\s*$/.test(trimmed) ||
                                /```(?:shell|bash|sh)\s*\n[\s\S]*?\n```\s*$/.test(trimmed);
   return endsWithToolPattern;
 }
@@ -67,15 +67,15 @@ function extractToolCallsFromText(content: string): ToolCall[] | undefined {
   const toolCodeRe = /```tool_code\s*\n([\s\S]*?)\n```/g;
   while ((match = toolCodeRe.exec(content)) !== null) {
     const block = match[1].trim();
-    const runCmdMatch = block.match(/shell\.run_command\(["']([\s\S]*?)["']\)/);
+    const runCmdMatch = block.match(/(?:bash|shell)\.run_command\(["']([\s\S]*?)["']\)/);
     if (runCmdMatch) {
       commands.push(runCmdMatch[1].replace(/\\"/g, '"'));
     }
   }
 
-  // Pattern 3: shell{"cmd": "..."} or shell({"cmd": "..."})
-  const shellJsonRe = /shell\s*\(?\s*\{\s*["']?cmd["']?\s*:\s*["']([\s\S]*?)["']\s*\}\s*\)?/g;
-  while ((match = shellJsonRe.exec(content)) !== null) {
+  // Pattern 3: bash{"command": "..."} or shell{"cmd": "..."} etc.
+  const toolJsonRe = /(?:bash|shell)\s*\(?\s*\{\s*["']?(?:command|cmd)["']?\s*:\s*["']([\s\S]*?)["']\s*\}\s*\)?/g;
+  while ((match = toolJsonRe.exec(content)) !== null) {
     if (match[1].trim()) commands.push(match[1].trim());
   }
 
@@ -85,8 +85,8 @@ function extractToolCallsFromText(content: string): ToolCall[] | undefined {
     id: `text-tool-${Date.now()}-${i}`,
     type: 'function' as const,
     function: {
-      name: 'shell',
-      arguments: JSON.stringify({ cmd }),
+      name: 'bash',
+      arguments: JSON.stringify({ command: cmd }),
     },
   }));
 }
@@ -98,10 +98,11 @@ function getToolCallSignature(toolCall: ToolCall): string {
   const toolName = toolCall.function?.name || 'unknown';
   try {
     const args = JSON.parse(toolCall.function.arguments);
-    if (toolName === 'shell') {
-      const cmd = Array.isArray(args.cmd)
-        ? args.cmd.join(' ')
-        : String(args.cmd || '');
+    if (toolName === 'bash' || toolName === 'shell') {
+      const rawCmd = args.command ?? args.cmd;
+      const cmd = Array.isArray(rawCmd)
+        ? rawCmd.join(' ')
+        : String(rawCmd || '');
       return `${toolName}:${cmd}`;
     }
     return `${toolName}:${toolCall.function.arguments}`;
@@ -139,13 +140,13 @@ function detectRepeatingPattern(signatures: string[], threshold: number): number
 const MALFORMED_TOOL_CALL_ERROR = `⛔ CRITICAL ERROR: You wrote a tool call as TEXT instead of invoking it.
 
 This is WRONG - you wrote text like:
-  shell{"cmd": "..."}
-  \`\`\`shell
+  bash{"command": "..."}
+  \`\`\`bash
   command
   \`\`\`
 
 This is RIGHT - invoke tools directly via function calling:
-  Call shell tool with parameter cmd="your command"
+  Call bash tool with parameter command="your command"
 
 You MUST use function calling. DO NOT write tool syntax as text.
 STOP writing text. START invoking tools. Try again NOW.`;
@@ -154,7 +155,7 @@ const MALFORMED_TOOL_CALL_PERSISTENT_REMINDER = `
 
 ⚠️ REMINDER: You have been writing tool calls as text instead of invoking them.
 EVERY time you want to use a tool, you MUST invoke it via function calling.
-DO NOT write shell{"cmd":...} as text - INVOKE the tools directly.`;
+DO NOT write bash{"command":...} as text - INVOKE the tools directly.`;
 
 const NUDGE_MESSAGE = 'Before finishing, run the status command:\n  status --task "..." --done "..." --remaining "..." --complete';
 
@@ -546,24 +547,11 @@ export class AgentLoop {
         }
       }
 
-      // Execute the tool
-      this.progress.onEvent('tool_status', {
-        toolIndex: results.length,
-        toolName: toolCall.function?.name,
-        status: 'executing',
-        args: toolCall.function?.arguments,
-      });
-
+      // Execute the tool (tool-executor emits tool_status events)
       try {
         const result = await this.executor.execute(toolCall, execContext);
         results.push(result);
         this.toolCallCount++;
-
-        this.progress.onEvent('tool_status', {
-          toolIndex: results.length - 1,
-          toolName: toolCall.function?.name,
-          status: result.success ? 'completed' : 'failed',
-        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         results.push({

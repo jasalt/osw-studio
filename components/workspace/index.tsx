@@ -136,7 +136,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     return () => window.removeEventListener('runtimeErrorsChanged', handler);
   }, []);
 
-  // Listen for runtime changes from the CLI shell (e.g., LLM runs `runtime handlebars`)
+  // Listen for runtime changes from the CLI (e.g., LLM runs `runtime handlebars`)
   useEffect(() => {
     const handler = (e: Event) => {
       const runtime = (e as CustomEvent).detail?.runtime;

@@ -639,7 +639,7 @@ export function ConsolePanel({ projectId, runtime, onClose, bufferedMessages, on
         break;
       default:
         // Route to VFS shell
-        await handleShellCommand(tokens);
+        await handleBashCommand(tokens);
         break;
     }
   }
@@ -693,7 +693,7 @@ export function ConsolePanel({ projectId, runtime, onClose, bufferedMessages, on
     });
   }
 
-  async function handleShellCommand(tokens: string[]) {
+  async function handleBashCommand(tokens: string[]) {
     const term = xtermRef.current;
     if (!term) return;
 
@@ -730,7 +730,7 @@ export function ConsolePanel({ projectId, runtime, onClose, bufferedMessages, on
     term.writeln('  \x1b[36mclear\x1b[0m           Clear the console');
     term.writeln('  \x1b[36mhelp\x1b[0m            Show this help');
     term.writeln('');
-    term.writeln('\x1b[1mVFS shell commands:\x1b[0m');
+    term.writeln('\x1b[1mVFS commands:\x1b[0m');
     term.writeln('  ls, cat, head, tail, grep, rg, find, mkdir, touch,');
     term.writeln('  rm, mv, cp, echo, sed, wc, tree, curl');
     term.writeln('');

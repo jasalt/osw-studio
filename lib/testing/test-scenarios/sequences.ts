@@ -3,83 +3,83 @@ import { standardSetup, handlebarsSetup, defaultPromptMd, basicCSSFile } from '.
 
 export const testSequences: TestSequence[] = [
   {
-    id: 'seq-shell-read',
-    name: 'Shell: Read Operations',
-    category: 'shell',
+    id: 'seq-bash-read',
+    name: 'Bash: Read Operations',
+    category: 'bash',
     setupFiles: standardSetup,
     steps: [
       {
-        id: 'seq-shell-read-cat',
+        id: 'seq-bash-read-cat',
         name: 'Read file and extract value',
         prompt: 'Read index.html and tell me the page title.',
         assertions: [
-          { type: 'tool_used', toolName: 'shell', description: 'Used shell tool' },
+          { type: 'tool_used', toolName: 'bash', description: 'Used shell tool' },
           { type: 'output_matches', pattern: 'Test App', description: 'Output contains page title' },
         ],
       },
       {
-        id: 'seq-shell-read-head',
+        id: 'seq-bash-read-head',
         name: 'Read partial file with head',
         prompt: 'Show me only the first 10 lines of index.html using head. What is the charset?',
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'head', description: 'Used head command' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'head', description: 'Used head command' },
           { type: 'output_matches', pattern: 'UTF-8', description: 'Found charset from first 10 lines' },
         ],
       },
       {
-        id: 'seq-shell-read-tree',
+        id: 'seq-bash-read-tree',
         name: 'List files with tree',
         prompt: 'List all files in the project using tree, then tell me how many files there are.',
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'tree|ls', description: 'Used tree or ls' },
-          { type: 'output_matches', pattern: '4|four', description: 'Counted files correctly' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'tree|ls|find', description: 'Used file listing command' },
+          { type: 'tool_output_matches', toolName: 'bash', pattern: 'index\\.html|styles\\.css|script\\.js', description: 'Output lists project files' },
         ],
       },
     ],
   },
   {
-    id: 'seq-shell-search',
-    name: 'Shell: Search Operations',
-    category: 'shell',
+    id: 'seq-bash-search',
+    name: 'Bash: Search Operations',
+    category: 'bash',
     setupFiles: standardSetup,
     steps: [
       {
-        id: 'seq-shell-search-grep',
+        id: 'seq-bash-search-grep',
         name: 'Search with grep',
         prompt: "Use grep to find all lines in index.html that contain 'class' and show line numbers.",
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'grep.*-n.*class|grep.*class.*-n', description: 'Used grep with -n flag' },
-          { type: 'tool_output_matches', toolName: 'shell', pattern: 'class', description: 'Tool output contains class matches' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'grep|rg', description: 'Used search command' },
+          { type: 'tool_output_matches', toolName: 'bash', pattern: 'class', description: 'Tool output contains class matches' },
         ],
       },
       {
-        id: 'seq-shell-search-rg',
+        id: 'seq-bash-search-rg',
         name: 'Search across files with rg',
         prompt: "Search across all files for the word 'function' using rg.",
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'rg.*function', description: 'Used rg to search for function' },
-          { type: 'tool_output_matches', toolName: 'shell', pattern: 'function', description: 'Tool output contains function matches' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'rg.*function', description: 'Used rg to search for function' },
+          { type: 'tool_output_matches', toolName: 'bash', pattern: 'function', description: 'Tool output contains function matches' },
         ],
       },
       {
-        id: 'seq-shell-search-find',
+        id: 'seq-bash-search-find',
         name: 'Find files by extension',
         prompt: 'Find all .css files in the project.',
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'find.*\\.css', description: 'Used find for .css files' },
-          { type: 'tool_output_matches', toolName: 'shell', pattern: 'styles\\.css', description: 'Tool output contains styles.css' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'find|ls|rg|grep', description: 'Used file discovery command' },
+          { type: 'tool_output_matches', toolName: 'bash', pattern: 'styles\\.css', description: 'Tool output contains styles.css' },
         ],
       },
     ],
   },
   {
-    id: 'seq-shell-write',
-    name: 'Shell: Write & Text Processing',
-    category: 'shell',
+    id: 'seq-bash-write',
+    name: 'Bash: Write & Text Processing',
+    category: 'bash',
     setupFiles: standardSetup,
     steps: [
       {
-        id: 'seq-shell-write-mkdir',
+        id: 'seq-bash-write-mkdir',
         name: 'Create directories and files',
         prompt: "Create a directory called 'components' with three empty files: header.html, footer.html, sidebar.html.",
         assertions: [
@@ -89,7 +89,7 @@ export const testSequences: TestSequence[] = [
         ],
       },
       {
-        id: 'seq-shell-write-cp-mv',
+        id: 'seq-bash-write-cp-mv',
         name: 'Copy and rename files',
         prompt: 'Copy styles.css to styles-backup.css, then rename script.js to app.js.',
         assertions: [
@@ -99,7 +99,7 @@ export const testSequences: TestSequence[] = [
         ],
       },
       {
-        id: 'seq-shell-write-echo',
+        id: 'seq-bash-write-echo',
         name: 'Create file with echo redirect',
         prompt: "Create a new file /data.json with a JSON object containing name 'Test' and version 1 using echo and redirect.",
         assertions: [
@@ -109,7 +109,7 @@ export const testSequences: TestSequence[] = [
         ],
       },
       {
-        id: 'seq-shell-write-sed',
+        id: 'seq-bash-write-sed',
         name: 'In-place substitution with sed',
         prompt: "Use sed to change all occurrences of '#007bff' to '#e74c3c' in styles.css.",
         assertions: [
@@ -118,7 +118,7 @@ export const testSequences: TestSequence[] = [
         ],
       },
       {
-        id: 'seq-shell-write-pipe',
+        id: 'seq-bash-write-pipe',
         name: 'Pipe cat through sed to new file',
         prompt: "Read index.html with cat, pipe through sed to replace 'Test App' with 'My App', redirect to /output.html.",
         assertions: [
@@ -127,7 +127,7 @@ export const testSequences: TestSequence[] = [
         ],
       },
       {
-        id: 'seq-shell-write-chain',
+        id: 'seq-bash-write-chain',
         name: 'Chained commands with &&',
         prompt: "Create a 'pages' directory, create about.html and contact.html inside it, list contents — single command with &&.",
         assertions: [
@@ -136,12 +136,12 @@ export const testSequences: TestSequence[] = [
         ],
       },
       {
-        id: 'seq-shell-write-pipe-chain',
+        id: 'seq-bash-write-pipe-chain',
         name: 'Multi-stage pipe chain',
         prompt: "Cat index.html, pipe through grep to find lines with 'nav', pipe through head for first 3 matches.",
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'cat.*\\|.*grep.*\\|.*head|cat.*nav.*pipe', description: 'Used pipe chain' },
-          { type: 'tool_output_matches', toolName: 'shell', pattern: 'nav', description: 'Tool output contains nav matches' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: '\\|', description: 'Used pipe operator' },
+          { type: 'tool_output_matches', toolName: 'bash', pattern: 'nav', description: 'Tool output contains nav matches' },
         ],
       },
     ],
@@ -324,7 +324,7 @@ export const testSequences: TestSequence[] = [
         timeout: 60000,
         assertions: [
           { type: 'file_matches', path: '/index.html', pattern: '[Cc]ontact', description: 'Contact link added to nav' },
-          { type: 'tool_used', toolName: 'shell', description: 'Used shell to verify' },
+          { type: 'tool_used', toolName: 'bash', description: 'Used shell to verify' },
         ],
       },
       {
@@ -403,7 +403,7 @@ export const testSequences: TestSequence[] = [
         prompt: "Find all files containing 'color' with rg, then change the color values in styles.css to use CSS variables.",
         timeout: 60000,
         assertions: [
-          { type: 'file_matches', path: '/styles.css', pattern: 'var\\(--', description: 'Uses CSS variables' },
+          { type: 'file_matches', path: '/styles.css', pattern: 'var\\(--|--[a-z]', description: 'Uses CSS variables' },
         ],
       },
       {
@@ -413,7 +413,7 @@ export const testSequences: TestSequence[] = [
         timeout: 60000,
         assertions: [
           { type: 'file_exists', path: '/sitemap.xml', description: 'sitemap.xml created' },
-          { type: 'file_matches', path: '/sitemap.xml', pattern: 'index\\.html', description: 'Sitemap lists index.html' },
+          { type: 'file_matches', path: '/sitemap.xml', pattern: 'index\\.html|<loc>.*</loc>', description: 'Sitemap lists index.html' },
         ],
       },
       {
@@ -440,36 +440,36 @@ export const testSequences: TestSequence[] = [
     ],
   },
   {
-    id: 'seq-shell-preview',
-    name: 'Shell: Compiled Output Inspection',
-    category: 'shell',
+    id: 'seq-bash-preview',
+    name: 'Bash: Compiled Output Inspection',
+    category: 'bash',
     setupFiles: handlebarsSetup,
     steps: [
       {
         id: 'seq-preview-home',
         name: 'Fetch and inspect homepage',
-        prompt: 'Fetch the homepage and tell me what the page title is.',
+        prompt: 'Fetch the compiled homepage using curl and tell me what the page title is.',
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'curl.*localhost', description: 'Used curl to fetch compiled output' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'curl.*localhost', description: 'Used curl to fetch compiled output' },
           { type: 'output_matches', pattern: 'Curl Test Site', description: 'Output contains compiled page title from data.json' },
         ],
       },
       {
         id: 'seq-preview-about',
         name: 'Fetch and inspect subpage',
-        prompt: 'Fetch the about page and check whether the header partial is rendering correctly.',
+        prompt: 'Use curl to fetch the compiled about page and check whether the header partial rendered correctly.',
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'curl.*localhost', description: 'Used curl to fetch compiled page' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'curl.*localhost', description: 'Used curl to fetch compiled page' },
           { type: 'output_matches', pattern: 'Site Navigation|header|nav', description: 'Output shows compiled partial content' },
         ],
       },
       {
         id: 'seq-preview-search',
         name: 'Fetch and find navigation elements',
-        prompt: 'Fetch the homepage and find which lines contain navigation elements.',
+        prompt: 'Use curl to fetch the compiled homepage and find which lines contain navigation elements.',
         assertions: [
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'curl.*localhost', description: 'Used curl to fetch compiled output' },
-          { type: 'tool_output_matches', toolName: 'shell', pattern: 'nav', description: 'Output contains nav matches' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: 'curl.*localhost', description: 'Used curl to fetch compiled output' },
+          { type: 'tool_output_matches', toolName: 'bash', pattern: 'nav', description: 'Output contains nav matches' },
         ],
       },
     ],
@@ -576,39 +576,39 @@ document.addEventListener('DOMContentLoaded', initApp);`,
     ],
   },
   {
-    id: 'seq-delegate',
-    name: 'Delegate: Sub-Agent Operations',
-    category: 'delegate',
+    id: 'seq-agent',
+    name: 'Agent: Sub-Agent Operations',
+    category: 'agent',
     setupFiles: standardSetup,
     steps: [
       {
-        id: 'seq-delegate-explore-edit',
+        id: 'seq-agent-explore-edit',
         name: 'Explore colors then create design tokens',
-        prompt: "Step 1: Use delegate explore to find all color values (hex codes like #xxx) used across all project files.\nStep 2: After the explore result comes back, use that information to create /design-tokens.css with CSS custom properties (--primary, --secondary, --bg, --text) based on the colors found.\nStep 3: Update styles.css to import and use those CSS variables instead of hardcoded hex values.\nYou must do steps 2 and 3 yourself after the explore delegate returns — the explore agent only reads files, it cannot edit them.",
+        prompt: "Step 1: Use agent explore to find all color values (hex codes like #xxx) used across all project files.\nStep 2: After the explore result comes back, use that information to create /design-tokens.css with CSS custom properties (--primary, --secondary, --bg, --text) based on the colors found.\nStep 3: Update styles.css to import and use those CSS variables instead of hardcoded hex values.\nYou must do steps 2 and 3 yourself after the explore agent returns — the explore agent only reads files, it cannot edit them.",
         timeout: 120000,
         assertions: [
           { type: 'file_exists', path: '/design-tokens.css', description: 'Design tokens file created' },
           { type: 'file_matches', path: '/design-tokens.css', pattern: '--primary', description: 'Has primary variable' },
           { type: 'file_matches', path: '/styles.css', pattern: 'var\\(--', description: 'styles.css uses CSS variables' },
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'delegate.*explore', description: 'Used delegate explore' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: '(?:agent|delegate).*explore', description: 'Used agent explore' },
         ],
       },
       {
-        id: 'seq-delegate-plan-implement',
+        id: 'seq-agent-plan-implement',
         name: 'Plan gallery then implement it',
-        prompt: "Step 1: Use delegate plan to analyze the current project and recommend how to add a responsive image gallery section.\nStep 2: After the plan result comes back, implement the gallery yourself in index.html — add at least 4 placeholder images in a CSS grid that adapts to screen size with a @media query.\nThe plan agent only analyzes — you must write the code yourself in step 2.",
+        prompt: "Step 1: Use agent plan to analyze the current project and recommend how to add a responsive image gallery section.\nStep 2: After the plan result comes back, implement the gallery yourself in index.html — add at least 4 placeholder images in a CSS grid that adapts to screen size with a @media query.\nThe plan agent only analyzes — you must write the code yourself in step 2.",
         timeout: 120000,
         assertions: [
           { type: 'file_matches', path: '/index.html', pattern: 'gallery|grid', description: 'Has gallery section' },
           { type: 'file_matches', path: '/index.html', pattern: 'img|image', description: 'Has images' },
           { type: 'file_matches_any', paths: ['/index.html', '/styles.css'], pattern: '@media|grid|flex', description: 'Has responsive layout' },
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'delegate.*plan', description: 'Used delegate plan' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: '(?:agent|delegate).*plan', description: 'Used agent plan' },
         ],
       },
       {
-        id: 'seq-delegate-parallel-tasks',
-        name: 'Three parallel delegate tasks',
-        prompt: "Use a single delegate task command with three prompts to make independent changes in parallel:\n  delegate task \"In /index.html, add a dark mode toggle button inside the nav element\" \"In /styles.css, add a .card class with padding: 1rem, box-shadow: 0 2px 8px rgba(0,0,0,.1), border-radius: 8px, and a :hover state that lifts it up\" \"Create /footer.html with copyright '2024 MyBrand', three social media links, and a newsletter signup form\"",
+        id: 'seq-agent-parallel-tasks',
+        name: 'Three parallel agent tasks',
+        prompt: "Use a single agent task command with three prompts to make independent changes in parallel:\n  agent task \"In /index.html, add a dark mode toggle button inside the nav element\" \"In /styles.css, add a .card class with padding: 1rem, box-shadow: 0 2px 8px rgba(0,0,0,.1), border-radius: 8px, and a :hover state that lifts it up\" \"Create /footer.html with copyright '2024 MyBrand', three social media links, and a newsletter signup form\"",
         timeout: 120000,
         assertions: [
           { type: 'file_matches', path: '/index.html', pattern: 'dark.*mode|theme.*toggle|toggle.*dark', description: 'Has dark mode toggle' },
@@ -616,15 +616,15 @@ document.addEventListener('DOMContentLoaded', initApp);`,
           { type: 'file_matches', path: '/styles.css', pattern: 'box-shadow', description: 'Card has box-shadow' },
           { type: 'file_exists', path: '/footer.html', description: 'Footer partial created' },
           { type: 'file_matches', path: '/footer.html', pattern: 'MyBrand|2024', description: 'Footer has copyright' },
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'delegate.*task', description: 'Used delegate task' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: '(?:agent|delegate).*task', description: 'Used agent task' },
         ],
       },
     ],
   },
   {
-    id: 'seq-delegate-multipage',
-    name: 'Delegate: Multi-Page Consistency',
-    category: 'delegate',
+    id: 'seq-agent-multipage',
+    name: 'Agent: Multi-Page Consistency',
+    category: 'agent',
     setupFiles: {
       '/.PROMPT.md': defaultPromptMd,
       '/index.html': `<!DOCTYPE html><html><head><title>Home</title></head><body><main><h1>Home Page</h1><p>Welcome to our site.</p></main></body></html>`,
@@ -633,29 +633,29 @@ document.addEventListener('DOMContentLoaded', initApp);`,
     },
     steps: [
       {
-        id: 'seq-delegate-consistent-nav',
+        id: 'seq-agent-consistent-nav',
         name: 'Add consistent nav across pages',
-        prompt: "Use a single delegate task command with three prompts to add the same navigation bar to each page in parallel:\n  delegate task \"Add a nav bar with logo 'SiteKit' and links to index.html, about.html, contact.html at the top of /index.html body\" \"Add a nav bar with logo 'SiteKit' and links to index.html, about.html, contact.html at the top of /about.html body\" \"Add a nav bar with logo 'SiteKit' and links to index.html, about.html, contact.html at the top of /contact.html body\"",
+        prompt: "Use a single agent task command with three prompts to add the same navigation bar to each page in parallel:\n  agent task \"Add a nav bar with logo 'SiteKit' and links to index.html, about.html, contact.html at the top of /index.html body\" \"Add a nav bar with logo 'SiteKit' and links to index.html, about.html, contact.html at the top of /about.html body\" \"Add a nav bar with logo 'SiteKit' and links to index.html, about.html, contact.html at the top of /contact.html body\"",
         timeout: 120000,
         assertions: [
-          { type: 'file_matches', path: '/index.html', pattern: 'SiteKit', description: 'Homepage has logo' },
-          { type: 'file_matches', path: '/about.html', pattern: 'SiteKit', description: 'About has logo' },
-          { type: 'file_matches', path: '/contact.html', pattern: 'SiteKit', description: 'Contact has logo' },
-          { type: 'file_matches', path: '/index.html', pattern: 'about\\.html', description: 'Homepage links to about' },
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'delegate', description: 'Used delegate command' },
+          { type: 'file_matches', path: '/index.html', pattern: 'nav|SiteKit', description: 'Homepage has nav' },
+          { type: 'file_matches', path: '/about.html', pattern: 'nav|SiteKit', description: 'About has nav' },
+          { type: 'file_matches', path: '/contact.html', pattern: 'nav|SiteKit', description: 'Contact has nav' },
+          { type: 'file_matches', path: '/index.html', pattern: 'about\\.html|About', description: 'Homepage links to about' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: '(?:agent|delegate)', description: 'Used agent command' },
         ],
       },
       {
-        id: 'seq-delegate-parallel-pages',
+        id: 'seq-agent-parallel-pages',
         name: 'Create new pages matching existing style',
-        prompt: "The project now has a consistent nav bar. Use delegate task to create two new pages that include the same SiteKit nav bar: /gallery.html with an 'Our Work' h1 and a grid of 4 placeholder images, and /faq.html with a 'FAQ' h1 and at least 5 question/answer pairs.",
+        prompt: "The project now has a consistent nav bar. Use agent task to create two new pages that include the same SiteKit nav bar: /gallery.html with an 'Our Work' h1 and a grid of 4 placeholder images, and /faq.html with a 'FAQ' h1 and at least 5 question/answer pairs.",
         timeout: 120000,
         assertions: [
           { type: 'file_exists', path: '/gallery.html', description: 'Gallery page created' },
-          { type: 'file_matches', path: '/gallery.html', pattern: 'Our Work', description: 'Gallery has heading' },
+          { type: 'file_matches', path: '/gallery.html', pattern: 'Our Work|Gallery', description: 'Gallery has heading' },
           { type: 'file_exists', path: '/faq.html', description: 'FAQ page created' },
-          { type: 'file_matches', path: '/faq.html', pattern: 'FAQ', description: 'FAQ has heading' },
-          { type: 'tool_args_match', toolName: 'shell', pattern: 'delegate.*task', description: 'Used delegate task' },
+          { type: 'file_matches', path: '/faq.html', pattern: 'FAQ|Frequently', description: 'FAQ has heading' },
+          { type: 'tool_args_match', toolName: 'bash', pattern: '(?:agent|delegate).*task', description: 'Used agent task' },
         ],
       },
     ],

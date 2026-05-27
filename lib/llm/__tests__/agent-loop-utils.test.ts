@@ -17,9 +17,10 @@ describe('detectMalformedToolCalls', () => {
     expect(detectMalformedToolCalls('```shell\ncat file.txt\n```')).toBe(true);
   });
 
-  it('detects shell JSON invocation as text', () => {
+  it('detects bash/shell JSON invocation as text', () => {
+    expect(detectMalformedToolCalls('bash {"command": "ls"}')).toBe(true);
     expect(detectMalformedToolCalls('shell {"cmd": "ls"}')).toBe(true);
-    expect(detectMalformedToolCalls('shell ["ls -la"]')).toBe(true);
+    expect(detectMalformedToolCalls('bash ["ls -la"]')).toBe(true);
   });
 
   it('does not flag normal prose', () => {
@@ -47,30 +48,30 @@ describe('extractToolCallsFromText', () => {
     const content = '```bash\nls -la\n```';
     const result = extractToolCallsFromText(content)!;
     expect(result).toHaveLength(1);
-    expect(result[0].function.name).toBe('shell');
-    expect(JSON.parse(result[0].function.arguments).cmd).toBe('ls -la');
+    expect(result[0].function.name).toBe('bash');
+    expect(JSON.parse(result[0].function.arguments).command).toBe('ls -la');
   });
 
   it('extracts multiple code blocks', () => {
     const content = '```bash\nls\n```\nSome text\n```shell\ncat file.txt\n```';
     const result = extractToolCallsFromText(content)!;
     expect(result).toHaveLength(2);
-    expect(JSON.parse(result[0].function.arguments).cmd).toBe('ls');
-    expect(JSON.parse(result[1].function.arguments).cmd).toBe('cat file.txt');
+    expect(JSON.parse(result[0].function.arguments).command).toBe('ls');
+    expect(JSON.parse(result[1].function.arguments).command).toBe('cat file.txt');
   });
 
-  it('extracts shell JSON format', () => {
-    const content = 'shell{"cmd": "echo hello"}';
+  it('extracts bash JSON format', () => {
+    const content = 'bash{"command": "echo hello"}';
     const result = extractToolCallsFromText(content)!;
     expect(result).toHaveLength(1);
-    expect(JSON.parse(result[0].function.arguments).cmd).toBe('echo hello');
+    expect(JSON.parse(result[0].function.arguments).command).toBe('echo hello');
   });
 
   it('extracts tool_code blocks (Gemini-style)', () => {
-    const content = '```tool_code\nshell.run_command("grep -r pattern src")\n```';
+    const content = '```tool_code\nbash.run_command("grep -r pattern src")\n```';
     const result = extractToolCallsFromText(content)!;
     expect(result).toHaveLength(1);
-    expect(JSON.parse(result[0].function.arguments).cmd).toBe('grep -r pattern src');
+    expect(JSON.parse(result[0].function.arguments).command).toBe('grep -r pattern src');
   });
 
   it('returns undefined when no commands found', () => {
@@ -79,24 +80,29 @@ describe('extractToolCallsFromText', () => {
 });
 
 describe('getToolCallSignature', () => {
-  it('normalizes shell commands', () => {
-    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'shell', arguments: '{"cmd":"ls -la"}' } };
-    expect(getToolCallSignature(tc)).toBe('shell:ls -la');
+  it('normalizes bash commands', () => {
+    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'bash', arguments: '{"command":"ls -la"}' } };
+    expect(getToolCallSignature(tc)).toBe('bash:ls -la');
   });
 
-  it('handles array cmd format', () => {
-    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'shell', arguments: '{"cmd":["echo","hello"]}' } };
-    expect(getToolCallSignature(tc)).toBe('shell:echo hello');
+  it('handles legacy cmd format', () => {
+    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'bash', arguments: '{"cmd":"ls -la"}' } };
+    expect(getToolCallSignature(tc)).toBe('bash:ls -la');
   });
 
-  it('returns raw args for non-shell tools', () => {
+  it('handles array command format', () => {
+    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'bash', arguments: '{"command":["echo","hello"]}' } };
+    expect(getToolCallSignature(tc)).toBe('bash:echo hello');
+  });
+
+  it('returns raw args for non-bash tools', () => {
     const tc = { id: 'tc1', type: 'function' as const, function: { name: 'other', arguments: '{"key":"val"}' } };
     expect(getToolCallSignature(tc)).toBe('other:{"key":"val"}');
   });
 
   it('handles invalid JSON gracefully', () => {
-    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'shell', arguments: 'broken' } };
-    expect(getToolCallSignature(tc)).toBe('shell:broken');
+    const tc = { id: 'tc1', type: 'function' as const, function: { name: 'bash', arguments: 'broken' } };
+    expect(getToolCallSignature(tc)).toBe('bash:broken');
   });
 });
 

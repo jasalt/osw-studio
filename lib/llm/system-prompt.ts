@@ -56,7 +56,7 @@ export interface ServerContextMetadata {
   scheduledFunctionCount: number;
 }
 
-export async function buildShellSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true): Promise<string> {
+export async function buildSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true): Promise<string> {
   if (agentType === 'setup') return SETUP_SYSTEM_PROMPT;
   if (agentType === 'explore') return buildExplorePrompt(serverContext, projectId);
   if (agentType === 'plan') return buildPlanPrompt(serverContext, projectId);
@@ -85,7 +85,7 @@ You are allowed ONE self-correction per problem. If you reconsider and reach the
   if (modelSupportsTools) {
     prompt += `
 Invoke tools via function calling — never output tool syntax as text.
-The shell tool accepts a 'cmd' string parameter: "ls -la /"`;
+The bash tool accepts a 'command' string parameter: "ls -la /"`;
   } else {
     prompt += `To execute commands, write them in a \`\`\`bash code block — one block per command:
 
@@ -95,7 +95,7 @@ content
 EOF
 \`\`\`
 
-The shell accepts these commands and will execute each code block automatically.
+Commands will be executed automatically from each code block.
 Do NOT write multiple commands in one block — use separate blocks for each command.`;
   }
 
@@ -167,7 +167,7 @@ function buildServerContextSection(serverContext: ServerContextMetadata): string
     section += `Put complete SQL in double quotes. Do not use dot commands. Schema: cat /.server/db/schema.sql\n`;
   }
 
-  section += `\nCreating backend features (use shell commands):\n`;
+  section += `\nCreating backend features (use bash commands):\n`;
   section += `- Secret: cat > /.server/secrets/NAME.json << 'EOF'\n{"name":"NAME","description":"..."}\nEOF\n`;
   section += `- Edge function: cat > /.server/edge-functions/name.json << 'EOF'\n{"name":"name","method":"GET","enabled":true,"code":"..."}\nEOF\n`;
   section += `- Server function: cat > /.server/server-functions/name.json << 'EOF'\n{"name":"name","enabled":true,"code":"..."}\nEOF\n`;
@@ -306,7 +306,7 @@ Return a structured analysis:
 }
 
 const SS_EDITING_DOCS = `Editing files — use ss for all edits to existing files:
-  shell({ cmd: "ss /file << 'EOF'\\nexact text to find\\n===\\nreplacement text\\nEOF" })
+  bash({ command: "ss /file << 'EOF'\\nexact text to find\\n===\\nreplacement text\\nEOF" })
 Copy the exact text you want to replace (use rg -C 5 or head/tail to inspect first).
 To replace a whole function, element, or CSS rule — give just the opening line and ss --entity finds the end:
   ss --entity /file << 'EOF'
@@ -327,10 +327,10 @@ You are executing a focused coding task. Complete the task efficiently.
 ${SS_EDITING_DOCS}
 
 Build command (run after writing files):
-  shell({ cmd: "build" })
+  bash({ command: "build" })
 
 Status command (always run before finishing):
-  shell({ cmd: "status --task 'the task' --done 'work done' --remaining 'none' --complete" })
+  bash({ command: "status --task 'the task' --done 'work done' --remaining 'none' --complete" })
 
 All paths are relative to the project root (/).`;
 
@@ -357,8 +357,8 @@ async function buildCodeModePrompt(serverContext?: ServerContextMetadata | null,
   if (modelSupportsTools) {
     prompt += `
 
-You have exactly ONE tool: shell. Do not call any other tool.
-ss, sed, cat, and all other commands are shell commands — always call them via the shell tool.`;
+You have exactly ONE tool: bash. Do not call any other tool.
+ss, sed, cat, and all other commands are bash commands — always call them via the bash tool.`;
   } else {
     prompt += `
 
@@ -371,17 +371,17 @@ ${SS_EDITING_DOCS}
 Do not use cat > to edit existing files — use ss instead.
 
 Build command (run after writing files):
-  ${modelSupportsTools ? 'shell({ cmd: "build" })' : '```bash\nbuild\n```'}
+  ${modelSupportsTools ? 'bash({ command: "build" })' : '```bash\nbuild\n```'}
 Returns "Build successful — 0 errors" or lists compilation errors.
 Run build after writing a batch of files to verify they compile. Do not inspect bundle.js or grep compiled output — use build instead.
 
 Runtime command (change project runtime):
-  ${modelSupportsTools ? 'shell({ cmd: "runtime react" })' : '```bash\nruntime react\n```'}
+  ${modelSupportsTools ? 'bash({ command: "runtime react" })' : '```bash\nruntime react\n```'}
 Valid runtimes: static, handlebars, react, preact, svelte, vue, python, lua.
 Changes the project runtime and updates .PROMPT.md if it hasn't been customized.
 
 Status command (always run before finishing):
-  ${modelSupportsTools ? 'shell({ cmd: "status --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete" })' : '```bash\nstatus --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete\n```'}
+  ${modelSupportsTools ? 'bash({ command: "status --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete" })' : '```bash\nstatus --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete\n```'}
 End with --complete when done, or --incomplete if more work remains.
 
 All paths are relative to the project root (/).
@@ -391,11 +391,11 @@ The user sees a live preview that updates as you write files — you cannot see 
 After writing code, run build to check for errors, then run status when done.
 Use curl to inspect compiled page content when needed, but sparingly — each call is expensive. Avoid repeated curl/grep loops; one targeted fetch is usually enough.
 
-Delegate to keep your context focused — sub-agents explore or edit independently and return a summary:
-  ${modelSupportsTools ? 'shell({ cmd: "delegate explore \'What colors are used?\' \'What fonts?\' \'What layout patterns?\'" })' : '```bash\ndelegate explore \'What colors are used?\' \'What fonts?\' \'What layout patterns?\'\n```'}
-  ${modelSupportsTools ? 'shell({ cmd: "delegate task \'Add nav to index.html\' \'Add nav to about.html\' \'Add nav to contact.html\'" })' : '```bash\ndelegate task \'Add nav to index.html\' \'Add nav to about.html\' \'Add nav to contact.html\'\n```'}
-  ${modelSupportsTools ? 'shell({ cmd: "delegate plan \'How should we add a blog section?\'" })' : '```bash\ndelegate plan \'How should we add a blog section?\'\n```'}
-Always use ONE delegate call with multiple quoted prompts — never make separate delegate calls. Each starts fresh, so never delegate tasks that depend on each other's output. Build foundational work (e.g. a primary page) yourself first, then delegate independent follow-up work. For quick lookups (1-2 files), just use cat/rg directly.`;
+Spawn sub-agents to keep your context focused — they explore or edit independently and return a summary:
+  ${modelSupportsTools ? 'bash({ command: "agent explore \'What colors are used?\' \'What fonts?\' \'What layout patterns?\'" })' : '```bash\nagent explore \'What colors are used?\' \'What fonts?\' \'What layout patterns?\'\n```'}
+  ${modelSupportsTools ? 'bash({ command: "agent task \'Add nav to index.html\' \'Add nav to about.html\' \'Add nav to contact.html\'" })' : '```bash\nagent task \'Add nav to index.html\' \'Add nav to about.html\' \'Add nav to contact.html\'\n```'}
+  ${modelSupportsTools ? 'bash({ command: "agent plan \'How should we add a blog section?\'" })' : '```bash\nagent plan \'How should we add a blog section?\'\n```'}
+Always use ONE agent call with multiple quoted prompts — never make separate agent calls. Each starts fresh, so never hand off tasks that depend on each other's output. Build foundational work (e.g. a primary page) yourself first, then use agent for independent follow-up work. For quick lookups (1-2 files), just use cat/rg directly.`;
 
   prompt += await buildDynamicContent(projectId, serverContext);
   return prompt;

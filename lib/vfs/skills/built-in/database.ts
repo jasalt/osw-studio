@@ -19,7 +19,7 @@ Guide for SQLite database access via edge functions.
 
 ### Option 1: sqlite3 Shell Command (Server Mode Only)
 
-In Server Mode with a published deployment selected, use the ` + "`sqlite3`" + ` shell command for quick queries:
+In Server Mode with a published deployment selected, use the ` + "`sqlite3`" + ` command for quick queries:
 
 ` + "```" + `bash
 # Query data
@@ -50,7 +50,7 @@ Edge functions provide database access via the ` + "`db`" + ` object:
 The file ` + "`/.server/db/schema.sql`" + ` is **auto-generated and read-only**. You cannot modify it directly.
 
 To create or modify tables, use one of these methods:
-1. **sqlite3 shell command** (Server Mode): ` + "`sqlite3 \"CREATE TABLE IF NOT EXISTS ...\"`" + `
+1. **sqlite3 command** (Server Mode): ` + "`sqlite3 \"CREATE TABLE IF NOT EXISTS ...\"`" + `
 2. **Edge function db.run()**: ` + "`db.run('CREATE TABLE IF NOT EXISTS ...')`" + `
 
 ---

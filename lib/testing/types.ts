@@ -10,6 +10,7 @@ export type TestAssertion =
   | { type: 'tool_args_match'; toolName: string; pattern: string; description: string }
   | { type: 'output_matches'; pattern: string; description: string }
   | { type: 'tool_output_matches'; toolName: string; pattern: string; description: string }
+  | { type: 'any_of'; assertions: TestAssertion[]; description: string }
   | { type: 'judge'; criteria: string; description: string };
 
 export interface AssertionResult {
@@ -21,7 +22,7 @@ export interface AssertionResult {
 export interface TestScenario {
   id: string;
   name: string;
-  category: 'shell-read' | 'shell-write' | 'shell-search' | 'shell-text' | 'shell-preview' | 'file-editing' | 'status' | 'multi-tool' | 'delegate' | 'compaction' | 'setup';
+  category: 'bash-read' | 'bash-write' | 'bash-search' | 'bash-text' | 'bash-preview' | 'file-editing' | 'status' | 'multi-tool' | 'agent' | 'delegate' | 'compaction' | 'setup';
   prompt: string;
   setupFiles?: Record<string, string>;
   assertions?: TestAssertion[];

@@ -44,7 +44,7 @@ function createMockExecutor(results?: Map<string, ToolResult>): ToolExecutor {
         success: true,
       };
     }),
-    getDefinitions: () => [{ name: 'shell', description: 'Run shell', parameters: {} }] as ToolDef[],
+    getDefinitions: () => [{ name: 'bash', description: 'Run shell', parameters: {} }] as ToolDef[],
   };
 }
 
@@ -115,7 +115,7 @@ describe('AgentLoop', () => {
     const toolCall: ToolCall = {
       id: 'tc1',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"status --task \\"build site\\" --done \\"all\\" --remaining \\"none\\" --complete"}' },
+      function: { name: 'bash', arguments: '{"command":"status --task \\"build site\\" --done \\"all\\" --remaining \\"none\\" --complete"}' },
     };
 
     const provider = createMockProvider([
@@ -185,7 +185,7 @@ describe('AgentLoop', () => {
     const duplicateCall: ToolCall = {
       id: 'tc-dup',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"ls"}' },
+      function: { name: 'bash', arguments: '{"command":"ls"}' },
     };
 
     // Same tool call repeated multiple times
@@ -228,12 +228,12 @@ describe('AgentLoop', () => {
     const toolCall1: ToolCall = {
       id: 'tc1',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"status --task \\"build\\" --done \\"all\\" --remaining \\"none\\" --complete"}' },
+      function: { name: 'bash', arguments: '{"command":"status --task \\"build\\" --done \\"all\\" --remaining \\"none\\" --complete"}' },
     };
     const toolCall2: ToolCall = {
       id: 'tc2',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"status --task \\"build site\\" --done \\"everything\\" --remaining \\"none\\" --complete"}' },
+      function: { name: 'bash', arguments: '{"command":"status --task \\"build site\\" --done \\"everything\\" --remaining \\"none\\" --complete"}' },
     };
 
     const toolResult1: ToolResult = {
@@ -294,7 +294,7 @@ describe('AgentLoop', () => {
           toolCalls: [{
             id: 'tc1',
             type: 'function' as const,
-            function: { name: 'shell', arguments: '{"cmd":"status --task \\"x\\" --done \\"x\\" --remaining \\"none\\" --complete"}' },
+            function: { name: 'bash', arguments: '{"command":"status --task \\"x\\" --done \\"x\\" --remaining \\"none\\" --complete"}' },
           }],
         };
       }),
@@ -409,7 +409,7 @@ describe('AgentLoop', () => {
         success: true,
         signals: { statusComplete: true, statusResult: { task: 'x', done: 'x', remaining: 'none', complete: true, hasExplicitFlag: true } },
       })),
-      getDefinitions: () => [{ name: 'shell', description: 'Run shell', parameters: {} }],
+      getDefinitions: () => [{ name: 'bash', description: 'Run shell', parameters: {} }],
     };
 
     const context = createMockContext();
@@ -441,7 +441,7 @@ describe('AgentLoop', () => {
           toolCalls: [{
             id: `tc${callCount}`,
             type: 'function' as const,
-            function: { name: 'shell', arguments: `{"cmd":"echo ${callCount}"}` },
+            function: { name: 'bash', arguments: `{"command":"echo ${callCount}"}` },
           }],
         };
       }),
@@ -473,7 +473,7 @@ describe('AgentLoop', () => {
         toolCalls: [{
           id: `tc${callCount}`,
           type: 'function' as const,
-          function: { name: 'shell', arguments: `{"cmd":"echo ${callCount}"}` },
+          function: { name: 'bash', arguments: `{"command":"echo ${callCount}"}` },
         }],
       };
     });
@@ -487,7 +487,7 @@ describe('AgentLoop', () => {
     const toolCall: ToolCall = {
       id: 'tc1',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
+      function: { name: 'bash', arguments: '{"command":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
     };
     // Provider returns no usage (simulating providers that don't support stream_options)
     const provider = createMockProvider([
@@ -528,7 +528,7 @@ describe('AgentLoop', () => {
     const toolCall: ToolCall = {
       id: 'tc1',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
+      function: { name: 'bash', arguments: '{"command":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
     };
     const provider = createMockProvider([
       { content: '', toolCalls: [toolCall], usage: { promptTokens: 90000, completionTokens: 500, totalTokens: 90500 } },
@@ -567,7 +567,7 @@ describe('AgentLoop', () => {
     const toolCall: ToolCall = {
       id: 'tc1',
       type: 'function',
-      function: { name: 'shell', arguments: '{"cmd":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
+      function: { name: 'bash', arguments: '{"command":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
     };
     const provider = createMockProvider([
       { content: '', toolCalls: [toolCall] },

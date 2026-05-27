@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, DragEvent, ClipboardEvent } from 'react';
 import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, X, Brain, Image as ImageIcon } from 'lucide-react';
 import type { DebugEvent } from '@/lib/stores/types';
-import { EventProcessor, classifyShellCommand, type Turn, type TurnItem, type ToolCall } from './event-processor';
+import { EventProcessor, classifyBashCommand, type Turn, type TurnItem, type ToolCall } from './event-processor';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { ChipsBlock } from './chips';
 import { PanelContainer, PanelHeader } from '@/components/ui/panel';
@@ -113,10 +113,10 @@ function formatTokenCount(tokens: number): string {
 }
 
 const toolIcons: Record<string, React.ReactNode> = {
-  shell: <ChevronRight className="h-3 w-3 text-blue-500" />,
+  bash: <ChevronRight className="h-3 w-3 text-blue-500" />,
   write: <FileCode className="h-3 w-3 text-orange-500" />,
   status: <CheckCircle className="h-3 w-3 text-orange-500" />,
-  delegate: <Bot className="h-3 w-3 text-purple-500" />,
+  agent: <Bot className="h-3 w-3 text-purple-500" />,
 };
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -921,7 +921,7 @@ interface ToolDisplayProps {
 }
 
 function ToolDisplay({ tool, isExpanded, onToggle }: ToolDisplayProps) {
-  const category = tool.name === 'shell' ? classifyShellCommand(tool.parameters?.cmd) : tool.name;
+  const category = (tool.name === 'bash' || tool.name === 'shell') ? classifyBashCommand(tool.parameters?.command ?? tool.parameters?.cmd) : tool.name;
   return (
     <div
       className={`bg-muted/30 rounded-md transition-all ${
@@ -938,11 +938,9 @@ function ToolDisplay({ tool, isExpanded, onToggle }: ToolDisplayProps) {
         </div>
 
         {/* Tool-specific preview */}
-        {tool.name === 'shell' && tool.parameters?.cmd && (
+        {(tool.name === 'bash' || tool.name === 'shell') && (tool.parameters?.command ?? tool.parameters?.cmd) && (
           <code className="text-xs text-muted-foreground truncate min-w-0">
-            {Array.isArray(tool.parameters.cmd)
-              ? tool.parameters.cmd.slice(1).join(' ')
-              : String(tool.parameters.cmd)}
+            {(() => { const c = tool.parameters.command ?? tool.parameters.cmd; return Array.isArray(c) ? c.slice(1).join(' ') : String(c); })()}
           </code>
         )}
         {(tool.parameters?.path || tool.parameters?.file_path) && (

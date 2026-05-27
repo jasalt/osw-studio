@@ -42,7 +42,7 @@ describe('ContextManagerImpl', () => {
     const cm = new ContextManagerImpl(defaultConfig);
     const response: ParsedResponse = {
       content: 'I will help',
-      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'shell', arguments: '{"cmd":"ls"}' } }],
+      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'bash', arguments: '{"command":"ls"}' } }],
     };
     cm.addAssistantTurn(response);
     const msgs = cm.getMessages();
@@ -106,11 +106,11 @@ describe('ContextManagerImpl', () => {
     const cm = new ContextManagerImpl(defaultConfig);
     cm.addAssistantTurn({
       content: 'ok',
-      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'shell', arguments: '{"cmd":"ls -la"}' } }],
+      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'bash', arguments: '{"command":"ls -la"}' } }],
     });
     const estimate = cm.getTokenEstimate();
-    // content "ok" (2 chars) + args '{"cmd":"ls -la"}' (16 chars) = 18 / 3.5 ~ 5
-    expect(estimate).toBe(Math.round(18 / 3.5));
+    // content "ok" (2 chars) + args '{"command":"ls -la"}' (20 chars) = 22 / 3.5 ~ 6
+    expect(estimate).toBe(Math.round(22 / 3.5));
   });
 
   it('compacts conversation via provider', async () => {
@@ -192,7 +192,7 @@ describe('ContextManagerImpl', () => {
     // Assistant with tool call but no matching tool result
     cm.addAssistantTurn({
       content: 'let me check',
-      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'shell', arguments: '{"cmd":"ls"}' } }],
+      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'bash', arguments: '{"command":"ls"}' } }],
     });
     // No tool result added for tc1
     cm.addUserMessage('next message');
@@ -209,8 +209,8 @@ describe('ContextManagerImpl', () => {
     cm.addAssistantTurn({
       content: 'text content',
       toolCalls: [
-        { id: 'tc1', type: 'function', function: { name: 'shell', arguments: '' } },
-        { id: 'tc2', type: 'function', function: { name: 'shell', arguments: '{"cmd":"ls"}' } },
+        { id: 'tc1', type: 'function', function: { name: 'bash', arguments: '' } },
+        { id: 'tc2', type: 'function', function: { name: 'bash', arguments: '{"command":"ls"}' } },
       ],
     });
     cm.addToolResults([{ tool_call_id: 'tc2', content: 'result', success: true }]);
@@ -226,7 +226,7 @@ describe('ContextManagerImpl', () => {
     const cm = new ContextManagerImpl(defaultConfig);
     cm.addAssistantTurn({
       content: '',
-      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'shell', arguments: '' } }],
+      toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'bash', arguments: '' } }],
     });
     cm.addUserMessage('next');
 

@@ -47,7 +47,7 @@ export class OswsToolExecutor implements ToolExecutor {
     if (!toolId) {
       return {
         tool_call_id: toolCall.id,
-        content: 'Error: Tool call has no function name. Available tools: shell.',
+        content: 'Error: Tool call has no function name. Available tools: bash.',
         success: false,
       };
     }
@@ -161,7 +161,7 @@ export class OswsToolExecutor implements ToolExecutor {
     let cmd = '';
     try {
       const args = JSON.parse(toolCall.function.arguments);
-      cmd = typeof args.cmd === 'string' ? args.cmd : '';
+      cmd = typeof (args.command ?? args.cmd) === 'string' ? (args.command ?? args.cmd) : '';
     } catch {
       return signals;
     }
@@ -254,29 +254,29 @@ export class OswsToolExecutor implements ToolExecutor {
    * Guides the model to use the correct tool invocation pattern.
    */
   private buildToolAccessError(toolId: string, agentType: string): string {
-    const knownShellCommands = new Set([
+    const knownBashCommands = new Set([
       'ls', 'tree', 'cat', 'head', 'tail', 'rg', 'grep', 'find',
       'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'sed', 'ss', 'wc',
       'sort', 'uniq', 'tr', 'curl', 'sqlite3', 'python', 'python3',
-      'lua', 'preview', 'build', 'status', 'delegate', 'runtime',
+      'lua', 'preview', 'build', 'status', 'agent', 'delegate', 'runtime',
       'ask',
     ]);
     const setupOnlyCommands = new Set(['brief', 'spec', 'propose-create']);
     const isSetupCommand = setupOnlyCommands.has(toolId);
-    const isShellCommand = knownShellCommands.has(toolId) || (isSetupCommand && agentType === 'setup');
+    const isBashCommand = knownBashCommands.has(toolId) || (isSetupCommand && agentType === 'setup');
 
     if (toolId === 'ss') {
-      return `Error: "ss" is not a tool — it is a shell command. Call it via the shell tool:\n\n  shell({ cmd: "ss /file << 'EOF'\\nsearch text\\n===\\nreplacement text\\nEOF" })`;
+      return `Error: "ss" is not a tool — it is a bash command. Call it via the bash tool:\n\n  bash({ command: "ss /file << 'EOF'\\nsearch text\\n===\\nreplacement text\\nEOF" })`;
     }
 
-    if (isShellCommand) {
-      return `Error: "${toolId}" is not a tool — it is a shell command. Use the shell tool to run it:\n\n  shell({ cmd: "${toolId} ..." })`;
+    if (isBashCommand) {
+      return `Error: "${toolId}" is not a tool — it is a bash command. Use the bash tool to run it:\n\n  bash({ command: "${toolId} ..." })`;
     }
 
     const commandList = agentType === 'setup'
       ? 'brief, spec, ask, propose-create'
       : 'ls, tree, cat, head, tail, rg, grep, find, mkdir, touch, rm, mv, cp, echo, sed, ss, wc, sort, uniq, tr, curl, sqlite3, python, python3, lua, preview, build, status';
 
-    return `Error: Unknown tool "${toolId}". Available tools: shell.\n\nThe shell tool supports these commands: ${commandList}`;
+    return `Error: Unknown tool "${toolId}". Available tools: bash.\n\nThe bash tool supports these commands: ${commandList}`;
   }
 }

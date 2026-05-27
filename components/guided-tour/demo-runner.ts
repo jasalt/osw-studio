@@ -133,7 +133,7 @@ export async function runGuidedDemoEdit({
   await emitEvent({
     id: toTranscriptId(),
     role: 'tool',
-    name: 'shell',
+    name: 'bash',
     command: 'ls -R /',
     output: '/\n/about.html\n/contact.html\n/index.html\n/styles\n/styles/main.css\n/scripts\n/scripts/main.js',
   });
@@ -148,7 +148,7 @@ export async function runGuidedDemoEdit({
   await emitEvent({
     id: toTranscriptId(),
     role: 'tool',
-    name: 'shell',
+    name: 'bash',
     command: 'cat /styles/main.css',
     output: renderCssSnippet(cssContent),
   });
@@ -169,7 +169,7 @@ export async function runGuidedDemoEdit({
   await emitEvent({
     id: toTranscriptId(),
     role: 'tool',
-    name: 'shell',
+    name: 'bash',
     command: 'sed -i /styles/main.css (--primary → #22c55e)',
     output: 'Updated /styles/main.css. Applied primary palette change to emerald green.',
   });
@@ -192,7 +192,7 @@ export async function runGuidedDemoEdit({
   await emitEvent({
     id: toTranscriptId(),
     role: 'tool',
-    name: 'shell',
+    name: 'bash',
     command: 'cat /styles/main.css',
     output: renderCssSnippet(updatedCss),
   });

@@ -14,7 +14,7 @@ import {
 import { scriptRunner } from '@/lib/scripting/script-runner';
 import type { ScriptRuntime } from '@/lib/scripting/types';
 
-export type ToolId = 'shell';
+export type ToolId = 'bash';
 
 /**
  * Narrow shell description used by the describe-mode setup agent. Lists only
@@ -22,7 +22,7 @@ export type ToolId = 'shell';
  * cat/rg/ls — setup runs without project context, so VFS commands have
  * nothing to act on and would confuse the model.
  */
-const SETUP_SHELL_DESCRIPTION = `Run setup commands during project intake.
+const SETUP_BASH_DESCRIPTION = `Run setup commands during project intake.
 
 Commands:
 - brief --merge << 'EOF'
@@ -42,7 +42,7 @@ Commands:
 - propose-create
   Signal the project is ready to create. The brief must contain name, runtime, and template. Enables the user's "Create now" button. The user may continue adjusting after this; call again if needed.
 
-All commands are passed as the argument to the shell tool. Do NOT call brief, spec, ask, or propose-create as separate tools — they are shell commands, not standalone tools.`;
+All commands are passed as the command argument to the bash tool. Do NOT call brief, spec, ask, or propose-create as separate tools — they are bash commands, not standalone tools.`;
 
 interface ToolExecutor {
   /**
@@ -85,14 +85,14 @@ export class ToolRegistry {
    * Register all built-in tools
    */
   private registerBuiltInTools(): void {
-    // Shell tool - Execute shell commands
+    // Bash tool - Execute commands in the virtual file system
     this.register({
-      id: 'shell',
+      id: 'bash',
       definition: {
-        name: 'shell',
-        description: `Run shell commands in the virtual file system.
+        name: 'bash',
+        description: `Run commands in the virtual file system.
 
-Commands: cat, head, tail, ls, tree, grep, rg, find, mkdir, mv, cp, rm, touch, sed, ss, echo, wc, sort, uniq, tr, curl, sqlite3, python, python3, lua, preview, build, status, delegate, runtime, ask.
+Commands: cat, head, tail, ls, tree, grep, rg, find, mkdir, mv, cp, rm, touch, sed, ss, echo, wc, sort, uniq, tr, curl, sqlite3, python, python3, lua, preview, build, status, agent, runtime, ask.
 Pipes (cmd1 | cmd2), redirects (> file, >> file), heredocs (<< 'EOF'), chaining (&&, ||, ;), and brace expansion ({a,b,c}) are supported.
 Run scripts: python <file>, lua <file>. Show output in preview: preview <path>.
 
@@ -103,22 +103,23 @@ One command at a time as a single string.`,
         parameters: {
           type: 'object',
           properties: {
-            cmd: {
+            command: {
               type: 'string',
-              description: 'Single shell command to execute (complete command with all arguments as a string)'
+              description: 'The command to execute'
             }
           },
-          required: ['cmd']
+          required: ['command']
         }
       },
       executor: {
         execute: async (projectId, args, context) => {
-          // Validate command is a string
-          if (typeof args.cmd !== 'string') {
-            return 'Error: cmd must be a string. Pass the complete command as a single string (e.g., "ls -la /")';
+          // Accept both 'command' (canonical) and 'cmd' (legacy/model habit)
+          const rawCmd = args.command ?? args.cmd;
+          if (typeof rawCmd !== 'string') {
+            return 'Error: command must be a string. Pass the complete command as a single string (e.g., "ls -la /")';
           }
 
-          let cmdString = unescapeHtmlEntities(args.cmd);
+          let cmdString = unescapeHtmlEntities(rawCmd);
 
           // Newline-separated compound commands (multiple statements, possibly including
           // chained heredocs) are split here first. splitNewlineCommands is the single
@@ -138,7 +139,7 @@ One command at a time as a single string.`,
               const outputs: string[] = [];
               let completedCount = 0;
               for (const singleCmd of multiCmds) {
-                const lineResult = await this.get('shell')!.executor.execute(projectId, { cmd: singleCmd }, context);
+                const lineResult = await this.get('bash')!.executor.execute(projectId, { command: singleCmd }, context);
                 if (lineResult && lineResult !== 'Command succeeded with no output') {
                   outputs.push(lineResult);
                 }
@@ -189,7 +190,7 @@ One command at a time as a single string.`,
           }
 
           // Parse command string into array
-          const cmdArray = parseShellCommand(cmdString);
+          const cmdArray = parseBashCommand(cmdString);
 
           // Check for && / || / ; chain operators — handle at this level so
           // python/lua/preview/cd work when chained (e.g., "python main.py && preview /output/chart.html")
@@ -232,7 +233,7 @@ One command at a time as a single string.`,
 
             const lines = trailingCommands.split('\n').map(l => l.trim()).filter(Boolean);
             for (const line of lines) {
-              const trailArray = parseShellCommand(line);
+              const trailArray = parseBashCommand(line);
               if (trailArray.length === 0) continue;
 
               const trailResult = await executeShellSegment(projectId, trailArray, context);
@@ -276,8 +277,8 @@ One command at a time as a single string.`,
   getDefinition(id: ToolId, agentType?: string): ToolDefinition | undefined {
     const tool = this.tools.get(id);
     if (!tool) return undefined;
-    if (id === 'shell' && agentType === 'setup') {
-      return { ...tool.definition, description: SETUP_SHELL_DESCRIPTION };
+    if (id === 'bash' && agentType === 'setup') {
+      return { ...tool.definition, description: SETUP_BASH_DESCRIPTION };
     }
     return tool.definition;
   }
@@ -299,15 +300,15 @@ One command at a time as a single string.`,
     projectId: string,
     context: ToolExecutionContext
   ): Promise<string> {
-    const toolId = toolCall.function?.name as ToolId;
-    const tool = this.get(toolId);
+    const toolId = toolCall.function?.name as string;
+    const tool = this.get(toolId as ToolId);
 
     if (!tool) {
-      // Auto-route known shell commands called as standalone tools
-      // LLMs sometimes call "cat", "curl", "grep" etc. as tool names instead of using shell
-      const shellCommands = ['ls', 'tree', 'cat', 'head', 'tail', 'grep', 'rg', 'find', 'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'sed', 'ss', 'wc', 'curl', 'sqlite3', 'python', 'python3', 'lua', 'preview', 'build', 'status', 'delegate', 'runtime'];
+      // Auto-route known commands called as standalone tools
+      // LLMs sometimes call "cat", "curl", "grep" etc. as tool names instead of using bash
+      const knownCommands = ['ls', 'tree', 'cat', 'head', 'tail', 'grep', 'rg', 'find', 'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'sed', 'ss', 'wc', 'curl', 'sqlite3', 'python', 'python3', 'lua', 'preview', 'build', 'status', 'agent', 'delegate', 'runtime'];
 
-      // Map common "read file" tool names to cat
+      // Map common aliases — including 'shell' itself for models trained on older prompts
       const readAliases: Record<string, string> = {
         'read': 'cat', 'read_file': 'cat', 'file_read': 'cat',
         'view': 'cat', 'view_file': 'cat',
@@ -315,13 +316,28 @@ One command at a time as a single string.`,
 
       const resolvedCommand = readAliases[toolId] || toolId;
 
-      if (shellCommands.includes(resolvedCommand)) {
-        const shellTool = this.get('shell');
-        if (shellTool) {
+      // Also accept 'shell' as an alias for 'bash' (backward compat for models)
+      if (toolId === 'shell') {
+        const bashTool = this.get('bash');
+        if (bashTool) {
           try {
             const args = JSON.parse(toolCall.function.arguments);
-            const cmd = reconstructShellCommand(resolvedCommand, args);
-            return await shellTool.executor.execute(projectId, { cmd }, context);
+            const command = args.command ?? args.cmd ?? '';
+            return await bashTool.executor.execute(projectId, { command }, context);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return `Error: ${msg}`;
+          }
+        }
+      }
+
+      if (knownCommands.includes(resolvedCommand)) {
+        const bashTool = this.get('bash');
+        if (bashTool) {
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            const command = reconstructBashCommand(resolvedCommand, args);
+            return await bashTool.executor.execute(projectId, { command }, context);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return `Error: ${msg}`;
@@ -346,9 +362,10 @@ One command at a time as a single string.`,
         const repairResult = attemptJSONRepair(toolCall.function.arguments);
 
         if (repairResult.success) {
-          if (toolId === 'shell' && typeof repairResult.repaired?.cmd === 'string') {
-            const repairedCmd: string = repairResult.repaired.cmd;
-            const validation = validateRepairedShellCommand(repairedCmd);
+          const repairedCommand = repairResult.repaired?.command ?? repairResult.repaired?.cmd;
+          if (toolId === 'bash' && typeof repairedCommand === 'string') {
+            const repairedCmd: string = repairedCommand;
+            const validation = validateRepairedBashCommand(repairedCmd);
 
             if (!validation.ok) {
               // Check if this is a truncated heredoc write — salvage what we can.
@@ -378,18 +395,17 @@ One command at a time as a single string.`,
           return `Error: ${errorMessage}\n\nNote: JSON repair succeeded but operation type is unclear. Please split into smaller operations.`;
         }
 
-        // JSON repair failed — but for shell heredoc writes we can still try to salvage.
-        // Extract cmd and content directly from the raw truncated JSON string.
-        if (toolId === 'shell') {
+        // JSON repair failed — but for bash heredoc writes we can still try to salvage.
+        // Extract command content directly from the raw truncated JSON string.
+        if (toolId === 'bash') {
           const rawArgs = toolCall.function.arguments;
-          // Match: {"cmd": "cat > /file << 'DELIM'\ncontent...
-          const rawHeredoc = rawArgs.match(/["']cmd["']\s*:\s*["']((?:cat|tee)\s+.*?>\s*(\S+).*?<<-?\s*['"]?\w+['"]?[^\n]*\\n[\s\S]{20,})/);
+          // Match: {"command": "cat > /file << 'DELIM'\ncontent... (or legacy "cmd")
+          const rawHeredoc = rawArgs.match(/["'](?:command|cmd)["']\s*:\s*["']((?:cat|tee)\s+.*?>\s*(\S+).*?<<-?\s*['"]?\w+['"]?[^\n]*\\n[\s\S]{20,})/);
           if (rawHeredoc) {
-            // Unescape JSON string escapes to get the actual command
             const unescaped = rawHeredoc[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
             logger.warn(`[ToolRegistry] JSON repair failed but salvaged heredoc from raw JSON for ${rawHeredoc[2]}`);
             try {
-              const result = await tool.executor.execute(projectId, { cmd: unescaped }, context);
+              const result = await tool.executor.execute(projectId, { command: unescaped }, context);
               return result + `\n\nNote: Your output was truncated mid-write. The file ${rawHeredoc[2]} was written with partial content. Continue writing from where you left off using cat >> ${rawHeredoc[2]} (append mode) or rewrite the remainder.`;
             } catch {
               // Fall through to generic error
@@ -415,7 +431,7 @@ One command at a time as a single string.`,
 // mistaken for trailing truncation.
 const TRAILING_INCOMPLETE_OPERATOR_RE = /(?:^|\s)(?:<<?|>>?|\|\|?|&&)\s*$/;
 
-function validateRepairedShellCommand(cmd: string): { ok: true } | { ok: false; reason: string } {
+function validateRepairedBashCommand(cmd: string): { ok: true } | { ok: false; reason: string } {
   const trimmed = cmd.replace(/\s+$/, '');
   if (!trimmed) {
     return { ok: false, reason: 'command is empty after repair' };
@@ -544,8 +560,8 @@ async function executeShellSegment(
 
   // Delegate — handled at orchestrator level, never reaches here in normal flow.
   // Safety net: if it does, return an error directing to proper usage.
-  if (command === 'delegate') {
-    return 'Error: delegate requires a type. Usage: shell({ cmd: "delegate explore|task|plan \'prompt\'" })';
+  if (command === 'agent' || command === 'delegate') {
+    return 'Error: agent requires a type. Usage: bash({ command: "agent explore|task|plan \'prompt\'" })';
   }
 
   // VFS shell fallthrough (handles pipes, redirects, etc.)
@@ -611,7 +627,7 @@ function unescapeHtmlEntities(cmd: string): string {
 /**
  * Parse a shell command string into an array of arguments
  */
-function parseShellCommand(cmdStr: string): string[] {
+function parseBashCommand(cmdStr: string): string[] {
   const args: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -728,10 +744,11 @@ function isWriteOperation(cmd: string[]): boolean {
  * Reconstruct a shell command string when the LLM calls a shell command as a standalone tool.
  * Handles various arg shapes: { cmd: "..." }, { url: "..." }, { file: "..." }, { path: "..." }, etc.
  */
-function reconstructShellCommand(command: string, args: any): string {
-  // If args already has a cmd string, prepend the command name if not already there
-  if (typeof args.cmd === 'string') {
-    const cmd = args.cmd.trim();
+function reconstructBashCommand(command: string, args: any): string {
+  // If args already has a command/cmd string, prepend the command name if not already there
+  const existingCmd = args.command ?? args.cmd;
+  if (typeof existingCmd === 'string') {
+    const cmd = existingCmd.trim();
     return cmd.startsWith(command) ? cmd : `${command} ${cmd}`;
   }
 

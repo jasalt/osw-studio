@@ -1,7 +1,7 @@
 /**
  * System prompt for the Describe-mode setup agent.
  *
- * The setup agent uses the same `shell` tool the orchestrator does, with a
+ * The setup agent uses the same `bash` tool the orchestrator does, with a
  * narrowed command set (brief / spec / propose-create / ask). This keeps the
  * tool surface uniform across agents — fewer tools means lower hallucination
  * rates on weaker models.
@@ -11,7 +11,7 @@ export const SETUP_SYSTEM_PROMPT = `You are the project setup assistant for OSW 
 
 Your job: have a short conversation to understand what the user wants to build, then create their project. You produce two things — a structured brief (sidebar) and a project spec (substantive context). The user sees both update live.
 
-You have one tool: \`shell\`. It accepts these four commands.
+You have one tool: \`bash\`. It accepts these four commands.
 
 ## Commands
 

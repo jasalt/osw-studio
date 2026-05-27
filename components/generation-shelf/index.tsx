@@ -18,10 +18,10 @@ interface ActivityItem {
   status: 'executing' | 'completed' | 'failed';
 }
 
-function parseShellAction(argsJson: string, status: string): { verb: string; target: string } | null {
+function parseBashAction(argsJson: string, status: string): { verb: string; target: string } | null {
   try {
     const args = JSON.parse(argsJson);
-    const cmd = (args.cmd || '').trim();
+    const cmd = (args.command ?? args.cmd ?? '').trim();
     if (!cmd) return null;
 
     const isRunning = status === 'executing';
@@ -91,7 +91,7 @@ function deriveActivity(events: DebugEvent[], since: number | null): { items: Ac
     if (e.event !== 'tool_status') continue;
     const { status, args } = e.data || {};
     if (status !== 'executing' && status !== 'completed' && status !== 'failed') continue;
-    const action = parseShellAction(args || '{}', status);
+    const action = parseBashAction(args || '{}', status);
     if (!action) continue;
     all.unshift({ verb: action.verb, target: action.target, status });
   }

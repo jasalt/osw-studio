@@ -21,10 +21,10 @@ interface ToolCallDetail {
   name: string;
   status: 'success' | 'failed';
   args?: string;
-  shellCommand?: string;
+  bashCommand?: string;
 }
 
-const KNOWN_TOOLS = new Set(['shell']);
+const KNOWN_TOOLS = new Set(['bash', 'shell']);
 
 interface ToolStats {
   total: number;
@@ -33,12 +33,12 @@ interface ToolStats {
   invalid: number;
   invalidNames: string[];
   breakdown: Record<string, { total: number; success: number; failed: number }>;
-  shellCommands: Record<string, number>;
+  bashCommands: Record<string, number>;
 }
 
 function computeToolStats(details: ToolCallDetail[]): ToolStats {
   const breakdown: Record<string, { total: number; success: number; failed: number }> = {};
-  const shellCommands: Record<string, number> = {};
+  const bashCommands: Record<string, number> = {};
   let success = 0, failed = 0, invalid = 0;
   const invalidNameSet = new Set<string>();
 
@@ -57,12 +57,12 @@ function computeToolStats(details: ToolCallDetail[]): ToolStats {
     if (d.status === 'success') breakdown[d.name].success++;
     else breakdown[d.name].failed++;
 
-    if (d.shellCommand) {
-      shellCommands[d.shellCommand] = (shellCommands[d.shellCommand] || 0) + 1;
+    if (d.bashCommand) {
+      bashCommands[d.bashCommand] = (bashCommands[d.bashCommand] || 0) + 1;
     }
   }
 
-  return { total: details.length, success, failed, invalid, invalidNames: [...invalidNameSet], breakdown, shellCommands };
+  return { total: details.length, success, failed, invalid, invalidNames: [...invalidNameSet], breakdown, bashCommands };
 }
 
 function formatCost(amount: number): string {
@@ -275,7 +275,7 @@ export default function TestGenerationPage() {
 
       let exitReason: string | undefined;
       let nudgeCount = 0;
-      let delegateStartTime = 0;
+      let agentStartTime = 0;
       let reasoningBuffer = '';
 
       const flushReasoning = () => {
@@ -331,13 +331,13 @@ export default function TestGenerationPage() {
               if (data?.args) {
                 try {
                   const parsed = JSON.parse(data.args);
-                  if (toolName === 'shell') argSnippet = parsed.cmd || parsed.command || '';
+                  if (toolName === 'bash' || toolName === 'shell') argSnippet = parsed.command || parsed.cmd || '';
                 } catch {}
-                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
+                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('agent ') || argSnippet.trimStart().startsWith('delegate ');
                 if (!isVerboseCmd && argSnippet.length > 80) argSnippet = argSnippet.substring(0, 77) + '...';
               }
               toolDetails.push({ name: toolName, status: 'success', args: argSnippet });
-              delegateStartTime = 0; // Reset for each new top-level tool call
+              agentStartTime = 0;
               appendOutput(scenarioId, `\n[tool] ${toolName}${argSnippet ? ` — ${argSnippet}` : ' ...'}\n`);
             } else if (data?.status === 'completed') {
               appendOutput(scenarioId, `[tool] ${toolName} done\n`);
@@ -348,16 +348,16 @@ export default function TestGenerationPage() {
             }
           }
 
-          if (message === 'delegate_progress') {
+          if (message === 'agent_progress') {
             const data = step as Record<string, unknown>;
             const innerEvent = data?.event as string;
             const agentIndex = data?.agentIndex as number || 1;
             const innerData = data?.data as Record<string, unknown>;
-            const promptLabel = String(data?.delegatePrompt || '');
+            const promptLabel = String(data?.agentPrompt || data?.delegatePrompt || '');
 
             // Track relative time from first subagent event
-            if (!delegateStartTime) delegateStartTime = Date.now();
-            const t = ((Date.now() - delegateStartTime) / 1000).toFixed(1);
+            if (!agentStartTime) agentStartTime = Date.now();
+            const t = ((Date.now() - agentStartTime) / 1000).toFixed(1);
             const label = `subagent ${agentIndex} +${t}s`;
 
             if (innerEvent === 'agent_start') {
@@ -423,16 +423,16 @@ export default function TestGenerationPage() {
           if (msg.tool_calls) {
             for (const tc of msg.tool_calls) {
               let argSnippet = '';
-              let shellCommand: string | undefined;
+              let bashCommand: string | undefined;
               try {
                 const parsed = JSON.parse(tc.function.arguments);
-                if (tc.function.name === 'shell') {
-                  argSnippet = parsed.cmd || parsed.command || '';
+                if (tc.function.name === 'bash' || tc.function.name === 'shell') {
+                  argSnippet = parsed.command || parsed.cmd || '';
                   const firstWord = argSnippet.trimStart().split(/\s+/)[0];
-                  if (firstWord) shellCommand = firstWord;
+                  if (firstWord) bashCommand = firstWord;
                 }
               } catch {}
-              const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
+              const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('agent ') || argSnippet.trimStart().startsWith('delegate ');
               if (!isVerboseCmd && argSnippet.length > 80) argSnippet = argSnippet.substring(0, 77) + '...';
 
               const succeeded = toolResultMap.has(tc.id) ? toolResultMap.get(tc.id)! : true;
@@ -440,7 +440,7 @@ export default function TestGenerationPage() {
                 name: tc.function.name,
                 status: succeeded ? 'success' : 'failed',
                 args: argSnippet,
-                shellCommand,
+                bashCommand,
               });
             }
           }
@@ -642,7 +642,7 @@ export default function TestGenerationPage() {
 
       let exitReason: string | undefined;
       let nudgeCount = 0;
-      let delegateStartTime = 0;
+      let agentStartTime = 0;
       let reasoningBuffer = '';
       let activeStepId = sequenceId;
 
@@ -689,21 +689,21 @@ export default function TestGenerationPage() {
             const toolName = data?.toolName || 'unknown';
             if (data?.status === 'executing') {
               let argSnippet = '';
-              let shellCommand: string | undefined;
+              let bashCommand: string | undefined;
               if (data?.args) {
                 try {
                   const parsed = JSON.parse(data.args);
-                  if (toolName === 'shell') {
-                    argSnippet = parsed.cmd || parsed.command || '';
+                  if (toolName === 'bash' || toolName === 'shell') {
+                    argSnippet = parsed.command || parsed.cmd || '';
                     const firstWord = argSnippet.trimStart().split(/\s+/)[0];
-                    if (firstWord) shellCommand = firstWord;
+                    if (firstWord) bashCommand = firstWord;
                   }
                 } catch {}
-                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
+                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('agent ') || argSnippet.trimStart().startsWith('delegate ');
                 if (!isVerboseCmd && argSnippet.length > 80) argSnippet = argSnippet.substring(0, 77) + '...';
               }
-              stepToolDetails.push({ name: toolName, status: 'success', args: argSnippet, shellCommand });
-              delegateStartTime = 0;
+              stepToolDetails.push({ name: toolName, status: 'success', args: argSnippet, bashCommand });
+              agentStartTime = 0;
               appendOutput(activeStepId, `\n[tool] ${toolName}${argSnippet ? ` — ${argSnippet}` : ' ...'}\n`);
             } else if (data?.status === 'completed') {
               appendOutput(activeStepId, `[tool] ${toolName} done\n`);
@@ -714,15 +714,15 @@ export default function TestGenerationPage() {
             }
           }
 
-          if (message === 'delegate_progress') {
+          if (message === 'agent_progress') {
             const data = step as Record<string, unknown>;
             const innerEvent = data?.event as string;
             const agentIndex = data?.agentIndex as number || 1;
             const innerData = data?.data as Record<string, unknown>;
-            const promptLabel = String(data?.delegatePrompt || '');
+            const promptLabel = String(data?.agentPrompt || data?.delegatePrompt || '');
 
-            if (!delegateStartTime) delegateStartTime = Date.now();
-            const t = ((Date.now() - delegateStartTime) / 1000).toFixed(1);
+            if (!agentStartTime) agentStartTime = Date.now();
+            const t = ((Date.now() - agentStartTime) / 1000).toFixed(1);
             const label = `subagent ${agentIndex} +${t}s`;
 
             if (innerEvent === 'agent_start') {
@@ -776,6 +776,7 @@ export default function TestGenerationPage() {
       let prevCompletionTokens = 0;
       let prevTotalTokens = 0;
       let prevCost = 0;
+      let prevConversationLength = 0;
 
       for (const step of sequence.steps) {
         if (batchCancelledRef.current) break;
@@ -813,7 +814,10 @@ export default function TestGenerationPage() {
 
         const conversationToolDetails: ToolCallDetail[] = [];
         const toolResultMap = new Map<string, boolean>();
-        for (const node of (result.conversation || [])) {
+        const fullConversation = result.conversation || [];
+        const newNodes = fullConversation.slice(prevConversationLength);
+        prevConversationLength = fullConversation.length;
+        for (const node of newNodes) {
           for (const msg of node.messages) {
             if (msg.role === 'tool' && msg.tool_call_id) {
               const content = typeof msg.content === 'string' ? msg.content : '';
@@ -824,16 +828,16 @@ export default function TestGenerationPage() {
             if (msg.tool_calls) {
               for (const tc of msg.tool_calls) {
                 let argSnippet = '';
-                let shellCommand: string | undefined;
+                let bashCommand: string | undefined;
                 try {
                   const parsed = JSON.parse(tc.function.arguments);
-                  if (tc.function.name === 'shell') {
-                    argSnippet = parsed.cmd || parsed.command || '';
+                  if (tc.function.name === 'bash' || tc.function.name === 'shell') {
+                    argSnippet = parsed.command || parsed.cmd || '';
                     const firstWord = argSnippet.trimStart().split(/\s+/)[0];
-                    if (firstWord) shellCommand = firstWord;
+                    if (firstWord) bashCommand = firstWord;
                   }
                 } catch {}
-                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('delegate ');
+                const isVerboseCmd = argSnippet.trimStart().startsWith('status ') || argSnippet.trimStart().startsWith('agent ') || argSnippet.trimStart().startsWith('delegate ');
                 if (!isVerboseCmd && argSnippet.length > 80) argSnippet = argSnippet.substring(0, 77) + '...';
 
                 const succeeded = toolResultMap.has(tc.id) ? toolResultMap.get(tc.id)! : true;
@@ -841,7 +845,7 @@ export default function TestGenerationPage() {
                   name: tc.function.name,
                   status: succeeded ? 'success' : 'failed',
                   args: argSnippet,
-                  shellCommand,
+                  bashCommand,
                 });
               }
             }
@@ -1116,7 +1120,7 @@ export default function TestGenerationPage() {
   const resetTests = () => {
     stopBenchmark();
     setTestResults(buildPendingResults(allScenarioIds, testSequences.map(s => s.id)));
-    setOverallStats({ total: 0, passed: 0, failed: 0, successRate: 0, totalCost: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, toolStats: { total: 0, success: 0, failed: 0, invalid: 0, invalidNames: [], breakdown: {}, shellCommands: {} } });
+    setOverallStats({ total: 0, passed: 0, failed: 0, successRate: 0, totalCost: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, toolStats: { total: 0, success: 0, failed: 0, invalid: 0, invalidNames: [], breakdown: {}, bashCommands: {} } });
     setRunningTests(new Set());
     setActiveTrack(null);
     orchestratorInstances.current = new Map();
@@ -1464,8 +1468,8 @@ export default function TestGenerationPage() {
     const allRoundResults = data.rounds.flatMap(r => r.results);
     const allShellCmds: Record<string, number> = {};
     for (const r of allRoundResults) {
-      if (r.toolStats?.shellCommands) {
-        for (const [cmd, count] of Object.entries(r.toolStats.shellCommands)) {
+      if (r.toolStats?.bashCommands) {
+        for (const [cmd, count] of Object.entries(r.toolStats.bashCommands)) {
           allShellCmds[cmd] = (allShellCmds[cmd] || 0) + count;
         }
       }
@@ -1504,6 +1508,154 @@ export default function TestGenerationPage() {
     toast.success('Benchmark results exported as Markdown');
   };
 
+  const getErrorCount = () => {
+    const allResults: (RoundResult | TestResult)[] = roundHistory.length > 0
+      ? roundHistory.flat()
+      : testResults.filter(r => r.status === 'success' || r.status === 'failed' || r.status === 'stopped');
+    const completed = allResults.filter(r => !r.isSequenceHeader);
+    const failedTests = completed.filter(r => r.status === 'failed').length;
+    const failedTools = completed.reduce((sum, r) =>
+      sum + (r.toolCallDetails?.filter(t => t.status === 'failed').length || 0), 0);
+    const invalidTools = completed.reduce((sum, r) =>
+      sum + (r.toolCallDetails?.filter(t => !KNOWN_TOOLS.has(t.name)).length || 0), 0);
+    const failedAssertions = completed.reduce((sum, r) =>
+      sum + (r.assertionResults?.filter(a => !a.passed).length || 0), 0);
+    return { failedTests, failedTools, invalidTools, failedAssertions, total: failedTests + failedTools + invalidTools + failedAssertions };
+  };
+
+  const exportErrors = () => {
+    const allResults: (RoundResult | TestResult)[] = roundHistory.length > 0
+      ? roundHistory.flat()
+      : testResults.filter(r => r.status === 'success' || r.status === 'failed' || r.status === 'stopped');
+
+    const completed = allResults.filter(r => !r.isSequenceHeader);
+    const failedTests = completed.filter(r => r.status === 'failed');
+    const testsWithFailedTools = completed.filter(r =>
+      r.toolCallDetails?.some(t => t.status === 'failed' || !KNOWN_TOOLS.has(t.name)));
+    const testsWithFailedAssertions = completed.filter(r =>
+      r.assertionResults?.some(a => !a.passed));
+
+    // Collect all tests that have any kind of error
+    const errorTestIds = new Set<string>();
+    for (const r of [...failedTests, ...testsWithFailedTools, ...testsWithFailedAssertions]) {
+      errorTestIds.add(r.id);
+    }
+    const errorTests = completed.filter(r => errorTestIds.has(r.id));
+
+    if (errorTests.length === 0) {
+      toast.info('No errors to export');
+      return;
+    }
+
+    const totalFailedTools = completed.reduce((sum, r) =>
+      sum + (r.toolCallDetails?.filter(t => t.status === 'failed').length || 0), 0);
+    const totalInvalidTools = completed.reduce((sum, r) =>
+      sum + (r.toolCallDetails?.filter(t => !KNOWN_TOOLS.has(t.name)).length || 0), 0);
+    const totalFailedAssertions = completed.reduce((sum, r) =>
+      sum + (r.assertionResults?.filter(a => !a.passed).length || 0), 0);
+
+    const lines: string[] = [];
+    lines.push('# Benchmark Error Report');
+    lines.push('');
+    lines.push(`**Date:** ${new Date().toISOString()}`);
+    lines.push(`**Model:** ${currentModel}`);
+    lines.push('');
+    lines.push('| Category | Count |');
+    lines.push('|----------|-------|');
+    lines.push(`| Failed tests | ${failedTests.length} / ${completed.length} |`);
+    lines.push(`| Failed tool calls | ${totalFailedTools} |`);
+    if (totalInvalidTools > 0) lines.push(`| Invalid tool calls | ${totalInvalidTools} |`);
+    if (totalFailedAssertions > 0) lines.push(`| Failed assertions | ${totalFailedAssertions} |`);
+    lines.push('');
+
+    for (const r of errorTests) {
+      const isFailed = r.status === 'failed';
+      const failedToolsInTest = r.toolCallDetails?.filter(t => t.status === 'failed') || [];
+      const invalidToolsInTest = r.toolCallDetails?.filter(t => !KNOWN_TOOLS.has(t.name)) || [];
+      const failedAssertionsInTest = r.assertionResults?.filter(a => !a.passed) || [];
+
+      lines.push('---');
+      lines.push('');
+      lines.push(`## ${isFailed ? '[FAILED] ' : ''}${r.name}`);
+      lines.push('');
+
+      const time = r.executionTime ? `${(r.executionTime / 1000).toFixed(1)}s` : '-';
+      const cost = r.totalCost !== undefined ? formatCost(r.totalCost) : '-';
+      const tokens = r.totalTokens !== undefined ? r.totalTokens.toLocaleString() : '-';
+      const toolCount = r.toolCallDetails?.length || r.toolCalls || 0;
+      lines.push(`Time: ${time} | Cost: ${cost} | Tokens: ${tokens} | Tools: ${toolCount} (${failedToolsInTest.length} failed)`);
+      if (r.exitReason) lines.push(`Exit: ${r.exitReason}`);
+      lines.push('');
+
+      // Assertions (show all for context, mark pass/fail)
+      if (r.assertionResults && r.assertionResults.length > 0) {
+        lines.push('### Assertions');
+        lines.push('');
+        for (const ar of r.assertionResults) {
+          const icon = ar.passed ? 'PASS' : 'FAIL';
+          lines.push(`- **${icon}** ${ar.assertion.description}${ar.actual ? ` — ${ar.actual}` : ''}`);
+        }
+        lines.push('');
+      }
+
+      // Errors
+      if (r.errors && r.errors.length > 0) {
+        lines.push('### Errors');
+        lines.push('');
+        for (const err of r.errors) {
+          lines.push(`- ${err}`);
+        }
+        lines.push('');
+      }
+
+      // Failed tool calls with args
+      if (failedToolsInTest.length > 0) {
+        lines.push(`### Failed Tool Calls (${failedToolsInTest.length})`);
+        lines.push('');
+        for (const t of failedToolsInTest) {
+          lines.push(`- **${t.name}**${t.bashCommand ? ` \`${t.bashCommand}\`` : ''}`);
+          if (t.args) {
+            const preview = t.args.length > 300 ? t.args.substring(0, 300) + '...' : t.args;
+            lines.push(`  \`\`\`\n  ${preview}\n  \`\`\``);
+          }
+        }
+        lines.push('');
+      }
+
+      // Invalid tool names
+      if (invalidToolsInTest.length > 0) {
+        lines.push(`### Invalid Tool Calls (${invalidToolsInTest.length})`);
+        lines.push('');
+        for (const t of invalidToolsInTest) {
+          lines.push(`- **${t.name}** — ${t.args || '(no args)'}`);
+        }
+        lines.push('');
+      }
+
+      // Generation output (the full trace)
+      const genOutput = 'generationOutput' in r ? (r as TestResult).generationOutput : undefined;
+      if (genOutput) {
+        lines.push('### Generation Output');
+        lines.push('');
+        lines.push('```');
+        lines.push(genOutput);
+        lines.push('```');
+        lines.push('');
+      }
+    }
+
+    lines.push('---');
+    lines.push('*Generated by OSW Studio Benchmark*');
+
+    const parts: string[] = [];
+    if (failedTests.length > 0) parts.push(`${failedTests.length} failed test(s)`);
+    if (totalFailedTools > 0) parts.push(`${totalFailedTools} failed tool call(s)`);
+    if (totalInvalidTools > 0) parts.push(`${totalInvalidTools} invalid tool(s)`);
+
+    downloadFile(lines.join('\n'), getExportFilename('errors.md'), 'text/markdown');
+    toast.success(`Exported ${parts.join(', ')} across ${errorTests.length} test(s)`);
+  };
+
   const headerActions: HeaderAction[] = [
     {
       id: 'back',
@@ -1517,7 +1669,7 @@ export default function TestGenerationPage() {
   return (
     <div className="h-screen flex flex-col">
       <AppHeader
-        leftText={<>OSWS Benchmark <span className="text-xs font-normal text-muted-foreground ml-1">v260520</span></>}
+        leftText={<>OSWS Benchmark <span className="text-xs font-normal text-muted-foreground ml-1">v260527</span></>}
         onLogoClick={() => router.push('/')}
         actions={headerActions}
       />
@@ -1539,7 +1691,7 @@ export default function TestGenerationPage() {
                 <h4 className="font-medium text-foreground mb-1">How it works</h4>
                 <p>
                   Each test creates a virtual file system project, initializes an AI orchestrator with the selected model,
-                  and sends one or more prompts. The orchestrator has access to a <code className="text-xs bg-muted px-1 py-0.5 rounded">shell</code> tool
+                  and sends one or more prompts. The orchestrator has access to a <code className="text-xs bg-muted px-1 py-0.5 rounded">bash</code> tool
                   for file operations (cat, sed, grep, mkdir, etc.) and a <code className="text-xs bg-muted px-1 py-0.5 rounded">status</code> command
                   for signaling task completion. After execution, assertions verify that the model used the right tools and produced correct output.
                 </p>
@@ -1560,7 +1712,8 @@ export default function TestGenerationPage() {
                   <strong>Hard assertions</strong> check tool call arguments (<code className="text-xs bg-muted px-1 py-0.5 rounded">tool_args_match</code>),
                   file existence (<code className="text-xs bg-muted px-1 py-0.5 rounded">file_exists</code> / <code className="text-xs bg-muted px-1 py-0.5 rounded">file_not_exists</code>),
                   file content (<code className="text-xs bg-muted px-1 py-0.5 rounded">file_content_match</code>),
-                  and model output (<code className="text-xs bg-muted px-1 py-0.5 rounded">output_matches</code>).
+                  model output (<code className="text-xs bg-muted px-1 py-0.5 rounded">output_matches</code>),
+                  and composites (<code className="text-xs bg-muted px-1 py-0.5 rounded">any_of</code> — passes if any sub-assertion matches).
                   The optional <strong>judge model</strong> provides a second-opinion quality assessment on top of hard assertions.
                 </p>
               </div>
@@ -1592,6 +1745,7 @@ export default function TestGenerationPage() {
 
         {/* Stats Overview */}
         {(() => {
+          const expectedTotal = testResults.filter(r => !r.isSequenceHeader).length;
           const stats = benchmarkComplete && aggregatedOverallStats && roundHistory.length > 1
             ? {
                 total: aggregatedOverallStats.totalTests,
@@ -1604,6 +1758,7 @@ export default function TestGenerationPage() {
                 totalTokens: aggregatedOverallStats.totalTokens,
                 toolStats: aggregatedOverallStats.toolStats,
                 rounds: aggregatedOverallStats.roundsCompleted,
+                expectedTotal: undefined as number | undefined,
               }
             : {
                 total: overallStats.total,
@@ -1616,6 +1771,7 @@ export default function TestGenerationPage() {
                 totalTokens: overallStats.totalTokens,
                 toolStats: overallStats.toolStats,
                 rounds: undefined as number | undefined,
+                expectedTotal: isRunning ? expectedTotal : undefined,
               };
 
           return (
@@ -1629,7 +1785,9 @@ export default function TestGenerationPage() {
                 )}
                 <div className="bg-card border rounded-lg p-4">
                   <div className="text-sm font-medium text-muted-foreground mb-1">Total Tests</div>
-                  <div className="text-2xl font-bold">{stats.total}</div>
+                  <div className="text-2xl font-bold">
+                    {stats.expectedTotal ? <>{stats.total} <span className="text-base font-normal text-muted-foreground">/ {stats.expectedTotal}</span></> : stats.total}
+                  </div>
                 </div>
                 <div className="bg-card border rounded-lg p-4">
                   <div className="text-sm font-medium text-muted-foreground mb-1">Passed</div>
@@ -1820,6 +1978,15 @@ export default function TestGenerationPage() {
                 <Download className="h-4 w-4 mr-2" />
                 Markdown
               </Button>
+              {(() => {
+                const ec = getErrorCount();
+                return ec.total > 0 ? (
+                  <Button variant="outline" onClick={exportErrors} disabled={isRunning}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Errors ({ec.total})
+                  </Button>
+                ) : null;
+              })()}
             </>
           )}
         </div>

@@ -242,14 +242,15 @@ function parseSedExpression(expr: string): { pattern: RegExp; replacement: strin
 /** Address type for sed range commands */
 type SedAddress = { type: 'line'; line: number } | { type: 'pattern'; pattern: RegExp } | { type: 'last' };
 
-/** Parsed sed command — substitution, delete, change, insert, append, or print */
+/** Parsed sed command — substitution, delete, change, insert, append, print, or group */
 type SedCommand =
-  | { kind: 'substitute'; pattern: RegExp; replacement: string; start?: SedAddress; end?: SedAddress }
-  | { kind: 'delete'; start: SedAddress; end?: SedAddress }
-  | { kind: 'change'; start: SedAddress; end?: SedAddress; text: string }
-  | { kind: 'insert'; start: SedAddress; text: string }
-  | { kind: 'append'; start: SedAddress; text: string }
-  | { kind: 'print'; start: SedAddress; end?: SedAddress };
+  | { kind: 'substitute'; pattern: RegExp; replacement: string; start?: SedAddress; end?: SedAddress; negate?: boolean }
+  | { kind: 'delete'; start: SedAddress; end?: SedAddress; negate?: boolean }
+  | { kind: 'change'; start: SedAddress; end?: SedAddress; text: string; negate?: boolean }
+  | { kind: 'insert'; start: SedAddress; text: string; negate?: boolean }
+  | { kind: 'append'; start: SedAddress; text: string; negate?: boolean }
+  | { kind: 'print'; start: SedAddress; end?: SedAddress; negate?: boolean }
+  | { kind: 'group'; start: SedAddress; end?: SedAddress; commands: SedCommand[] };
 
 /**
  * Parse a sed address like /pattern/, a line number, or $
@@ -325,31 +326,55 @@ function parseSedCommand(expr: string): SedCommand | { error: string } {
 
   // Parse the command character
   remaining = remaining.trim();
+
+  // Check for ! negate modifier
+  let negate = false;
+  if (remaining.startsWith('!')) {
+    negate = true;
+    remaining = remaining.slice(1).trim();
+  }
+
+  // Check for {...} command group
+  if (remaining.startsWith('{')) {
+    const closeIdx = remaining.lastIndexOf('}');
+    if (closeIdx < 0) return { error: `sed: unmatched { in: ${expr}` };
+    const inner = remaining.slice(1, closeIdx).trim();
+    const innerParts = inner.split(';').map(s => s.trim()).filter(Boolean);
+    const commands: SedCommand[] = [];
+    for (const part of innerParts) {
+      const parsed = parseSedCommand(part);
+      if ('error' in parsed) return parsed;
+      commands.push(parsed);
+    }
+    return { kind: 'group', start: addr1Result.addr, end: addr2, commands };
+  }
+
+  const neg = negate ? { negate: true as const } : {};
   if (remaining === 'd') {
-    return { kind: 'delete', start: addr1Result.addr, end: addr2 };
+    return { kind: 'delete', start: addr1Result.addr, end: addr2, ...neg };
   }
   if (remaining === 'p') {
-    return { kind: 'print', start: addr1Result.addr, end: addr2 };
+    return { kind: 'print', start: addr1Result.addr, end: addr2, ...neg };
   }
   if (remaining.startsWith('c\\') || remaining.startsWith('c ')) {
     const text = remaining.slice(2).replace(/\\n/g, '\n');
-    return { kind: 'change', start: addr1Result.addr, end: addr2, text };
+    return { kind: 'change', start: addr1Result.addr, end: addr2, text, ...neg };
   }
   // i\ — insert text before matched line (single address only)
   if (remaining.startsWith('i\\') || remaining.startsWith('i ')) {
     const text = remaining.slice(2).replace(/\\n/g, '\n');
-    return { kind: 'insert', start: addr1Result.addr, text };
+    return { kind: 'insert', start: addr1Result.addr, text, ...neg };
   }
   // a\ — append text after matched line (single address only)
   if (remaining.startsWith('a\\') || remaining.startsWith('a ')) {
     const text = remaining.slice(2).replace(/\\n/g, '\n');
-    return { kind: 'append', start: addr1Result.addr, text };
+    return { kind: 'append', start: addr1Result.addr, text, ...neg };
   }
   // Address + substitution: 6s/old/new/ or /pattern/s/old/new/g
   if (remaining.startsWith('s') && remaining.length > 2 && /[\/|#@]/.test(remaining[1])) {
     const parsed = parseSedExpression(remaining);
     if ('error' in parsed) return parsed;
-    return { kind: 'substitute', ...parsed, start: addr1Result.addr, end: addr2 };
+    return { kind: 'substitute', ...parsed, start: addr1Result.addr, end: addr2, ...neg };
   }
 
   return { error: `sed: unsupported command "${remaining}" in: ${expr}` };
@@ -1239,8 +1264,8 @@ async function vfsShellExecuteSingle(
         }
       }
       case 'grep': {
-        // Supported: grep [-n] [-i] [-F] [-A num] [-B num] [-C num] pattern path  (always recursive)
-        const flags: Record<string, any> = { n: false, i: false, F: false, C: 0, A: 0, B: 0 };
+        // Supported: grep [-n] [-i] [-o] [-F] [-P] [-A num] [-B num] [-C num] pattern path  (always recursive)
+        const flags: Record<string, any> = { n: false, i: false, o: false, F: false, C: 0, A: 0, B: 0 };
         const fargs: string[] = [];
         for (let i = 0; i < args.length; i++) {
           const a = args[i];
@@ -1250,7 +1275,9 @@ async function vfsShellExecuteSingle(
               const ch = flagStr[j];
               if (ch === 'n') flags.n = true;
               else if (ch === 'i') flags.i = true;
+              else if (ch === 'o') flags.o = true;
               else if (ch === 'F') flags.F = true;
+              else if (ch === 'P') {} // no-op — JS regex covers most PCRE patterns
               else if (ch === 'C') { flags.C = parseInt(args[++i]) || 2; break; }
               else if (ch === 'A') { flags.A = parseInt(args[++i]) || 2; break; }
               else if (ch === 'B') { flags.B = parseInt(args[++i]) || 2; break; }
@@ -1271,7 +1298,9 @@ Usage: grep [FLAGS] PATTERN [PATH]
 Supported flags:
   -n      Show line numbers
   -i      Case insensitive search
+  -o      Print only the matched parts of each line (one per line)
   -F      Treat pattern as literal string (not regex)
+  -P      Perl-compatible regex (accepted, JS regex used)
   -A NUM  Show NUM lines after each match
   -B NUM  Show NUM lines before each match
   -C NUM  Show NUM lines of context (before and after)
@@ -1280,6 +1309,7 @@ Examples:
   {"cmd": ["grep", "searchterm", "/path"]}
   {"cmd": ["grep", "-n", "pattern", "/file.txt"]}
   {"cmd": ["grep", "-i", "TODO", "/"]}
+  {"cmd": ["grep", "-o", "href=\"[^\"]*\"", "/index.html"]}
   {"cmd": ["grep", "-F", "exact.string", "/src"]}
   {"cmd": ["grep", "-A", "3", "pattern", "/file.txt"]}
   {"cmd": ["grep", "-C", "5", "function", "/src"]}
@@ -1300,11 +1330,19 @@ Note: grep always searches recursively. rg (ripgrep) is also available.`,
 
         const outLines: string[] = [];
         const hasContext = flags.C > 0 || flags.A > 0 || flags.B > 0;
+        const globalRegex = flags.o ? new RegExp(regex.source, regex.flags + 'g') : null;
 
         // If no file path provided and stdin is available, search stdin
         if (!fargs[1] && stdin !== undefined) {
           const stdinLines = stdin.split(/\r?\n/);
-          if (hasContext) {
+          if (flags.o) {
+            for (let i = 0; i < stdinLines.length; i++) {
+              const matches = [...stdinLines[i].matchAll(globalRegex!)];
+              for (const m of matches) {
+                outLines.push(flags.n ? `${i + 1}:${m[0]}` : m[0]);
+              }
+            }
+          } else if (hasContext) {
             const matchedStdinLines = new Set<number>();
             for (let i = 0; i < stdinLines.length; i++) {
               if (regex.test(stdinLines[i])) matchedStdinLines.add(i);
@@ -1339,7 +1377,14 @@ Note: grep always searches recursively. rg (ripgrep) is also available.`,
             if (typeof file.content !== 'string') continue;
             const lines = file.content.split(/\r?\n/);
 
-            if (hasContext) {
+            if (flags.o) {
+              for (let i = 0; i < lines.length; i++) {
+                const matches = [...lines[i].matchAll(globalRegex!)];
+                for (const m of matches) {
+                  outLines.push(`${file.path}${flags.n ? ':' + (i + 1) : ''}:${m[0]}`);
+                }
+              }
+            } else if (hasContext) {
               const matchedLines = new Set<number>();
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) matchedLines.add(i);
@@ -1834,9 +1879,9 @@ Tip: Use -C for balanced context. PATH defaults to / if omitted.`,
           // The previous heuristic `/^\/[^/]*\/[,dpcians]/` misclassified any path whose
           // basename began with d/p/c/i/a/n/s (e.g. /src/index.ts → command `i`).
           if (
-            /^\d+[,dpcians]/.test(a) ||
+            /^\d+!?[,dpcians{]/.test(a) ||
             /^[\\$]/.test(a) ||
-            /^\/[^/]*\/(?:[dpn]$|[cai]\\|,)/.test(a)
+            /^\/[^/]*\/(?:!?[dpn]$|!?[cai]\\|!?\{|,)/.test(a)
           ) {
             expressions.push(a);
             continue;
@@ -1901,6 +1946,7 @@ Examples:
         const lines = inputContent.split(/\r?\n/);
         const totalLines = lines.length;
         const outputLines: string[] = [];
+        let substitutionCount = 0;
 
         // Track range state per command (for multi-line ranges)
         const inRange = new Array(parsedCmds.length).fill(false);
@@ -1916,6 +1962,7 @@ Examples:
             const cmd = parsedCmds[ci];
 
             if (cmd.kind === 'substitute') {
+              let before: string;
               // If address-constrained (e.g., 6s/old/new/), only apply on matching lines
               if (cmd.start) {
                 if (cmd.end) {
@@ -1926,7 +1973,9 @@ Examples:
                   if (inRange[ci]) {
                     // Check end-address against original line before substitution
                     const endMatch = addressMatches(cmd.end, lineNum, line, totalLines);
+                    before = line;
                     line = line.replace(cmd.pattern, cmd.replacement);
+                    if (line !== before) substitutionCount++;
                     if (endMatch) {
                       inRange[ci] = false;
                     }
@@ -1934,25 +1983,74 @@ Examples:
                 } else {
                   // Single-addressed substitution: 6s/old/new/
                   if (addressMatches(cmd.start, lineNum, line, totalLines)) {
+                    before = line;
                     line = line.replace(cmd.pattern, cmd.replacement);
+                    if (line !== before) substitutionCount++;
                   }
                 }
               } else {
+                before = line;
                 line = line.replace(cmd.pattern, cmd.replacement);
+                if (line !== before) substitutionCount++;
               }
               continue;
             }
 
-            // Address-based commands: delete, change, insert, append, print
+            // Address-based commands: delete, change, insert, append, print, group
             const startMatch = addressMatches(cmd.start, lineNum, line, totalLines);
 
             // Insert/append are single-address only, handled before range logic
-            if (cmd.kind === 'insert' && startMatch) {
-              outputLines.push(cmd.text); // insert text before the current line
+            if (cmd.kind === 'insert') {
+              const apply = cmd.negate ? !startMatch : startMatch;
+              if (apply) outputLines.push(cmd.text);
               continue;
             }
-            if (cmd.kind === 'append' && startMatch) {
-              appendAfter.push(cmd.text); // queue text to add after the current line
+            if (cmd.kind === 'append') {
+              const apply = cmd.negate ? !startMatch : startMatch;
+              if (apply) appendAfter.push(cmd.text);
+              continue;
+            }
+
+            // Group command: apply sub-commands within address range
+            if (cmd.kind === 'group') {
+              if ('end' in cmd && cmd.end) {
+                if (!inRange[ci] && startMatch) inRange[ci] = true;
+                if (inRange[ci]) {
+                  const endMatch = addressMatches(cmd.end, lineNum, line, totalLines);
+                  for (const sub of cmd.commands) {
+                    const subAddr = sub.kind === 'substitute' ? sub.start : ('start' in sub ? sub.start : undefined);
+                    let subMatch = subAddr ? addressMatches(subAddr, lineNum, line, totalLines) : true;
+                    if ('negate' in sub && sub.negate) subMatch = !subMatch;
+                    if (subMatch) {
+                      if (sub.kind === 'delete') deleted = true;
+                      else if (sub.kind === 'print') printed = true;
+                      else if (sub.kind === 'substitute') {
+                        const before = line;
+                        line = line.replace(sub.pattern, sub.replacement);
+                        if (line !== before) substitutionCount++;
+                      }
+                    }
+                  }
+                  if (endMatch) inRange[ci] = false;
+                }
+              } else {
+                if (startMatch) {
+                  for (const sub of cmd.commands) {
+                    const subAddr = sub.kind === 'substitute' ? sub.start : ('start' in sub ? sub.start : undefined);
+                    let subMatch = subAddr ? addressMatches(subAddr, lineNum, line, totalLines) : true;
+                    if ('negate' in sub && sub.negate) subMatch = !subMatch;
+                    if (subMatch) {
+                      if (sub.kind === 'delete') deleted = true;
+                      else if (sub.kind === 'print') printed = true;
+                      else if (sub.kind === 'substitute') {
+                        const before = line;
+                        line = line.replace(sub.pattern, sub.replacement);
+                        if (line !== before) substitutionCount++;
+                      }
+                    }
+                  }
+                }
+              }
               continue;
             }
 
@@ -1965,25 +2063,33 @@ Examples:
               if (inRange[ci]) {
                 const endMatch = addressMatches(cmd.end, lineNum, line, totalLines);
 
-                if (cmd.kind === 'delete') {
-                  deleted = true;
-                } else if (cmd.kind === 'print') {
-                  printed = true;
-                } else if (cmd.kind === 'change') {
-                  deleted = true; // suppress original lines
+                if (!cmd.negate) {
+                  if (cmd.kind === 'delete') {
+                    deleted = true;
+                  } else if (cmd.kind === 'print') {
+                    printed = true;
+                  } else if (cmd.kind === 'change') {
+                    deleted = true;
+                  }
                 }
 
                 if (endMatch) {
-                  // End of range — emit change text if applicable
-                  if (cmd.kind === 'change') {
+                  if (!cmd.negate && cmd.kind === 'change') {
                     outputLines.push(cmd.text);
                   }
                   inRange[ci] = false;
                 }
+              } else if (cmd.negate) {
+                if (cmd.kind === 'delete') {
+                  deleted = true;
+                } else if (cmd.kind === 'print') {
+                  printed = true;
+                }
               }
             } else {
               // Single address: /pattern/cmd or 5cmd
-              if (startMatch) {
+              const apply = cmd.negate ? !startMatch : startMatch;
+              if (apply) {
                 if (cmd.kind === 'delete') {
                   deleted = true;
                 } else if (cmd.kind === 'print') {
@@ -2017,8 +2123,13 @@ Examples:
             return { stdout: '', stderr: 'sed: -i requires a file argument (cannot edit stdin in-place)', exitCode: 2 };
           }
           try {
+            const hasSubstitutions = parsedCmds.some(c => c.kind === 'substitute');
+            if (hasSubstitutions && substitutionCount === 0) {
+              return { stdout: `(0 substitutions — pattern did not match any line in ${sedPath})`, stderr: '', exitCode: 0 };
+            }
             await vfs.updateFile(projectId, sedPath, outputContent);
-            return { stdout: '', stderr: '', exitCode: 0 };
+            const note = hasSubstitutions ? ` (${substitutionCount} substitution${substitutionCount !== 1 ? 's' : ''})` : '';
+            return { stdout: note, stderr: '', exitCode: 0 };
           } catch (e: any) {
             return { stdout: '', stderr: `sed: ${sedPath}: ${e?.message || 'cannot write file'}`, exitCode: 1 };
           }
@@ -2768,7 +2879,7 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
         // Write result
         try {
           await vfs.updateFile(projectId, ssPath, ssResult);
-          return { stdout: '', stderr: '', exitCode: 0 };
+          return { stdout: `(1 replacement in ${ssPath})`, stderr: '', exitCode: 0 };
         } catch (e: any) {
           return { stdout: '', stderr: `ss: ${ssPath}: ${e?.message || 'cannot write file'}`, exitCode: 1 };
         }
@@ -2780,9 +2891,9 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
       }
       default: {
         const bashHint = program === 'bash' ? `
-Don't use "bash" as a command - call the shell tool directly with your command.
-Wrong: {"cmd": ["bash", "-c", "ls -la"]}
-Right: {"cmd": ["ls", "-la"]}
+Don't use "bash" as a command - call the bash tool directly with your command.
+Wrong: {"command": "bash -c ls -la"}
+Right: {"command": "ls -la"}
 ` : '';
 
         return {

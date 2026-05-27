@@ -64,7 +64,7 @@ Reusable code called via ` + "`server.functionName(args)`" + `
 ### Database
 Database access is available via:
 
-1. **sqlite3 shell command** (Server Mode only):
+1. **sqlite3 command** (Server Mode only):
 ` + "```" + `bash
 sqlite3 "SELECT * FROM products"
 sqlite3 -json "SELECT * FROM users"

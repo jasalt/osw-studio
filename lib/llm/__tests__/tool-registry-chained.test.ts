@@ -27,11 +27,11 @@ vi.mock('@/lib/utils', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-function shellToolCall(cmd: string, id = 'tc-1') {
+function bashToolCall(command: string, id = 'tc-1') {
   return {
     id,
     type: 'function' as const,
-    function: { name: 'shell', arguments: JSON.stringify({ cmd }) },
+    function: { name: 'bash', arguments: JSON.stringify({ command }) },
   };
 }
 
@@ -51,7 +51,7 @@ describe('ToolRegistry chained command execution', () => {
       .mockResolvedValueOnce({ success: false, stderr: 'cat: /bad.txt: File not found' });
 
     const result = await registry.execute(
-      shellToolCall("echo hello\necho world\ncat /bad.txt"),
+      bashToolCall("echo hello\necho world\ncat /bad.txt"),
       'test-project',
       {},
     );
@@ -65,7 +65,7 @@ describe('ToolRegistry chained command execution', () => {
       .mockResolvedValueOnce({ success: false, stderr: 'command not found' });
 
     const result = await registry.execute(
-      shellToolCall("bad-cmd\necho ok"),
+      bashToolCall("bad-cmd\necho ok"),
       'test-project',
       {},
     );
@@ -80,7 +80,7 @@ describe('ToolRegistry chained command execution', () => {
       .mockResolvedValueOnce({ success: true, stdout: 'file2 created' });
 
     const result = await registry.execute(
-      shellToolCall("echo file1\necho file2"),
+      bashToolCall("echo file1\necho file2"),
       'test-project',
       {},
     );

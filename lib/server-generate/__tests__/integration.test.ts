@@ -66,7 +66,7 @@ describe('Server-side generation integration', () => {
       message: { role: 'user', content: 'hello', ui_metadata: { projectContext: 'files...' } },
     }, 'sess-1');
     bus.emit(taskId, 'proj-1', 'assistant_delta', { text: 'Hi' }, 'sess-1');
-    bus.emit(taskId, 'proj-1', 'tool_status', { status: 'running', name: 'shell' }, 'sess-1');
+    bus.emit(taskId, 'proj-1', 'tool_status', { status: 'running', name: 'bash' }, 'sess-1');
     bus.emit(taskId, 'proj-1', 'conversation_message', {
       message: { role: 'assistant', content: 'Done' },
     }, 'sess-1');

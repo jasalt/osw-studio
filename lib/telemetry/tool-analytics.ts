@@ -3,19 +3,20 @@
  * Only whitelisted, enumerated values are emitted — no file paths, contents, or user text.
  */
 
-const SHELL_COMMAND_WHITELIST = new Set([
+const BASH_COMMAND_WHITELIST = new Set([
   'cat', 'head', 'tail', 'nl', 'ls', 'tree', 'grep', 'rg', 'find',
   'mkdir', 'mv', 'cp', 'rm', 'rmdir', 'touch', 'sed', 'ss', 'echo', 'wc',
-  'sort', 'uniq', 'tr', 'curl', 'sleep', 'sqlite3', 'build', 'status', 'delegate',
+  'sort', 'uniq', 'tr', 'curl', 'sleep', 'sqlite3', 'build', 'status', 'agent', 'delegate',
   'preview', 'python', 'python3', 'lua', 'runtime'
 ]);
 
 function extractShellAnalytics(args: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  const cmd = typeof args.cmd === 'string' ? args.cmd.trim() : '';
+  const rawCmd = (args.command ?? args.cmd) as string | undefined;
+  const cmd = typeof rawCmd === 'string' ? rawCmd.trim() : '';
   if (cmd) {
     const firstWord = cmd.split(/\s+/)[0];
-    result.command = SHELL_COMMAND_WHITELIST.has(firstWord) ? firstWord : 'other';
+    result.command = BASH_COMMAND_WHITELIST.has(firstWord) ? firstWord : 'other';
     result.has_pipe = cmd.includes(' | ');
     result.has_redirect = / >>? /.test(cmd);
   }
@@ -37,7 +38,7 @@ export function extractToolAnalytics(
     return base;
   }
 
-  if (toolName === 'shell') {
+  if (toolName === 'bash' || toolName === 'shell') {
     return { ...base, ...extractShellAnalytics(args) };
   }
   return base;

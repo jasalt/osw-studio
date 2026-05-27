@@ -1,5 +1,6 @@
 import { TestAssertion, AssertionResult } from './types';
 import type { ConversationNode } from '@/lib/llm/multi-agent-orchestrator';
+import type { VirtualFileSystem } from '@/lib/vfs';
 
 function truncate(str: string, max = 100): string {
   return str.length > max ? str.substring(0, max - 3) + '...' : str;
@@ -67,6 +68,144 @@ function getToolCalls(conversation: ConversationNode[]) {
   return calls;
 }
 
+async function evaluateOne(
+  assertion: TestAssertion,
+  projectId: string,
+  conversation: ConversationNode[],
+  vfs: VirtualFileSystem,
+): Promise<{ passed: boolean; actual?: string }> {
+  switch (assertion.type) {
+    case 'file_exists': {
+      const exists = await vfs.fileExists(projectId, assertion.path);
+      return { passed: exists, actual: exists ? 'file exists' : 'file not found' };
+    }
+
+    case 'file_not_exists': {
+      const exists = await vfs.fileExists(projectId, assertion.path);
+      return { passed: !exists, actual: exists ? 'file exists (unexpected)' : 'file not found (expected)' };
+    }
+
+    case 'file_contains': {
+      const file = await vfs.readFile(projectId, assertion.path);
+      const content = typeof file.content === 'string' ? file.content : '';
+      const found = content.toLowerCase().includes(assertion.value.toLowerCase());
+      return { passed: found, actual: found ? `contains "${truncate(assertion.value, 40)}"` : truncate(content, 80) };
+    }
+
+    case 'file_not_contains': {
+      const file = await vfs.readFile(projectId, assertion.path);
+      const content = typeof file.content === 'string' ? file.content : '';
+      const found = content.toLowerCase().includes(assertion.value.toLowerCase());
+      return { passed: !found, actual: found ? `still contains "${truncate(assertion.value, 40)}"` : 'value absent (expected)' };
+    }
+
+    case 'file_matches': {
+      const file = await vfs.readFile(projectId, assertion.path);
+      const content = typeof file.content === 'string' ? file.content : '';
+      const re = new RegExp(assertion.pattern, 'i');
+      const match = re.exec(content);
+      return { passed: !!match, actual: match ? `matched: "${truncate(match[0], 40)}"` : truncate(content, 80) };
+    }
+
+    case 'file_matches_any': {
+      const re = new RegExp(assertion.pattern, 'i');
+      for (const filePath of assertion.paths) {
+        try {
+          const file = await vfs.readFile(projectId, filePath);
+          const content = typeof file.content === 'string' ? file.content : '';
+          const match = re.exec(content);
+          if (match) return { passed: true, actual: `matched in ${filePath}: "${truncate(match[0], 40)}"` };
+        } catch {
+          // File doesn't exist, try next
+        }
+      }
+      return { passed: false, actual: `pattern not found in any of: ${assertion.paths.join(', ')}` };
+    }
+
+    case 'valid_json': {
+      const file = await vfs.readFile(projectId, assertion.path);
+      const content = typeof file.content === 'string' ? file.content : '';
+      try {
+        JSON.parse(content);
+        return { passed: true, actual: 'valid JSON' };
+      } catch {
+        return { passed: false, actual: `invalid JSON: ${truncate(content, 60)}` };
+      }
+    }
+
+    case 'tool_used': {
+      const calls = getToolCalls(conversation);
+      let found = calls.some(c => c.name === assertion.toolName);
+      if (!found && assertion.toolName === 'write') {
+        const fileWritePattern = /^\s*(cat\s*>|sed\s+-i|write\s+|echo\s+.*>)/;
+        found = calls.some(c => {
+          if (c.name !== 'bash' && c.name !== 'shell') return false;
+          try {
+            const args = JSON.parse(c.args);
+            const cmd = typeof args === 'string' ? args : args.command || args.cmd || '';
+            return typeof cmd === 'string' && fileWritePattern.test(cmd);
+          } catch {
+            return fileWritePattern.test(c.args);
+          }
+        });
+        if (found) return { passed: true, actual: 'file edited via bash command' };
+      }
+      return {
+        passed: found,
+        actual: found
+          ? `${assertion.toolName} was called`
+          : `tools used: ${[...new Set(calls.map(c => c.name))].join(', ') || 'none'}`,
+      };
+    }
+
+    case 'tool_args_match': {
+      const calls = getToolCalls(conversation);
+      const re = new RegExp(assertion.pattern, 'i');
+      const matching = calls.filter(c => c.name === assertion.toolName && re.test(c.args));
+      if (matching.length > 0) {
+        return { passed: true, actual: `matched args: ${truncate(matching[0].args, 60)}` };
+      }
+      const toolCalls = calls.filter(c => c.name === assertion.toolName);
+      return {
+        passed: false,
+        actual: toolCalls.length > 0
+          ? `${toolCalls.length} ${assertion.toolName} call(s), none matched pattern`
+          : `${assertion.toolName} not called`,
+      };
+    }
+
+    case 'output_matches': {
+      const text = getAssistantText(conversation);
+      const re = new RegExp(assertion.pattern, 'i');
+      const match = re.exec(text);
+      return { passed: !!match, actual: match ? `matched: "${truncate(match[0], 40)}"` : `no match in ${text.length} chars of output` };
+    }
+
+    case 'tool_output_matches': {
+      const text = getToolOutputText(conversation, assertion.toolName);
+      const re = new RegExp(assertion.pattern, 'i');
+      const match = re.exec(text);
+      return { passed: !!match, actual: match ? `matched: "${truncate(match[0], 40)}"` : `no match in ${text.length} chars of tool output` };
+    }
+
+    case 'any_of': {
+      const subResults: { desc: string; actual?: string }[] = [];
+      for (const sub of assertion.assertions) {
+        const r = await evaluateOne(sub, projectId, conversation, vfs);
+        if (r.passed) return { passed: true, actual: r.actual };
+        subResults.push({ desc: sub.description, actual: r.actual });
+      }
+      return {
+        passed: false,
+        actual: subResults.map(r => `${r.desc}: ${r.actual}`).join(' | '),
+      };
+    }
+
+    case 'judge':
+      return { passed: false, actual: 'judge assertions handled separately' };
+  }
+}
+
 export async function runAssertions(
   projectId: string,
   conversation: ConversationNode[],
@@ -76,173 +215,16 @@ export async function runAssertions(
   const results: AssertionResult[] = [];
 
   for (const assertion of assertions) {
-    // Skip judge assertions — handled separately
     if (assertion.type === 'judge') continue;
 
-    let passed = false;
-    let actual: string | undefined;
-
+    let result: { passed: boolean; actual?: string };
     try {
-      switch (assertion.type) {
-        case 'file_exists': {
-          const exists = await vfs.fileExists(projectId, assertion.path);
-          passed = exists;
-          actual = exists ? 'file exists' : 'file not found';
-          break;
-        }
-
-        case 'file_not_exists': {
-          const exists = await vfs.fileExists(projectId, assertion.path);
-          passed = !exists;
-          actual = exists ? 'file exists (unexpected)' : 'file not found (expected)';
-          break;
-        }
-
-        case 'file_contains': {
-          const file = await vfs.readFile(projectId, assertion.path);
-          const content = typeof file.content === 'string' ? file.content : '';
-          const found = content.toLowerCase().includes(assertion.value.toLowerCase());
-          passed = found;
-          actual = found
-            ? `contains "${truncate(assertion.value, 40)}"`
-            : truncate(content, 80);
-          break;
-        }
-
-        case 'file_not_contains': {
-          const file = await vfs.readFile(projectId, assertion.path);
-          const content = typeof file.content === 'string' ? file.content : '';
-          const found = content.toLowerCase().includes(assertion.value.toLowerCase());
-          passed = !found;
-          actual = found
-            ? `still contains "${truncate(assertion.value, 40)}"`
-            : 'value absent (expected)';
-          break;
-        }
-
-        case 'file_matches': {
-          const file = await vfs.readFile(projectId, assertion.path);
-          const content = typeof file.content === 'string' ? file.content : '';
-          const re = new RegExp(assertion.pattern, 'i');
-          const match = re.exec(content);
-          passed = !!match;
-          actual = match
-            ? `matched: "${truncate(match[0], 40)}"`
-            : truncate(content, 80);
-          break;
-        }
-
-        case 'file_matches_any': {
-          // Check multiple files — pass if ANY file matches the pattern
-          const re = new RegExp(assertion.pattern, 'i');
-          for (const filePath of assertion.paths) {
-            try {
-              const file = await vfs.readFile(projectId, filePath);
-              const content = typeof file.content === 'string' ? file.content : '';
-              const match = re.exec(content);
-              if (match) {
-                passed = true;
-                actual = `matched in ${filePath}: "${truncate(match[0], 40)}"`;
-                break;
-              }
-            } catch {
-              // File doesn't exist, try next
-            }
-          }
-          if (!passed) {
-            actual = `pattern not found in any of: ${assertion.paths.join(', ')}`;
-          }
-          break;
-        }
-
-        case 'valid_json': {
-          const file = await vfs.readFile(projectId, assertion.path);
-          const content = typeof file.content === 'string' ? file.content : '';
-          try {
-            JSON.parse(content);
-            passed = true;
-            actual = 'valid JSON';
-          } catch {
-            passed = false;
-            actual = `invalid JSON: ${truncate(content, 60)}`;
-          }
-          break;
-        }
-
-        case 'tool_used': {
-          const calls = getToolCalls(conversation);
-          let found = calls.some(c => c.name === assertion.toolName);
-          // For 'write' assertions, also check for file-modifying shell commands
-          // Detects: cat > /file, sed -i, write /file, echo > /file
-          if (!found && assertion.toolName === 'write') {
-            const fileWritePattern = /^\s*(cat\s*>|sed\s+-i|write\s+|echo\s+.*>)/;
-            found = calls.some(c => {
-              if (c.name !== 'shell') return false;
-              try {
-                const args = JSON.parse(c.args);
-                const cmd = typeof args === 'string' ? args : args.cmd || args.command || '';
-                return typeof cmd === 'string' && fileWritePattern.test(cmd);
-              } catch {
-                return fileWritePattern.test(c.args);
-              }
-            });
-            if (found) {
-              actual = 'file edited via shell command';
-              passed = true;
-              break;
-            }
-          }
-          passed = found;
-          actual = found
-            ? `${assertion.toolName} was called`
-            : `tools used: ${[...new Set(calls.map(c => c.name))].join(', ') || 'none'}`;
-          break;
-        }
-
-        case 'tool_args_match': {
-          const calls = getToolCalls(conversation);
-          const re = new RegExp(assertion.pattern, 'i');
-          const matching = calls.filter(c => c.name === assertion.toolName && re.test(c.args));
-          passed = matching.length > 0;
-          if (matching.length > 0) {
-            actual = `matched args: ${truncate(matching[0].args, 60)}`;
-          } else {
-            const toolCalls = calls.filter(c => c.name === assertion.toolName);
-            actual = toolCalls.length > 0
-              ? `${toolCalls.length} ${assertion.toolName} call(s), none matched pattern`
-              : `${assertion.toolName} not called`;
-          }
-          break;
-        }
-
-        case 'output_matches': {
-          const text = getAssistantText(conversation);
-          const re = new RegExp(assertion.pattern, 'i');
-          const match = re.exec(text);
-          passed = !!match;
-          actual = match
-            ? `matched: "${truncate(match[0], 40)}"`
-            : `no match in ${text.length} chars of output`;
-          break;
-        }
-
-        case 'tool_output_matches': {
-          const text = getToolOutputText(conversation, assertion.toolName);
-          const re = new RegExp(assertion.pattern, 'i');
-          const match = re.exec(text);
-          passed = !!match;
-          actual = match
-            ? `matched: "${truncate(match[0], 40)}"`
-            : `no match in ${text.length} chars of tool output`;
-          break;
-        }
-      }
+      result = await evaluateOne(assertion, projectId, conversation, vfs);
     } catch (err) {
-      passed = false;
-      actual = err instanceof Error ? err.message : String(err);
+      result = { passed: false, actual: err instanceof Error ? err.message : String(err) };
     }
 
-    results.push({ assertion, passed, actual });
+    results.push({ assertion, passed: result.passed, actual: result.actual });
   }
 
   return results;

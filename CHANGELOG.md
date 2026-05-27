@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.70.0 - 2026-05-27
+
+### AI Orchestration
+
+- **Tool rename: shell → bash**: Renamed the LLM tool from `shell({ cmd })` to `bash({ command })`. Benchmark experimentation showed that models produce significantly better tool calls with `bash`. `shell` still accepted as a backward-compatible alias.
+- **Sub-agent rename: delegate → agent**: Renamed the sub-agent command from `delegate` to `agent explore|task|plan`, applying the same principle. `delegate` still accepted as a backward-compatible alias.
+- **Fixed duplicate sub-agent spawning**: Models that emit the same agent command as multiple tool calls in one turn no longer run identical sub-agents twice. Consecutive calls with the same prompt set are deduplicated.
+- **Fixed sub-agent prompt parser**: Commands like `agent task "A" "B"` no longer spawn 3 sub-agents instead of 2. The parser was doubling the last prompt when the closing quote was the final character.
+- **sed/ss substitution feedback**: `sed -i` reports substitution count on success and a diagnostic on zero matches. `ss` reports replacement confirmation. Previously both returned silent success, giving models no signal when an edit didn't apply.
+
+### Benchmark
+
+- **`any_of` assertion type**: Composite assertion that passes if any sub-assertion matches (OR logic). Used for setup tests where models can achieve the same goal through different approaches (e.g. tool command vs prose question).
+- **Test progress counter**: Total Tests card shows `completed / expected` while tests are running, replacing the static total that only updated on completion.
+- **Errors export**: Export failed tests, failed tool calls, and failed assertions as a markdown report. Shows total error count across all categories, available even when all tests pass overall.
+- **Improved assertion accuracy**: Assertions are more model-agnostic — tests accept any tool that achieves the result rather than asserting specific commands, patterns match valid alternatives (URL paths in sitemaps, different grep/find variants), and sub-agent tests accept both `agent` and `delegate` names.
+- **Fixed duplicate tool call display**: Each tool call was rendered twice in benchmark output. Removed redundant event emissions from the agent loop.
+- **Fixed sequence tool count**: Each sequence step now counts only its own tool calls instead of accumulating from all prior steps, which inflated reported counts.
+
+### VFS Shell
+
+- **grep `-o` flag**: Output only the matched parts of each line, one match per output line. Useful for extracting specific patterns like URLs or attribute values from files.
+- **grep `-P` flag**: Accepted as a no-op for PCRE compatibility. The JS regex engine already covers most Perl-compatible patterns that models use.
+- **sed `!` negate modifier**: Inverts address matching — e.g. `/pattern/!d` deletes lines that do NOT match the pattern. Works with all address-based commands (delete, print, change, insert, append) and within groups.
+- **sed `{...}` command grouping**: Apply multiple sub-commands within an address range — e.g. `/<section>/,/<\/section>/{/<\/section>/!d}` deletes all lines in a range except the closing tag. Sub-commands can have their own addresses and negate modifiers.
+
 ## v1.69.0 - 2026-05-25
 
 ### AI Orchestration

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { EventProcessor, classifyShellCommand } from '../event-processor';
+import { EventProcessor, classifyBashCommand } from '../event-processor';
 import type { DebugEvent } from '@/lib/stores/types';
 
 let idCounter = 0;
@@ -191,7 +191,7 @@ describe('EventProcessor', () => {
         evt('waiting'),
         evt('reasoning_delta', { text: 'I will add a button' }),
         evt('toolCalls', {
-          toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '{"cmd":"cat /index.html"}' } }],
+          toolCalls: [{ id: 'tc-1', function: { name: 'bash', arguments: '{"command":"cat /index.html"}' } }],
         }),
         evt('tool_status', { toolIndex: 0, status: 'completed', result: '<html>...</html>' }),
       ];
@@ -319,7 +319,7 @@ describe('EventProcessor', () => {
     const events = [
       userMsg('list files'),
       evt('toolCalls', {
-        toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '{"cmd":"ls /"}' } }],
+        toolCalls: [{ id: 'tc-1', function: { name: 'bash', arguments: '{"command":"ls /"}' } }],
       }),
       evt('tool_status', { toolIndex: 0, status: 'executing' }),
       evt('tool_status', { toolIndex: 0, status: 'completed', result: 'index.html\nstyles.css' }),
@@ -328,7 +328,7 @@ describe('EventProcessor', () => {
     const toolItems = turns[0].items.filter(i => i.type === 'tool');
     expect(toolItems).toHaveLength(1);
     expect(toolItems[0].data.status).toBe('completed');
-    expect(toolItems[0].data.parameters.cmd).toBe('ls /');
+    expect(toolItems[0].data.parameters.command).toBe('ls /');
   });
 
   describe('edge cases', () => {
@@ -359,64 +359,69 @@ describe('EventProcessor', () => {
   });
 });
 
-describe('classifyShellCommand', () => {
-  it('returns shell for undefined', () => {
-    expect(classifyShellCommand(undefined)).toBe('shell');
+describe('classifyBashCommand', () => {
+  it('returns bash for undefined', () => {
+    expect(classifyBashCommand(undefined)).toBe('bash');
   });
 
-  it('returns delegate for delegate commands', () => {
-    expect(classifyShellCommand('delegate explore "find auth"')).toBe('delegate');
+  it('returns agent for agent commands', () => {
+    expect(classifyBashCommand('agent explore "find auth"')).toBe('agent');
+  });
+
+  it('returns agent for delegate commands (backward compat)', () => {
+    expect(classifyBashCommand('delegate explore "find auth"')).toBe('agent');
   });
 
   it('returns status for status command', () => {
-    expect(classifyShellCommand('status')).toBe('status');
+    expect(classifyBashCommand('status')).toBe('status');
   });
 
   it('returns status for build command', () => {
-    expect(classifyShellCommand('build')).toBe('status');
+    expect(classifyBashCommand('build')).toBe('status');
   });
 
   it('returns write for cat with redirect', () => {
-    expect(classifyShellCommand('cat > /file.txt')).toBe('write');
-    expect(classifyShellCommand('cat >/file.txt')).toBe('write');
-    expect(classifyShellCommand('cat file.txt > /out.txt')).toBe('write');
+    expect(classifyBashCommand('cat > /file.txt')).toBe('write');
+    expect(classifyBashCommand('cat >/file.txt')).toBe('write');
+    expect(classifyBashCommand('cat file.txt > /out.txt')).toBe('write');
   });
 
   it('returns write for heredoc', () => {
-    expect(classifyShellCommand('cat <<EOF')).toBe('write');
-    expect(classifyShellCommand("tee /file.txt <<-'HEREDOC'")).toBe('write');
+    expect(classifyBashCommand('cat <<EOF')).toBe('write');
+    expect(classifyBashCommand("tee /file.txt <<-'HEREDOC'")).toBe('write');
   });
 
   it('returns write for sed -i', () => {
-    expect(classifyShellCommand('sed -i "s/old/new/g" file.txt')).toBe('write');
+    expect(classifyBashCommand('sed -i "s/old/new/g" file.txt')).toBe('write');
   });
 
   it('returns write for ss', () => {
-    expect(classifyShellCommand("ss /file.txt << 'EOF'")).toBe('write');
+    expect(classifyBashCommand("ss /file.txt << 'EOF'")).toBe('write');
   });
 
   it('returns write for file-mutating commands', () => {
-    expect(classifyShellCommand('mkdir -p /src')).toBe('write');
-    expect(classifyShellCommand('touch /file.txt')).toBe('write');
-    expect(classifyShellCommand('rm /file.txt')).toBe('write');
-    expect(classifyShellCommand('mv /a.txt /b.txt')).toBe('write');
-    expect(classifyShellCommand('cp /a.txt /b.txt')).toBe('write');
+    expect(classifyBashCommand('mkdir -p /src')).toBe('write');
+    expect(classifyBashCommand('touch /file.txt')).toBe('write');
+    expect(classifyBashCommand('rm /file.txt')).toBe('write');
+    expect(classifyBashCommand('mv /a.txt /b.txt')).toBe('write');
+    expect(classifyBashCommand('cp /a.txt /b.txt')).toBe('write');
   });
 
   it('returns write for echo with redirect', () => {
-    expect(classifyShellCommand('echo "hello" >> /file.txt')).toBe('write');
-    expect(classifyShellCommand('echo "hello" > /file.txt')).toBe('write');
+    expect(classifyBashCommand('echo "hello" >> /file.txt')).toBe('write');
+    expect(classifyBashCommand('echo "hello" > /file.txt')).toBe('write');
   });
 
-  it('returns shell for read-only commands', () => {
-    expect(classifyShellCommand('ls -la')).toBe('shell');
-    expect(classifyShellCommand('cat /file.txt')).toBe('shell');
-    expect(classifyShellCommand('grep -r "pattern" /src')).toBe('shell');
+  it('returns bash for read-only commands', () => {
+    expect(classifyBashCommand('ls -la')).toBe('bash');
+    expect(classifyBashCommand('cat /file.txt')).toBe('bash');
+    expect(classifyBashCommand('grep -r "pattern" /src')).toBe('bash');
   });
 
   it('handles array input', () => {
-    expect(classifyShellCommand(['delegate', 'task', '"prompt"'])).toBe('delegate');
-    expect(classifyShellCommand(['ls', '-la'])).toBe('shell');
+    expect(classifyBashCommand(['agent', 'task', '"prompt"'])).toBe('agent');
+    expect(classifyBashCommand(['delegate', 'task', '"prompt"'])).toBe('agent');
+    expect(classifyBashCommand(['ls', '-la'])).toBe('bash');
   });
 });
 
@@ -460,7 +465,7 @@ describe('reasoning accumulation', () => {
     const events = [
       userMsg('hello'),
       evt('reasoning_delta', { text: 'analyzing' }, { id }),
-      evt('toolCalls', { toolCalls: [{ id: 'tc1', function: { name: 'shell', arguments: '{"cmd":"ls"}' } }] }),
+      evt('toolCalls', { toolCalls: [{ id: 'tc1', function: { name: 'bash', arguments: '{"command":"ls"}' } }] }),
     ];
     const turns = proc.process(events);
     const reasoning = turns[0].items.find(i => i.type === 'reasoning');
@@ -493,19 +498,19 @@ describe('tool_param_delta accumulation', () => {
     const events = [
       userMsg('list files'),
       evt('toolCalls', {
-        toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '' } }],
+        toolCalls: [{ id: 'tc-1', function: { name: 'bash', arguments: '' } }],
       }),
-      evt('tool_param_delta', { toolId: 'tc-1', fragment: '{"cmd":"ls /' }, { id }),
+      evt('tool_param_delta', { toolId: 'tc-1', fragment: '{"command":"ls /' }, { id }),
       evt('tool_param_delta', { all: [
-        { toolId: 'tc-1', fragment: '{"cmd":"ls /' },
+        { toolId: 'tc-1', fragment: '{"command":"ls /' },
         { toolId: 'tc-1', fragment: '"}' },
       ] }, { id }),
     ];
     const turns = proc.process(events);
     const toolItem = turns[0].items.find(i => i.type === 'tool');
     expect(toolItem).toBeDefined();
-    expect(toolItem!.data.parameters.cmd).toBe('ls /');
-    expect(toolItem!.data.parameters._raw).toBe('{"cmd":"ls /"}');
+    expect(toolItem!.data.parameters.command).toBe('ls /');
+    expect(toolItem!.data.parameters._raw).toBe('{"command":"ls /"}');
   });
 
   it('handles multiple tools interleaved in one event stream', () => {
@@ -514,21 +519,21 @@ describe('tool_param_delta accumulation', () => {
       userMsg('do stuff'),
       evt('toolCalls', {
         toolCalls: [
-          { id: 'tc-a', function: { name: 'shell', arguments: '' } },
-          { id: 'tc-b', function: { name: 'shell', arguments: '' } },
+          { id: 'tc-a', function: { name: 'bash', arguments: '' } },
+          { id: 'tc-b', function: { name: 'bash', arguments: '' } },
         ],
       }),
-      evt('tool_param_delta', { toolId: 'tc-a', fragment: '{"cmd":"ls"}' }, { id }),
+      evt('tool_param_delta', { toolId: 'tc-a', fragment: '{"command":"ls"}' }, { id }),
       evt('tool_param_delta', { all: [
-        { toolId: 'tc-a', fragment: '{"cmd":"ls"}' },
-        { toolId: 'tc-b', fragment: '{"cmd":"pwd"}' },
+        { toolId: 'tc-a', fragment: '{"command":"ls"}' },
+        { toolId: 'tc-b', fragment: '{"command":"pwd"}' },
       ] }, { id }),
     ];
     const turns = proc.process(events);
     const tools = turns[0].items.filter(i => i.type === 'tool');
     expect(tools).toHaveLength(2);
-    expect(tools[0].data.parameters.cmd).toBe('ls');
-    expect(tools[1].data.parameters.cmd).toBe('pwd');
+    expect(tools[0].data.parameters.command).toBe('ls');
+    expect(tools[1].data.parameters.command).toBe('pwd');
   });
 
   it('caches cmd extraction from first fragment', () => {
@@ -536,20 +541,20 @@ describe('tool_param_delta accumulation', () => {
     const events = [
       userMsg('write file'),
       evt('toolCalls', {
-        toolCalls: [{ id: 'tc-1', function: { name: 'shell', arguments: '' } }],
+        toolCalls: [{ id: 'tc-1', function: { name: 'bash', arguments: '' } }],
       }),
-      evt('tool_param_delta', { toolId: 'tc-1', fragment: '{"cmd":"cat > /f' }, { id }),
+      evt('tool_param_delta', { toolId: 'tc-1', fragment: '{"command":"cat > /f' }, { id }),
       evt('tool_param_delta', { all: [
-        { toolId: 'tc-1', fragment: '{"cmd":"cat > /f' },
+        { toolId: 'tc-1', fragment: '{"command":"cat > /f' },
         { toolId: 'tc-1', fragment: 'ile.txt"}' },
       ] }, { id }),
     ];
     const turns = proc.process(events);
     const toolItem = turns[0].items.find(i => i.type === 'tool');
-    // cmd is cached from first fragment (partial match "cat > /f"), not re-parsed
-    expect(toolItem!.data.parameters.cmd).toBe('cat > /f');
+    // command is cached from first fragment (partial match "cat > /f"), not re-parsed
+    expect(toolItem!.data.parameters.command).toBe('cat > /f');
     // _raw has full accumulated text
-    expect(toolItem!.data.parameters._raw).toBe('{"cmd":"cat > /file.txt"}');
+    expect(toolItem!.data.parameters._raw).toBe('{"command":"cat > /file.txt"}');
   });
 });
 
