@@ -619,6 +619,9 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     let isMounted = true;
 
     const initializeWorkspace = async () => {
+      // Dismiss immediately so the generation shelf clears even if async init is slow
+      useWorkspaceStore.getState().dismissGenerationResult(project.id);
+
       try {
         // In server mode, check if server has newer version before loading
         if (process.env.NEXT_PUBLIC_SERVER_MODE === 'true') {
@@ -680,7 +683,6 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
 
         // Initialize store persistence and load debug events
         useWorkspaceStore.getState().initPersistence(project.id);
-        useWorkspaceStore.getState().dismissGenerationResult(project.id);
         useWorkspaceStore.getState().initLayout();
         useWorkspaceStore.getState().setCurrentModel(configManager.getDefaultModel());
         try {

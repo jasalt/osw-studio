@@ -44,6 +44,7 @@ interface SidebarItem {
   href?: string;
   serverModeOnly?: boolean;
   adminOnly?: boolean;
+  managedOnly?: boolean;
   hasRecentProjects?: boolean; // Special flag for Projects to show recent projects as sub-items
   subItems?: {
     id: string;
@@ -59,7 +60,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'deployments', label: 'Deployments', icon: Globe, path: 'deployments', serverModeOnly: true },
   { id: 'templates', label: 'Templates', icon: LayoutTemplate, path: 'templates' },
   { id: 'skills', label: 'Skills', icon: Sparkles, path: 'skills' },
-  { id: 'users', label: 'Users', icon: Users, path: 'users', serverModeOnly: true, adminOnly: true },
+  { id: 'users', label: 'Users', icon: Users, path: 'users', serverModeOnly: true, adminOnly: true, managedOnly: true },
   {
     id: 'docs',
     label: 'Docs',
@@ -260,9 +261,11 @@ function SidebarContent({
     onCollapsedChange?.(collapsed);
   }, [collapsed, onCollapsedChange]);
 
+  const isManagedMode = !!GATEWAY_URL;
+
   // Filter sidebar items based on Server Mode
   const visibleSidebarItems = SIDEBAR_ITEMS.filter(
-    item => (!item.serverModeOnly || isServerMode) && (!item.adminOnly || isAdmin)
+    item => (!item.serverModeOnly || isServerMode) && (!item.adminOnly || isAdmin) && (!item.managedOnly || isManagedMode)
   );
 
   const toggleExpanded = (itemId: string) => {
@@ -422,8 +425,8 @@ function SidebarContent({
         )}
       </button>
 
-      {/* Workspace Switcher (Server Mode only) */}
-      {isServerMode && !collapsed && (
+      {/* Workspace Switcher (Managed Mode only — standalone has a single implicit workspace) */}
+      {isServerMode && isManagedMode && !collapsed && (
         <WorkspaceSwitcher workspaceId={workspaceId} />
       )}
 

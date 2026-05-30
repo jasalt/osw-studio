@@ -21,11 +21,8 @@ export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      // Replay buffered events: if lastEventId > 0, replay from that point;
-      // if 0 (fresh connection), replay the entire buffer so reattaching clients get full history.
       const tasks = taskManager.getTasksForSession(sessionId);
       for (const task of tasks) {
-        if (task.status !== 'running' && task.status !== 'paused') continue;
         const replayed = lastEventId > 0
           ? eventBus.replayFrom(task.taskId, lastEventId)
           : eventBus.getBuffer(task.taskId);
@@ -58,7 +55,7 @@ export async function GET(request: NextRequest) {
           clearInterval(keepalive);
           eventBus.removeListener(sessionId, listener);
         }
-      }, 30_000);
+      }, 10_000);
 
       request.signal.addEventListener('abort', () => {
         clearInterval(keepalive);

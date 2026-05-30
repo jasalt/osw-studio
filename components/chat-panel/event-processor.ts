@@ -251,14 +251,25 @@ export class EventProcessor {
         }
 
         case 'tool_status': {
-          const { toolIndex, status, result: toolStatusResult, error } = event.data || {};
-          const tool = state.currentIterationTools[toolIndex];
+          const { toolIndex, status, result: toolStatusResult, error, args } = event.data || {};
+          // Match by index if available, otherwise find the last pending/executing tool
+          let tool = toolIndex != null ? state.currentIterationTools[toolIndex] : undefined;
+          if (!tool) {
+            for (let i = state.currentIterationTools.length - 1; i >= 0; i--) {
+              const t = state.currentIterationTools[i];
+              if (t.status === 'pending' || t.status === 'executing') { tool = t; break; }
+            }
+          }
           if (tool) {
             tool.status = status;
             if (toolStatusResult) tool.result = toolStatusResult;
             if (error) tool.error = error;
-            if (status === 'executing' && tool.parameters?._raw && typeof tool.parameters._raw === 'string') {
-              try { tool.parameters = JSON.parse(tool.parameters._raw); } catch { /* leave _raw */ }
+            if (status === 'executing') {
+              if (tool.parameters?._raw && typeof tool.parameters._raw === 'string') {
+                try { tool.parameters = JSON.parse(tool.parameters._raw); } catch { /* leave _raw */ }
+              } else if (args && typeof args === 'string') {
+                try { tool.parameters = JSON.parse(args); } catch { /* ignore */ }
+              }
             }
           }
           break;
@@ -424,6 +435,70 @@ export class EventProcessor {
               focusContext: message.ui_metadata?.focusContext,
               semanticBlocks: message.ui_metadata?.semanticBlocks,
             });
+          } else if (message?.role === 'assistant') {
+            // Reconstruct reasoning and tool calls from buffered conversation_message
+            // (delta events aren't buffered, so on replay this is the only source)
+            if (message.reasoning_details?.length) {
+              for (const detail of message.reasoning_details) {
+                if (detail.text?.trim()) {
+                  const existing = state.currentTurn.items.find(
+                    item => item.type === 'reasoning' && item.data === detail.text
+                  );
+                  if (!existing) {
+                    state.currentTurn.items.push({
+                      id: `item-${state.itemIdCounter++}`,
+                      type: 'reasoning',
+                      timestamp: event.timestamp,
+                      data: detail.text,
+                      complete: true,
+                    });
+                  }
+                }
+              }
+            }
+            if (message.tool_calls?.length) {
+              for (const call of message.tool_calls) {
+                const existingTool = state.currentIterationTools.find(t => t.id === call.id);
+                if (existingTool) {
+                  // Tool already exists from toolCalls event — update parameters if empty
+                  if (!existingTool.parameters?.command || existingTool.parameters.command === '') {
+                    try { existingTool.parameters = JSON.parse(call.function.arguments); } catch { /* ignore */ }
+                  }
+                } else {
+                  let parameters: Record<string, unknown> = {};
+                  try { parameters = JSON.parse(call.function.arguments); } catch { parameters = { _raw: call.function.arguments }; }
+                  const tool: ToolCall = {
+                    id: call.id,
+                    name: call.function?.name || 'unknown',
+                    parameters,
+                    status: 'pending',
+                  };
+                  state.currentTurn.items.push({
+                    id: `item-${state.itemIdCounter++}`,
+                    type: 'tool',
+                    timestamp: event.timestamp,
+                    data: tool,
+                  });
+                  state.currentIterationTools.push(tool);
+                }
+              }
+            }
+            if (message.content?.trim()) {
+              state.currentTurn.items.push({
+                id: `item-${state.itemIdCounter++}`,
+                type: 'text',
+                timestamp: event.timestamp,
+                data: message.content,
+              });
+            }
+            state.currentTurn.items = state.currentTurn.items.filter(item => item.type !== 'waiting');
+          } else if (message?.role === 'tool') {
+            // Match tool result to its tool call
+            const matchedTool = state.currentIterationTools.find(t => t.id === message.tool_call_id);
+            if (matchedTool) {
+              if (message.content) matchedTool.result = message.content;
+              if (matchedTool.status !== 'completed') matchedTool.status = 'completed';
+            }
           }
           break;
         }
@@ -520,6 +595,7 @@ export class EventProcessor {
         }
 
         case 'stopped':
+        case 'task_complete':
           state.currentTurn.items = state.currentTurn.items.filter(item => item.type !== 'waiting');
           break;
       }

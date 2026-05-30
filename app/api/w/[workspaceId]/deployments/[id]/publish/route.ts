@@ -8,7 +8,7 @@ import { logger } from '@/lib/utils';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildStaticDeployment } from '@/lib/compiler/static-builder';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
-import { getWorkspaceById, getWorkspaceDeploymentCount, registerDeploymentRoute } from '@/lib/auth/system-database';
+import { getWorkspaceById, getWorkspaceDeploymentCount, getDeploymentWorkspace, registerDeploymentRoute } from '@/lib/auth/system-database';
 
 export async function POST(
   _request: NextRequest,
@@ -18,15 +18,21 @@ export async function POST(
     const { adapter, workspaceId } = await getWorkspaceContext(params);
     const { id } = await params;
 
-    // Quota enforcement
-    const workspace = getWorkspaceById(workspaceId);
-    if (workspace) {
-      const deploymentCount = getWorkspaceDeploymentCount(workspaceId);
-      if (deploymentCount >= workspace.max_deployments) {
-        return NextResponse.json(
-          { error: `Deployment limit reached (${workspace.max_deployments}).` },
-          { status: 403 }
-        );
+    // Quota enforcement (managed mode only — standalone has no limits)
+    const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
+    if (isManagedMode) {
+      const alreadyRegistered = !!getDeploymentWorkspace(id);
+      if (!alreadyRegistered) {
+        const workspace = getWorkspaceById(workspaceId);
+        if (workspace) {
+          const deploymentCount = getWorkspaceDeploymentCount(workspaceId);
+          if (deploymentCount >= workspace.max_deployments) {
+            return NextResponse.json(
+              { error: `Deployment limit reached (${workspace.max_deployments}).` },
+              { status: 403 }
+            );
+          }
+        }
       }
     }
 

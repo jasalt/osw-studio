@@ -94,7 +94,9 @@ export function PageLayout({
     }
     checkServerInit();
 
+    const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
     async function checkQuota() {
+      if (!isManagedMode) return;
       try {
         const res = await apiFetch(`/api/w/${workspaceId}/sync/status`);
         if (!res.ok) return;

@@ -593,3 +593,288 @@ describe('assistant_delta accumulation', () => {
     expect(reasoning!.complete).toBe(true);
   });
 });
+
+describe('conversation_message role=assistant reconstruction', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('creates reasoning items (marked complete) and tool items with parsed parameters', () => {
+    const events = [
+      userMsg('make a page'),
+      evt('conversation_message', {
+        message: {
+          role: 'assistant',
+          reasoning_details: [{ text: 'I need to create an HTML file' }],
+          tool_calls: [
+            {
+              id: 'tc-r1',
+              function: {
+                name: 'bash',
+                arguments: '{"command":"cat > /index.html << \'EOF\'\\n<h1>Hello</h1>\\nEOF"}',
+              },
+            },
+          ],
+        },
+      }),
+    ];
+    const turns = proc.process(events);
+    const reasoning = turns[0].items.find(i => i.type === 'reasoning');
+    expect(reasoning).toBeDefined();
+    expect(reasoning!.data).toBe('I need to create an HTML file');
+    expect(reasoning!.complete).toBe(true);
+
+    const toolItems = turns[0].items.filter(i => i.type === 'tool');
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0].data.id).toBe('tc-r1');
+    expect(toolItems[0].data.name).toBe('bash');
+    expect(toolItems[0].data.parameters.command).toContain('cat > /index.html');
+  });
+
+  it('deduplicates: updates existing tool parameters when toolCalls event already created a tool with empty params', () => {
+    const events = [
+      userMsg('list files'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-dup', function: { name: 'bash', arguments: '' } }],
+      }),
+      evt('conversation_message', {
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'tc-dup',
+              function: { name: 'bash', arguments: '{"command":"ls -la /"}' },
+            },
+          ],
+        },
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItems = turns[0].items.filter(i => i.type === 'tool');
+    // Should NOT create a duplicate tool — only one tool with id tc-dup
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0].data.id).toBe('tc-dup');
+    expect(toolItems[0].data.parameters.command).toBe('ls -la /');
+  });
+
+  it('adds assistant text content as a text item', () => {
+    const events = [
+      userMsg('hi'),
+      evt('conversation_message', {
+        message: {
+          role: 'assistant',
+          content: 'Here is my reply.',
+        },
+      }),
+    ];
+    const turns = proc.process(events);
+    const textItems = turns[0].items.filter(i => i.type === 'text');
+    expect(textItems).toHaveLength(1);
+    expect(textItems[0].data).toBe('Here is my reply.');
+  });
+});
+
+describe('tool_status fallback matching', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('finds and updates the last pending tool when toolIndex is omitted', () => {
+    const events = [
+      userMsg('do something'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-fb', function: { name: 'bash', arguments: '{"command":"echo hi"}' } }],
+      }),
+      // tool_status WITHOUT toolIndex — should fallback to last pending/executing tool
+      evt('tool_status', { status: 'completed', result: 'hi' }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem).toBeDefined();
+    expect(toolItem!.data.status).toBe('completed');
+    expect(toolItem!.data.result).toBe('hi');
+  });
+
+  it('selects the last pending tool when multiple tools exist', () => {
+    const events = [
+      userMsg('do two things'),
+      evt('toolCalls', {
+        toolCalls: [
+          { id: 'tc-m1', function: { name: 'bash', arguments: '{"command":"ls"}' } },
+          { id: 'tc-m2', function: { name: 'bash', arguments: '{"command":"pwd"}' } },
+        ],
+      }),
+      // Mark the first tool completed explicitly by index
+      evt('tool_status', { toolIndex: 0, status: 'completed', result: 'files' }),
+      // Now send a status without toolIndex — should match tc-m2 (last pending)
+      evt('tool_status', { status: 'completed', result: '/home' }),
+    ];
+    const turns = proc.process(events);
+    const tools = turns[0].items.filter(i => i.type === 'tool');
+    expect(tools).toHaveLength(2);
+    expect(tools[0].data.status).toBe('completed');
+    expect(tools[0].data.result).toBe('files');
+    expect(tools[1].data.status).toBe('completed');
+    expect(tools[1].data.result).toBe('/home');
+  });
+});
+
+describe('tool_status args population', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('populates tool parameters from args when status is executing and no _raw exists', () => {
+    const events = [
+      userMsg('run something'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-args', function: { name: 'bash', arguments: '' } }],
+      }),
+      evt('tool_status', {
+        toolIndex: 0,
+        status: 'executing',
+        args: '{"command":"grep -r pattern /src"}',
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem).toBeDefined();
+    expect(toolItem!.data.status).toBe('executing');
+    expect(toolItem!.data.parameters.command).toBe('grep -r pattern /src');
+  });
+
+  it('prefers _raw over args when _raw exists on parameters', () => {
+    const id = 'pd-raw';
+    const events = [
+      userMsg('run something'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-raw', function: { name: 'bash', arguments: '' } }],
+      }),
+      // Accumulate _raw via tool_param_delta
+      evt('tool_param_delta', { toolId: 'tc-raw', fragment: '{"command":"ls /home"}' }, { id }),
+      // Now executing status arrives with args — should parse _raw, not args
+      evt('tool_status', {
+        toolIndex: 0,
+        status: 'executing',
+        args: '{"command":"different command"}',
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem).toBeDefined();
+    // _raw was '{"command":"ls /home"}' and should be parsed on executing
+    expect(toolItem!.data.parameters.command).toBe('ls /home');
+  });
+});
+
+describe('conversation_message role=tool status transition', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('matches tool by tool_call_id, sets result, and transitions to completed', () => {
+    const events = [
+      userMsg('read file'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-tr', function: { name: 'bash', arguments: '{"command":"cat /file.txt"}' } }],
+      }),
+      evt('tool_status', { toolIndex: 0, status: 'executing' }),
+      evt('conversation_message', {
+        message: {
+          role: 'tool',
+          tool_call_id: 'tc-tr',
+          content: 'file contents here',
+        },
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem).toBeDefined();
+    expect(toolItem!.data.status).toBe('completed');
+    expect(toolItem!.data.result).toBe('file contents here');
+  });
+
+  it('transitions from executing to completed (not only from pending)', () => {
+    const events = [
+      userMsg('run command'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-exec', function: { name: 'bash', arguments: '{"command":"echo test"}' } }],
+      }),
+      // Explicitly set to executing first
+      evt('tool_status', { toolIndex: 0, status: 'executing' }),
+      // Verify it is executing at this point
+    ];
+    let turns = proc.process(events);
+    let toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem!.data.status).toBe('executing');
+
+    // Now conversation_message with role=tool arrives
+    const moreEvents = [
+      ...events,
+      evt('conversation_message', {
+        message: {
+          role: 'tool',
+          tool_call_id: 'tc-exec',
+          content: 'test',
+        },
+      }),
+    ];
+    turns = proc.process(moreEvents);
+    toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem!.data.status).toBe('completed');
+    expect(toolItem!.data.result).toBe('test');
+  });
+
+  it('does not regress a completed tool back to completed (no-op on already completed)', () => {
+    const events = [
+      userMsg('list'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-done', function: { name: 'bash', arguments: '{"command":"ls"}' } }],
+      }),
+      evt('tool_status', { toolIndex: 0, status: 'completed', result: 'original result' }),
+      evt('conversation_message', {
+        message: {
+          role: 'tool',
+          tool_call_id: 'tc-done',
+          content: 'new result from conversation',
+        },
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItem = turns[0].items.find(i => i.type === 'tool');
+    expect(toolItem!.data.status).toBe('completed');
+    // Result gets updated since conversation_message sets it unconditionally
+    expect(toolItem!.data.result).toBe('new result from conversation');
+  });
+});
+
+describe('task_complete clears waiting', () => {
+  let proc: EventProcessor;
+
+  beforeEach(() => {
+    proc = new EventProcessor();
+    idCounter = 0;
+  });
+
+  it('removes waiting indicator when task_complete arrives', () => {
+    const events = [
+      userMsg('hello'),
+      evt('waiting'),
+      evt('task_complete', {}),
+    ];
+    const turns = proc.process(events);
+    expect(turns[0].items.some(i => i.type === 'waiting')).toBe(false);
+  });
+});

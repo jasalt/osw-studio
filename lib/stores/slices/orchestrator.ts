@@ -15,6 +15,7 @@ import { SSEClient } from '@/lib/server-generate/sse-client';
 import { handleFilesChanged, cancelPendingFileSync } from '@/lib/server-generate/file-sync-handler';
 import { handleBuildRequested } from '@/lib/server-generate/build-delegation-handler';
 import { playTaskCompleteSound, playTaskCompleteSoundSubtle } from '@/lib/utils/task-complete-sound';
+import { checkpointManager } from '@/lib/vfs/checkpoint';
 
 const MAX_DEBUG_EVENTS = 2000;
 let debugIdCounter = 0;
@@ -30,9 +31,56 @@ const pendingDeltas = new Map<string, { eventId: string; fragments: any[] }>();
 // here instead of in the store's debugEvents (which shows the viewed project's history).
 const backgroundEventsMap = new Map<string, DebugEvent[]>();
 
+let reattaching = false;
+const dismissedServerProjects = new Set<string>();
+
 function isServerMode(): boolean {
   if (typeof window === 'undefined') return false;
   return process.env.NEXT_PUBLIC_SERVER_MODE === 'true';
+}
+
+async function pullAndCheckpointServerFiles(
+  projectId: string,
+  get: () => CombinedState,
+) {
+  const { getSyncManager } = await import('@/lib/vfs/sync-manager');
+  const syncMgr = getSyncManager();
+  const pullResult = await syncMgr.pullProjectWithFiles(projectId);
+  if (!pullResult.success || !pullResult.project || !pullResult.files) return;
+
+  await vfs.updateProject(pullResult.project);
+  const existingFiles = await vfs.getAllFilesAndDirectories(projectId);
+  const existingFilePaths = new Set(
+    existingFiles
+      .filter((f): f is import('@/lib/vfs/types').VirtualFile => !('type' in f && f.type === 'directory'))
+      .map(f => f.path)
+  );
+  for (const file of pullResult.files) {
+    if (existingFilePaths.has(file.path)) {
+      await vfs.updateFile(projectId, file.path, file.content, { silent: true });
+    } else {
+      await vfs.createFile(projectId, file.path, file.content, { silent: true });
+    }
+  }
+  const serverPaths = new Set(pullResult.files.map(f => f.path));
+  for (const p of existingFilePaths) {
+    if (!serverPaths.has(p)) {
+      try { await vfs.deleteFile(projectId, p, { silent: true }); } catch {}
+    }
+  }
+  try {
+    const cp = await checkpointManager.createCheckpoint(projectId, 'After server generation', { kind: 'auto' });
+    get().addDebugEvent('checkpoint_created', {
+      checkpointId: cp.id, description: cp.description, timestamp: cp.timestamp,
+    }, projectId);
+  } catch (cpErr) {
+    logger.warn('[ServerGen] Post-generation checkpoint failed:', cpErr);
+  }
+  if (get().projectId === projectId) {
+    window.dispatchEvent(new Event('filesChanged'));
+    get().markDirty();
+    get().bumpRefreshTrigger();
+  }
 }
 
 function debouncedSave(projectId: string, events: DebugEvent[]) {
@@ -121,6 +169,7 @@ export interface OrchestratorSlice {
 type CombinedState = OrchestratorSlice & {
   projectId: string;
   projectName: string;
+  workspaceReady: boolean;
   markDirty: () => void;
   bumpRefreshTrigger: () => void;
   updateProjectSettings: (settings: { runtime?: ProjectRuntime }) => void;
@@ -644,15 +693,19 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     // Re-derive scalar fields for the new viewed project
     set(deriveScalarFields(get().generationTasks, projectId));
 
-    // If the orchestrator is running for THIS project, in-memory events are authoritative.
-    if (get().isProjectGenerating(projectId)) {
-      const buffer = backgroundEventsMap.get(projectId);
-      if (buffer && buffer.length > 0) {
-        set({ debugEvents: buffer });
-        backgroundEventsMap.delete(projectId);
-      }
+    // Background buffer takes priority — SSE replay may have populated it while
+    // the user was on another page (e.g. project list during reattach).
+    // Persist to IDB before deleting so StrictMode double-calls find fresh data.
+    const buffer = backgroundEventsMap.get(projectId);
+    if (buffer && buffer.length > 0) {
+      backgroundEventsMap.delete(projectId);
+      set({ debugEvents: buffer });
+      try { debugEventsState.saveEvents(projectId, buffer)?.catch?.(() => {}); } catch {}
       return;
     }
+
+    // If actively generating, in-memory debugEvents are already authoritative.
+    if (get().isProjectGenerating(projectId)) return;
 
     try {
       const savedEvents = await debugEventsState.loadEvents(projectId);
@@ -707,7 +760,6 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     const client = new SSEClient({
       onEvent: (event, data) => {
         const projectId = data.sourceProjectId as string;
-
         if (event === 'files_changed') {
           handleFilesChanged(data as any).then(() => {
             if (get().projectId === projectId) {
@@ -722,17 +774,17 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           return;
         }
         if (event === 'task_complete') {
-          // Cancel any queued file sync — the full pull below supersedes them
           cancelPendingFileSync();
 
           const tasks = new Map(get().generationTasks);
-          const task = [...tasks.values()].find((t) => t.serverTaskId && t.projectId === projectId);
+          const task = [...tasks.values()].find((t) => t.serverTaskId && t.projectId === projectId && t.result === null);
           if (task) {
             const result = data.result === 'success' || data.result === 'stopped'
               ? 'completed' as const
               : 'failed' as const;
-            const serverForeground = isTabVisible() && get().projectId === projectId;
+            const serverForeground = isTabVisible() && get().projectId === projectId && get().workspaceReady;
             if (serverForeground) {
+              dismissedServerProjects.add(task.projectId);
               tasks.delete(task.projectId);
             } else {
               tasks.set(task.projectId, { ...task, result, orchestratorInstance: null });
@@ -747,43 +799,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
                 }
               }
               toast.success(data.result === 'stopped' ? 'Task stopped' : 'Task completed');
-              // Pull all files from server to sync IndexedDB with server-side changes
-              (async () => {
-                try {
-                  const { getSyncManager } = await import('@/lib/vfs/sync-manager');
-                  const syncMgr = getSyncManager();
-                  const pullResult = await syncMgr.pullProjectWithFiles(projectId);
-                  if (pullResult.success && pullResult.project && pullResult.files) {
-                    await vfs.updateProject(pullResult.project);
-                    const existingFiles = await vfs.getAllFilesAndDirectories(projectId);
-                    const existingFilePaths = new Set(
-                      existingFiles
-                        .filter((f): f is import('@/lib/vfs/types').VirtualFile => !('type' in f && f.type === 'directory'))
-                        .map(f => f.path)
-                    );
-                    for (const file of pullResult.files) {
-                      if (existingFilePaths.has(file.path)) {
-                        await vfs.updateFile(projectId, file.path, file.content, { silent: true });
-                      } else {
-                        await vfs.createFile(projectId, file.path, file.content, { silent: true });
-                      }
-                    }
-                    const serverPaths = new Set(pullResult.files.map(f => f.path));
-                    for (const p of existingFilePaths) {
-                      if (!serverPaths.has(p)) {
-                        try { await vfs.deleteFile(projectId, p, { silent: true }); } catch {}
-                      }
-                    }
-                    if (get().projectId === projectId) {
-                      window.dispatchEvent(new Event('filesChanged'));
-                      get().markDirty();
-                      get().bumpRefreshTrigger();
-                    }
-                  }
-                } catch (err) {
-                  logger.warn('[ServerGen] Post-completion pull failed:', err);
-                }
-              })();
+              pullAndCheckpointServerFiles(projectId, get).catch(err => {
+                logger.warn('[ServerGen] Post-completion pull failed:', err);
+              });
             } else if (data.error) {
               toast.error(String(data.error), { duration: 5000 });
             }
@@ -792,40 +810,53 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           return;
         }
         if (event === 'usage_update') {
-          if (data.cost != null) {
+          if (data.cost != null && get().projectId === projectId) {
             set({ projectCost: (get().projectCost ?? 0) + (data.cost as number) });
           }
           return;
         }
         if (event === 'usage') {
-          if (data.totalCost != null) {
+          if (data.totalCost != null && get().projectId === projectId) {
             set({ projectCost: data.totalCost as number });
           }
           // Don't return — let it fall through to addDebugEvent so chat panel gets usage info
         }
 
-        // Handle duplicate user message from server
-        if (event === 'conversation_message' && (data as any).message?.role === 'user') {
-          const localIdx = get().debugEvents.findLastIndex(
-            (e) => e.event === 'conversation_message' && e.data?.message?.role === 'user'
-          );
-          if (localIdx >= 0) {
-            // Server's version has projectContext — merge it into the local event
-            const serverMeta = (data as any).message?.ui_metadata;
-            if (serverMeta?.projectContext) {
-              set((state) => {
-                const events = [...state.debugEvents];
-                const existing = { ...events[localIdx] };
-                existing.data = {
-                  ...existing.data,
-                  message: { ...existing.data.message, ui_metadata: { ...existing.data.message?.ui_metadata, ...serverMeta } },
-                };
-                existing.version = (existing.version ?? 1) + 1;
-                events[localIdx] = existing;
-                return { debugEvents: events };
-              });
+        // Suppress server-side duplicates of events the client already added locally
+        if (event === 'conversation_message') {
+          const role = (data as any).message?.role;
+          if (role === 'system') return; // System prompt is internal, client doesn't render it
+          if (role === 'user') {
+            const localIdx = get().debugEvents.findLastIndex(
+              (e) => e.event === 'conversation_message' && e.data?.message?.role === 'user'
+            );
+            if (localIdx >= 0) {
+              const serverMeta = (data as any).message?.ui_metadata;
+              if (serverMeta?.projectContext) {
+                set((state) => {
+                  const events = [...state.debugEvents];
+                  const existing = { ...events[localIdx] };
+                  existing.data = {
+                    ...existing.data,
+                    message: { ...existing.data.message, ui_metadata: { ...existing.data.message?.ui_metadata, ...serverMeta } },
+                  };
+                  existing.version = (existing.version ?? 1) + 1;
+                  events[localIdx] = existing;
+                  return { debugEvents: events };
+                });
+              }
+              return;
             }
-            return;
+          }
+        }
+
+        // Client already adds 'waiting' in startServerGeneration — skip the server's copy.
+        // Only dedup for the currently viewed project; background events must pass through.
+        if (event === 'waiting' && get().projectId === projectId) {
+          const events = get().debugEvents;
+          for (let i = events.length - 1; i >= Math.max(0, events.length - 3); i--) {
+            if (events[i].event === 'waiting') return;
+            if (events[i].event === 'conversation_message' && events[i].data?.message?.role === 'user') break;
           }
         }
 
@@ -889,6 +920,16 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       }
     } catch (err) {
       logger.warn('[ServerGen] Pre-generation sync error:', err);
+    }
+
+    // Snapshot current project state so the user can roll back after server generation
+    try {
+      const cp = await checkpointManager.createCheckpoint(projectId, 'Pre-generation snapshot', { kind: 'auto' });
+      get().addDebugEvent('checkpoint_created', {
+        checkpointId: cp.id, description: cp.description, timestamp: cp.timestamp,
+      }, projectId);
+    } catch (err) {
+      logger.warn('[ServerGen] Pre-generation checkpoint failed:', err);
     }
 
     // Connect SSE before starting generation to avoid missing early events
@@ -984,6 +1025,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     const targetId = projectId ?? get().projectId;
     const task = get().generationTasks.get(targetId);
     if (!task || task.result === null) return;
+    dismissedServerProjects.add(targetId);
     const newTasks = new Map(get().generationTasks);
     newTasks.delete(targetId);
     set({ generationTasks: newTasks, ...deriveScalarFields(newTasks, get().projectId) });
@@ -992,19 +1034,35 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
   reattachServerTasks: async () => {
     if (!isServerMode()) return;
 
+    if (reattaching) return;
+    reattaching = true;
+
     try {
       const response = await fetch('/api/server-generate/status');
       if (!response.ok) return;
 
-      const { tasks } = await response.json();
-      if (!tasks?.length) return;
-
+      const { tasks: serverTasks } = await response.json();
       const generationTasks = new Map(get().generationTasks);
-      let hasRunning = false;
+      let needSSE = false;
 
-      for (const serverTask of tasks) {
+      const serverProjectIds = new Set<string>();
+
+      // Group server tasks by projectId — only keep the latest per project
+      const latestByProject = new Map<string, typeof serverTasks[0]>();
+      if (serverTasks?.length) {
+        for (const t of serverTasks) {
+          serverProjectIds.add(t.projectId);
+          const existing = latestByProject.get(t.projectId);
+          if (!existing || t.startedAt > existing.startedAt) {
+            latestByProject.set(t.projectId, t);
+          }
+        }
+      }
+
+      for (const [, serverTask] of latestByProject) {
+
         if (serverTask.status === 'running' || serverTask.status === 'paused') {
-          hasRunning = true;
+          needSSE = true;
           generationTasks.set(serverTask.projectId, {
             projectId: serverTask.projectId,
             projectName: serverTask.projectName || '',
@@ -1018,15 +1076,63 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
             persistedInstance: null,
             serverTaskId: serverTask.taskId,
           });
+        } else if (serverTask.status === 'completed' || serverTask.status === 'failed') {
+          if (dismissedServerProjects.has(serverTask.projectId)) continue;
+          const existing = generationTasks.get(serverTask.projectId);
+          if (existing && existing.result !== null) continue;
+
+          const result = serverTask.status === 'completed' ? 'completed' as const : 'failed' as const;
+          needSSE = true;
+
+          generationTasks.set(serverTask.projectId, {
+            projectId: serverTask.projectId,
+            projectName: serverTask.projectName || '',
+            prompt: serverTask.prompt || '',
+            model: serverTask.model || '',
+            startedAt: serverTask.startedAt,
+            result,
+            paused: false,
+            pausedMessage: null,
+            orchestratorInstance: null,
+            persistedInstance: null,
+            serverTaskId: serverTask.taskId,
+          });
+          get().addDebugEvent('task_complete', { result: serverTask.status, recovered: true }, serverTask.projectId);
+
+          if (result === 'completed') {
+            try {
+              await pullAndCheckpointServerFiles(serverTask.projectId, get);
+            } catch (err) {
+              logger.warn('[Reattach] pull failed:', err);
+            }
+          }
         }
       }
 
-      if (hasRunning) {
-        set({ generationTasks, ...deriveScalarFields(generationTasks, get().projectId) });
+      // Clear orphaned generation tasks whose server task was already swept
+      for (const [pid, task] of generationTasks) {
+        if (task.serverTaskId && task.result === null && !serverProjectIds.has(pid)) {
+          generationTasks.set(pid, { ...task, result: 'completed' });
+          get().addDebugEvent('task_complete', { result: 'success', recovered: true }, pid);
+        }
+      }
+
+      const hasRunning = [...generationTasks.values()].some(t => t.result === null);
+      set({ generationTasks, ...deriveScalarFields(generationTasks, get().projectId) });
+      if (needSSE) {
         get().connectSSE();
+        // If no tasks are actively running, disconnect after replay completes
+        if (!hasRunning) {
+          setTimeout(() => {
+            const stillRunning = [...get().generationTasks.values()].some(t => t.result === null);
+            if (!stillRunning) get().disconnectSSE();
+          }, 5000);
+        }
       }
     } catch {
-      // Reattach failed — non-critical, tasks will be picked up on next page load
+      // Non-critical — tasks will be picked up on next page load
+    } finally {
+      reattaching = false;
     }
   },
 });

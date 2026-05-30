@@ -69,6 +69,8 @@ interface CreateCheckpointOptions {
 
 const MAX_UNPINNED_PER_PROJECT = 5;
 
+let cpCounter = 0;
+
 class CheckpointManager {
   // LAZY LOADING: Only store metadata in RAM, not full checkpoint data
   private checkpointMetadata: Map<string, CheckpointMetadata> = new Map();
@@ -348,7 +350,7 @@ class CheckpointManager {
     }
 
     const checkpoint: Checkpoint = {
-      id: `cp_${Date.now()}`,
+      id: `cp_${Date.now()}_${cpCounter++}`,
       timestamp: new Date().toISOString(),
       description,
       files: fileContents,

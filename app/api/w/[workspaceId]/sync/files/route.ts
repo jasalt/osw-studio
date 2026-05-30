@@ -79,17 +79,20 @@ export async function POST(
       );
     }
 
-    // Check storage quota before writing
-    const workspace = getWorkspaceById(workspaceId);
-    if (workspace) {
-      const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
-      const wsDir = path.join(dataDir, 'workspaces', workspaceId);
-      const usedMb = getDirSize(wsDir) / (1024 * 1024);
-      if (usedMb >= workspace.max_storage_mb) {
-        return NextResponse.json(
-          { error: `Storage limit reached (${workspace.max_storage_mb} MB). Free up space or contact your admin.` },
-          { status: 403 }
-        );
+    // Check storage quota before writing (managed mode only)
+    const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
+    if (isManagedMode) {
+      const workspace = getWorkspaceById(workspaceId);
+      if (workspace) {
+        const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+        const wsDir = path.join(dataDir, 'workspaces', workspaceId);
+        const usedMb = getDirSize(wsDir) / (1024 * 1024);
+        if (usedMb >= workspace.max_storage_mb) {
+          return NextResponse.json(
+            { error: `Storage limit reached (${workspace.max_storage_mb} MB). Free up space or contact your admin.` },
+            { status: 403 }
+          );
+        }
       }
     }
 

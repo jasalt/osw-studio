@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.71.0 - 2026-05-31
+
+### Checkpoints
+
+- **Server generation checkpoints**: Server-mode generation now creates pre- and post-generation checkpoints, enabling rollback and retry. The pre-generation snapshot persists across browser sessions.
+- **Fixed checkpoint ID collisions**: Rapid checkpoint creation no longer produces duplicate IDs.
+- **Fixed server task recovery after tab close**: Returning to a server-mode task that completed while the tab was closed no longer hangs on "Waiting for response...". The client detects completed tasks, replays buffered events, and pulls the changed files.
+
+### Server Mode
+
+- **Standalone mode cleanup**: Users page, Workspace Switcher, and quota enforcement are now hidden in standalone server mode. These features only apply in managed deployments.
+- **Fixed re-publish blocked by own quota**: Re-publishing an already-published deployment no longer counts against the deployment quota.
+
+### Chat Panel
+
+- **Fixed SSE event replay**: Returning to a project after SSE disconnection now reconstructs the full conversation from buffered events, including tool calls, reasoning, and results.
+- **Fixed background project cost bleed**: Usage events from background projects no longer overwrite the viewed project's cost display.
+- **Fixed tool status on replay**: Tools no longer get stuck in 'executing' state when replaying buffered events.
+
+### Generation Shelf
+
+- **Fixed shelf not dismissing after visiting project**: Visiting a completed project now permanently dismisses its shelf entry.
+- **Fixed premature shelf auto-dismiss**: Background tasks that complete while the user is on the project list now correctly show "Done" in the shelf instead of disappearing instantly.
+
 ## v1.70.0 - 2026-05-27
 
 ### AI Orchestration

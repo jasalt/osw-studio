@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
     'quickjs-emscripten-core',
     '@jitl/quickjs-wasmfile-release-sync',
     'esbuild-wasm',
+    'handlebars',
   ],
   eslint: {
     ignoreDuringBuilds: true,
@@ -18,7 +19,10 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: false,
   },
   webpack: (config, { isServer }) => {
-    // Exclude server-only modules from client bundle
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: ['**/e2e/**', '**/test-results/**', '**/node_modules/**'],
+    };
     if (!isServer) {
       config.resolve.alias = {
         ...config.resolve.alias,

@@ -6,6 +6,21 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.71.0 - Server Checkpoints (2026-05-31)
+
+Server-mode generation now creates checkpoints before and after each task, so you can roll back or retry. The pre-generation snapshot persists across browser sessions — close your browser, return hours later, and still restore. Returning to a completed server task no longer hangs on "Waiting for response...".
+
+### Checkpoints
+- **Server generation checkpoints**: Pre- and post-generation snapshots for server-mode tasks, enabling rollback and retry
+- **Fixed task recovery after tab close**: Completed server tasks are now properly recovered when you return
+
+### Fixes
+- **SSE event replay**: Returning to a project after disconnection now shows the full conversation
+- **Generation shelf dismiss**: Visiting a completed project now permanently clears its shelf entry
+- **Standalone mode cleanup**: Multi-user UI hidden in standalone server mode
+
+---
+
 ## v1.70.0 - Tool Renames (2026-05-27)
 
 Benchmark powered experimenting showed that models produce significantly better tool calls with `bash` than with `shell`. The same principle was applied to sub-agents: `delegate` → `agent`. The shell also gives models better edit feedback — `sed` and `ss` now report whether substitutions actually matched, so failed edits no longer pass silently.

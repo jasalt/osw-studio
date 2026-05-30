@@ -261,18 +261,17 @@ describe('orchestrator slice — loadDebugEvents', () => {
     vi.clearAllMocks();
   });
 
-  it('restores events from background buffer for a generating project', async () => {
+  it('restores events from background buffer regardless of generating state', async () => {
     const bgId = 'load-bg-test';
     store.getState().initProject({ id: bgId, name: 'BG' });
-    setActiveTask(store, bgId);
     // Switch to another project first so events route to background
     store.getState().initProject({ id: 'proj-other', name: 'Other' });
     store.getState().clearDebugEvents();
-    // Now add event with sourceProjectId — it routes to background buffer
+    // Manually add to background buffer via addDebugEvent with a different sourceProjectId
     store.getState().addDebugEvent('bg_event', { x: 1 }, bgId);
     expect(store.getState().debugEvents).toHaveLength(0);
 
-    // Load events for the generating project (simulating navigation back)
+    // Load events — buffer takes priority even without an active task
     await store.getState().loadDebugEvents(bgId);
     expect(store.getState().debugEvents).toHaveLength(1);
     expect(store.getState().debugEvents[0].event).toBe('bg_event');
@@ -283,37 +282,102 @@ describe('orchestrator slice — loadDebugEvents', () => {
       { id: '1', timestamp: 1000, event: 'saved_event', data: {}, count: 1, version: 1 } as any,
     ]);
 
-    store.getState().initProject({ id: 'proj-1', name: 'P1' });
-    await store.getState().loadDebugEvents('proj-1');
+    store.getState().initProject({ id: 'idb-load-test', name: 'P1' });
+    await store.getState().loadDebugEvents('idb-load-test');
 
-    expect(debugEventsState.loadEvents).toHaveBeenCalledWith('proj-1');
+    expect(debugEventsState.loadEvents).toHaveBeenCalledWith('idb-load-test');
     expect(store.getState().debugEvents).toHaveLength(1);
     expect(store.getState().debugEvents[0].event).toBe('saved_event');
   });
 
   it('sets empty array when IndexedDB has no events', async () => {
     vi.mocked(debugEventsState.loadEvents).mockResolvedValueOnce([]);
-    store.getState().initProject({ id: 'proj-1', name: 'P1' });
+    store.getState().initProject({ id: 'idb-empty-test', name: 'P1' });
     // Put something in foreground first
     store.getState().addDebugEvent('leftover', {});
 
-    await store.getState().loadDebugEvents('proj-1');
+    await store.getState().loadDebugEvents('idb-empty-test');
     expect(store.getState().debugEvents).toEqual([]);
   });
 
   it('derives generating scalar for the loaded project', async () => {
-    store.getState().initProject({ id: 'proj-1', name: 'P1' });
-    setActiveTask(store, 'proj-1');
+    store.getState().initProject({ id: 'gen-scalar-a', name: 'P1' });
+    setActiveTask(store, 'gen-scalar-a');
     // Switch away — generating stays true from setState, but loadDebugEvents re-derives it
-    store.getState().initProject({ id: 'proj-2', name: 'P2' });
+    store.getState().initProject({ id: 'gen-scalar-b', name: 'P2' });
 
-    // loadDebugEvents for proj-2 (no task) should derive generating=false
-    await store.getState().loadDebugEvents('proj-2');
+    // loadDebugEvents for gen-scalar-b (no task) should derive generating=false
+    await store.getState().loadDebugEvents('gen-scalar-b');
     expect(store.getState().generating).toBe(false);
 
-    // loadDebugEvents for proj-1 (active task) should derive generating=true
-    await store.getState().loadDebugEvents('proj-1');
+    // loadDebugEvents for gen-scalar-a (active task) should derive generating=true
+    await store.getState().loadDebugEvents('gen-scalar-a');
     expect(store.getState().generating).toBe(true);
+  });
+});
+
+describe('orchestrator slice — dismissGenerationResult', () => {
+  let store: ReturnType<typeof createTestStore>;
+
+  beforeEach(() => {
+    store = createTestStore();
+    store.getState().initProject({ id: 'proj-dismiss', name: 'Dismiss Test' });
+  });
+
+  it('removes a completed task and sets generating to false', () => {
+    setActiveTask(store, 'proj-dismiss', { result: 'completed' });
+    expect(store.getState().generationTasks.has('proj-dismiss')).toBe(true);
+    expect(store.getState().generating).toBe(true);
+
+    store.getState().dismissGenerationResult('proj-dismiss');
+
+    expect(store.getState().generationTasks.has('proj-dismiss')).toBe(false);
+    expect(store.getState().generating).toBe(false);
+  });
+
+  it('is a no-op for an active task with result=null', () => {
+    setActiveTask(store, 'proj-dismiss', { result: null });
+    expect(store.getState().generationTasks.has('proj-dismiss')).toBe(true);
+
+    store.getState().dismissGenerationResult('proj-dismiss');
+
+    expect(store.getState().generationTasks.has('proj-dismiss')).toBe(true);
+    expect(store.getState().generating).toBe(true);
+  });
+});
+
+describe('orchestrator slice — loadDebugEvents persists buffer', () => {
+  let store: ReturnType<typeof createTestStore>;
+
+  beforeEach(() => {
+    store = createTestStore();
+    vi.clearAllMocks();
+  });
+
+  it('persists background buffer to IDB when loading events', async () => {
+    const bgId = 'persist-buffer-test';
+    store.getState().initProject({ id: bgId, name: 'BG Persist' });
+    // Switch viewed project so events route to background
+    store.getState().initProject({ id: 'other', name: 'Other' });
+    store.getState().clearDebugEvents();
+
+    // Add events to background buffer
+    store.getState().addDebugEvent('bg_event_1', { x: 1 }, bgId);
+    store.getState().addDebugEvent('bg_event_2', { x: 2 }, bgId);
+    expect(store.getState().debugEvents).toHaveLength(0);
+
+    await store.getState().loadDebugEvents(bgId);
+
+    // Events should now be in foreground
+    expect(store.getState().debugEvents).toHaveLength(2);
+    // saveEvents should have been called with the buffer data
+    expect(debugEventsState.saveEvents).toHaveBeenCalledWith(
+      bgId,
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'bg_event_1' }),
+        expect.objectContaining({ event: 'bg_event_2' }),
+      ]),
+    );
   });
 });
 

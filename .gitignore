@@ -79,8 +79,11 @@ project_dump.txt
 *.dump
 analysis.md
 
-# Dev scripts (not shipped)
+# Dev scripts and test infrastructure (not shipped)
 /scripts/
+/e2e/
+/test-results/
+playwright.config.ts
 
 # Development planning docs
 docs/superpowers/
