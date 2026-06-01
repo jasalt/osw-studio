@@ -57,6 +57,7 @@ export class OswsToolExecutor implements ToolExecutor {
     if (!agent.hasTool(toolId)) {
       const errorMsg = this.buildToolAccessError(toolId, agent.type);
       this.config.progress.onEvent('tool_status', {
+        toolCallId: toolCall.id,
         toolName: toolId,
         status: 'failed',
         args: toolCall.function?.arguments,
@@ -66,6 +67,7 @@ export class OswsToolExecutor implements ToolExecutor {
 
     // 3. Emit executing status
     this.config.progress.onEvent('tool_status', {
+      toolCallId: toolCall.id,
       toolName: toolId,
       status: 'executing',
       args: toolCall.function.arguments,
@@ -112,12 +114,13 @@ export class OswsToolExecutor implements ToolExecutor {
       };
 
       this.config.progress.onEvent('tool_status', {
+        toolCallId: toolCall.id,
         toolName: toolId,
         status: isError ? 'failed' : 'completed',
         result: resultContent,
         ...(isError && { error: resultContent }),
       });
-      this.config.progress.onEvent('tool_result', { result: resultContent });
+      this.config.progress.onEvent('tool_result', { toolCallId: toolCall.id, result: resultContent });
 
       if (this.onAfterExecute) await this.onAfterExecute(toolCall, result);
 
@@ -131,6 +134,7 @@ export class OswsToolExecutor implements ToolExecutor {
       };
 
       this.config.progress.onEvent('tool_status', {
+        toolCallId: toolCall.id,
         toolName: toolId,
         status: 'failed',
         error: errorMessage,

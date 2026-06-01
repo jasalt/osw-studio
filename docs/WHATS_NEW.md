@@ -6,6 +6,24 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.72.0 - Static Deployments & Custom Domains (2026-06-02)
+
+Published sites are now served as true static files — no Node.js processing per request. Custom domains are simpler to set up: enter your domain in deployment settings, point DNS to the server, and a domain resolution API handles routing. The preview also loads reliably on workspace entry, and Svelte/Vue multi-file projects now compile correctly again.
+
+### Deployments
+- **Static serving**: Published sites served directly as static files, improving throughput and reducing CPU usage
+- **Custom domain routing**: A domain resolution API enables reverse proxies to route custom domains to the correct deployment. With Caddy, this means a DNS A record is all you need
+
+### Preview
+- **Fixed white screen on entry**: Preview no longer compiles before project files are loaded
+- **Svelte/Vue multi-file projects**: Component imports in `.svelte` and `.vue` files are now preserved during compilation
+
+### Fixes
+- **Tool call error status**: Failed commands now show a red error icon instead of a green checkmark
+- **Runtime error "Send" button**: Now reliably sends errors to the AI for correction
+
+---
+
 ## v1.71.0 - Server Checkpoints (2026-05-31)
 
 Server-mode generation now creates checkpoints before and after each task, so you can roll back or retry. The pre-generation snapshot persists across browser sessions — close your browser, return hours later, and still restore. Returning to a completed server task no longer hangs on "Waiting for response...".

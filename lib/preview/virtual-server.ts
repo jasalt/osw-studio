@@ -297,8 +297,12 @@ export class VirtualServer {
   private async runBundleStep(files: VirtualFile[]): Promise<VirtualFile[]> {
     if (!isRuntimeBundled(this.runtime)) return files;
 
-    // Pre-compiled bundle from client (synced before publish) — skip server-side bundling
-    if (files.some(f => f.path === '/bundle.js')) {
+    // Pre-compiled bundle from client (synced before publish) — skip server-side bundling.
+    // Only skip if bundle.js exists AND no source files are present (source files
+    // mean we should rebundle, even if a stale bundle.js was restored from checkpoint).
+    const hasBundle = files.some(f => f.path === '/bundle.js');
+    const hasSourceFiles = files.some(f => /\.(tsx|ts|jsx|svelte|vue)$/.test(f.path) && !f.path.startsWith('/.'));
+    if (hasBundle && !hasSourceFiles) {
       return files.filter(f => !/\.(tsx|ts|jsx|svelte|vue)$/.test(f.path));
     }
 

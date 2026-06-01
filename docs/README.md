@@ -55,6 +55,7 @@ For support and self-hosters:
 - **[Server Mode](?doc=server-mode)** - Self-hosting and deployment
 - **[Multitenancy](?doc=multitenancy)** - Workspaces, users, roles, quotas (Server Mode)
 - **[Deployment Publishing](?doc=site-publishing)** - Analytics, SEO, compliance (Server Mode)
+- **[Custom Domains](?doc=custom-domains)** - Use your own domain for published sites (Server Mode)
 - **[Backend](?doc=backend-features)** - Database, API endpoints, secrets (Server Mode)
 
 ---

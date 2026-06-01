@@ -38,6 +38,16 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
+  async headers() {
+    return [
+      {
+        source: '/deployments/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=3600' },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return [
       // Handle published deployment URLs with standard web server behavior

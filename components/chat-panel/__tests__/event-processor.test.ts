@@ -331,6 +331,61 @@ describe('EventProcessor', () => {
     expect(toolItems[0].data.parameters.command).toBe('ls /');
   });
 
+  it('matches tool_status by toolCallId', () => {
+    const events = [
+      userMsg('edit file'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-abc', function: { name: 'bash', arguments: '{"command":"ss /file"}' } }],
+      }),
+      evt('tool_status', { toolCallId: 'tc-abc', status: 'executing' }),
+      evt('tool_status', { toolCallId: 'tc-abc', status: 'failed', error: 'Error: search text not found' }),
+    ];
+    const turns = proc.process(events);
+    const toolItems = turns[0].items.filter(i => i.type === 'tool');
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0].data.status).toBe('failed');
+    expect(toolItems[0].data.error).toBe('Error: search text not found');
+  });
+
+  it('conversation_message does not overwrite failed tool status', () => {
+    const events = [
+      userMsg('edit file'),
+      evt('toolCalls', {
+        toolCalls: [{ id: 'tc-fail', function: { name: 'bash', arguments: '{"command":"ss /file"}' } }],
+      }),
+      evt('tool_status', { toolCallId: 'tc-fail', status: 'executing' }),
+      evt('tool_status', { toolCallId: 'tc-fail', status: 'failed', error: 'Error: ss: search text not found' }),
+      evt('tool_result', { toolCallId: 'tc-fail', result: 'Error: ss: search text not found' }),
+      evt('conversation_message', {
+        message: { role: 'assistant', content: '', tool_calls: [{ id: 'tc-fail', function: { name: 'bash', arguments: '{"command":"ss /file"}' } }] },
+      }),
+      evt('conversation_message', {
+        message: { role: 'tool', content: 'Error: ss: search text not found', tool_call_id: 'tc-fail' },
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItems = turns.flatMap(t => t.items).filter(i => i.type === 'tool');
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0].data.status).toBe('failed');
+  });
+
+  it('conversation_message infers failed from Error: prefix on replay', () => {
+    const events = [
+      userMsg('edit file'),
+      evt('conversation_message', {
+        message: { role: 'assistant', content: '', tool_calls: [{ id: 'tc-replay', function: { name: 'bash', arguments: '{"command":"ss /file"}' } }] },
+      }),
+      evt('conversation_message', {
+        message: { role: 'tool', content: 'Error: ss: search text not found', tool_call_id: 'tc-replay' },
+      }),
+    ];
+    const turns = proc.process(events);
+    const toolItems = turns.flatMap(t => t.items).filter(i => i.type === 'tool');
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0].data.status).toBe('failed');
+    expect(toolItems[0].data.error).toBe('Error: ss: search text not found');
+  });
+
   describe('edge cases', () => {
     it('skips internal status nudge prompts', () => {
       const events = [
@@ -416,6 +471,16 @@ describe('classifyBashCommand', () => {
     expect(classifyBashCommand('ls -la')).toBe('bash');
     expect(classifyBashCommand('cat /file.txt')).toBe('bash');
     expect(classifyBashCommand('grep -r "pattern" /src')).toBe('bash');
+  });
+
+  it('returns bash for cat with stderr redirect (not a write)', () => {
+    expect(classifyBashCommand('cat /file.txt 2>/dev/null')).toBe('bash');
+    expect(classifyBashCommand('cat /index.html && echo "---" && cat /src/App.tsx 2>/dev/null')).toBe('bash');
+  });
+
+  it('returns bash for echo without file redirect', () => {
+    expect(classifyBashCommand('echo "---"')).toBe('bash');
+    expect(classifyBashCommand('echo "hello"')).toBe('bash');
   });
 
   it('handles array input', () => {

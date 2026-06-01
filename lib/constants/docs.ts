@@ -39,6 +39,7 @@ export const DOCS_ITEMS: DocItem[] = [
   { id: 'server-mode', title: 'Server Mode', icon: Server, file: 'SERVER_MODE.md' },
   { id: 'vps-deployment', title: 'VPS Deployment', icon: ServerCog, file: 'VPS_DEPLOYMENT.md' },
   { id: 'site-publishing', title: 'Deployment Publishing', icon: Upload, file: 'SITE_PUBLISHING.md' },
+  { id: 'custom-domains', title: 'Custom Domains', icon: Globe, file: 'CUSTOM_DOMAINS.md' },
   { id: 'backend-features', title: 'Backend', icon: Database, file: 'BACKEND_FEATURES.md' },
   { id: 'multitenancy', title: 'Multitenancy', icon: Users, file: 'MULTITENANCY.md' },
 

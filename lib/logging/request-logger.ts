@@ -1,16 +1,9 @@
 /**
- * Request Logger
+ * Request Stats & Cleanup
  *
- * Lightweight logging for deployment traffic hitting the origin server.
- * Used for the admin dashboard to monitor traffic patterns and detect anomalies.
- *
- * Features:
- * - Fire-and-forget async inserts (don't block responses)
- * - IP anonymization via hashing
- * - Automatic log retention cleanup
+ * Reads from the request_log table for the admin dashboard
+ * and handles log retention cleanup.
  */
-
-import { createHash } from 'crypto';
 
 // Lazy-loaded database connection
 let db: ReturnType<typeof import('../vfs/adapters/sqlite-connection').getCoreDatabase> | null = null;
@@ -27,44 +20,6 @@ function getDB() {
   return db;
 }
 
-/**
- * Hash IP address for privacy
- * Uses first 8 chars of SHA-256 hash - enough for grouping, not reversible
- */
-function hashIP(ip: string): string {
-  if (!ip || ip === 'unknown') return 'unknown';
-  return createHash('sha256').update(ip).digest('hex').substring(0, 8);
-}
-
-/**
- * Log a request to the database
- * Fire-and-forget - don't await this in route handlers
- */
-export function logRequest(data: {
-  deploymentId: string;
-  path: string;
-  statusCode: number;
-  ip: string;
-  userAgent: string;
-}): void {
-  try {
-    const database = getDB();
-    if (!database) return;
-
-    const ipHash = hashIP(data.ip);
-
-    // Truncate user agent to prevent bloat
-    const userAgent = data.userAgent?.substring(0, 255) || '';
-
-    database.prepare(`
-      INSERT INTO request_log (site_id, path, status_code, ip_hash, user_agent, timestamp)
-      VALUES (?, ?, ?, ?, ?, datetime('now'))
-    `).run(data.deploymentId, data.path, data.statusCode, ipHash, userAgent);
-  } catch (error) {
-    // Silently fail - logging should never break the app
-    console.error('[RequestLogger] Failed to log request:', error);
-  }
-}
 
 /**
  * Get request statistics for dashboard

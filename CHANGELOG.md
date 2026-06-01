@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.72.0 - 2026-06-02
+
+### Deployments
+
+- **Static deployment serving**: Published deployments are now served as true static files instead of going through Node.js route handlers per request. Reduces CPU usage and improves throughput for high-traffic sites.
+- **Custom domain routing**: A domain resolution API (`/api/resolve-domain`) enables reverse proxies to route custom domains to the correct deployment. With a compatible proxy (e.g., Caddy with on-demand TLS), custom domains work with just a DNS A record. Domains are registered in the system routing table during publish.
+
+### Preview
+
+- **Fixed white screen on workspace entry**: The preview compiled before checkpoint files were restored, rendering a blank page. All compile paths now wait for workspace initialization to complete.
+- **Fixed Svelte and Vue multi-file component imports**: Component imports in `.svelte` and `.vue` files were silently stripped during preprocessing, causing "not defined" errors at runtime. Multi-file SFC projects now compile correctly.
+- **Fixed stale bundle blocking recompilation**: A `bundle.js` left over from a previous compile or checkpoint restore could prevent the bundler from running. Source files now always take priority over pre-built bundles.
+
+### Checkpoints
+
+- **Fixed checkpoints capturing build artifacts**: Generated files like `bundle.js` and `bundle.css` were included in checkpoints, causing restore errors. Checkpoints now skip generated files.
+
+### Chat Panel
+
+- **Fixed tool call error status**: Failed tool calls displayed a green checkmark instead of a red error icon. Status is now derived correctly in both live sessions and conversation replay.
+- **Fixed read commands mislabeled as writes**: Commands like `cat /file 2>/dev/null` were classified as writes due to the stderr redirect. Classification now correctly identifies stdout redirects only.
+- **Fixed "Send" button on runtime errors**: Clicking "Send" dismissed errors without sending them to the AI. Now reads from the displayed errors rather than the live buffer.
+
 ## v1.71.0 - 2026-05-31
 
 ### Checkpoints

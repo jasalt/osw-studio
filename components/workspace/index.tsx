@@ -1196,7 +1196,9 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   }, [continueGeneration]);
 
   const handleSendRuntimeErrors = useCallback(() => {
-    const errors = drainRuntimeErrors();
+    const storeErrors = useWorkspaceStore.getState().runtimeErrors;
+    const bufferErrors = drainRuntimeErrors(); // also clears the live buffer
+    const errors = storeErrors.length > 0 ? storeErrors : bufferErrors;
     if (errors.length === 0) return;
     useWorkspaceStore.getState().setRuntimeErrors([]);
     handleGenerate(formatRuntimeErrors(errors));

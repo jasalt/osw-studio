@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
 import { cleanStaticDeployment } from '@/lib/compiler/static-builder';
 import { removeDeploymentRoute } from '@/lib/auth/system-database';
+import { enqueueEvent } from '@/lib/webhooks/outbox';
 
 export async function GET(
   _request: NextRequest,
@@ -112,6 +113,14 @@ export async function DELETE(
     // Clean up static files and deployment routing (frees quota)
     await cleanStaticDeployment(id);
     removeDeploymentRoute(id);
+
+    if (deployment.customDomain) {
+      enqueueEvent('deployment.domain_removed', {
+        deploymentId: id,
+        customDomain: deployment.customDomain,
+      });
+    }
+    enqueueEvent('deployment.unpublished', { deploymentId: id });
 
     return NextResponse.json({ success: true });
   } catch (error) {

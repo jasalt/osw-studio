@@ -8,7 +8,8 @@ import { logger } from '@/lib/utils';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildStaticDeployment } from '@/lib/compiler/static-builder';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
-import { getWorkspaceById, getWorkspaceDeploymentCount, getDeploymentWorkspace, registerDeploymentRoute } from '@/lib/auth/system-database';
+import { getWorkspaceById, getWorkspaceDeploymentCount, getDeploymentWorkspace, registerDeploymentRoute, getDeploymentRoute } from '@/lib/auth/system-database';
+import { enqueueEvent } from '@/lib/webhooks/outbox';
 
 export async function POST(
   _request: NextRequest,
@@ -63,7 +64,18 @@ export async function POST(
     }
 
     // Register deployment route for subdomain routing
-    registerDeploymentRoute(id, workspaceId);
+    const previousRoute = getDeploymentRoute(id);
+    const oldDomain = previousRoute?.custom_domain || null;
+    const newDomain = deployment?.customDomain || null;
+    registerDeploymentRoute(id, workspaceId, deployment?.slug, deployment?.customDomain);
+
+    // Notify gateway of domain changes
+    if (oldDomain && oldDomain !== newDomain) {
+      enqueueEvent('deployment.domain_removed', { deploymentId: id, customDomain: oldDomain });
+    }
+    if (newDomain && newDomain !== oldDomain) {
+      enqueueEvent('deployment.domain_registered', { deploymentId: id, workspaceId, customDomain: newDomain });
+    }
 
     return NextResponse.json({
       success: true,

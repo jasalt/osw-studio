@@ -317,6 +317,8 @@ class CheckpointManager {
     const directories = new Set<string>();
 
     for (const file of files) {
+      if (file.metadata?.isGenerated) continue;
+
       const pathParts = file.path.split('/').filter(Boolean);
       for (let i = 1; i <= pathParts.length - 1; i++) {
         const dirPath = '/' + pathParts.slice(0, i).join('/');
@@ -483,7 +485,11 @@ class CheckpointManager {
 
         const exists = currentFiles.some(f => f.path === path);
         if (exists) {
-          await activeVFS.updateFile(checkpoint.projectId, path, actualContent, { silent: true });
+          try {
+            await activeVFS.updateFile(checkpoint.projectId, path, actualContent, { silent: true });
+          } catch {
+            await activeVFS.createFile(checkpoint.projectId, path, actualContent, { silent: true });
+          }
         } else {
           await activeVFS.createFile(checkpoint.projectId, path, actualContent, { silent: true });
         }

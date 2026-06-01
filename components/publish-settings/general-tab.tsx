@@ -176,7 +176,7 @@ export function GeneralTab({ settings, onChange, projectId, deploymentId, projec
             onChange={(e) => handleChange('customDomain', e.target.value || undefined)}
           />
           <p className="text-xs text-muted-foreground">
-            Enter your custom domain if you've configured a reverse proxy to point it to this deployment. This is used for SEO meta tags and sitemaps. See documentation for setup instructions.
+            Enter your custom domain and add a DNS A record pointing to this server. Used for SEO meta tags, sitemaps, and asset paths. Republish after setting.
           </p>
         </div>
       </div>

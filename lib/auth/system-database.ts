@@ -136,6 +136,7 @@ function initSystemSchema(db: Database.Database): void {
       deployment_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
       slug TEXT UNIQUE,
+      custom_domain TEXT UNIQUE,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
     );
@@ -146,6 +147,7 @@ function initSystemSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_workspace_access_workspace ON workspace_access(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_deployment_routing_workspace ON deployment_routing(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_deployment_routing_slug ON deployment_routing(slug);
+    CREATE INDEX IF NOT EXISTS idx_deployment_routing_domain ON deployment_routing(custom_domain);
 
     CREATE TABLE IF NOT EXISTS webhook_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,6 +160,14 @@ function initSystemSchema(db: Database.Database): void {
       last_attempted_at TEXT
     );
   `);
+
+  // Migration: add custom_domain column if missing (existing databases)
+  try {
+    db.prepare('SELECT custom_domain FROM deployment_routing LIMIT 0').get();
+  } catch {
+    db.prepare('ALTER TABLE deployment_routing ADD COLUMN custom_domain TEXT UNIQUE').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_deployment_routing_domain ON deployment_routing(custom_domain)').run();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +447,7 @@ export function getUserDefaultWorkspace(userId: string): string | undefined {
 /**
  * Register a deployment for routing
  */
-export function registerDeploymentRoute(deploymentId: string, workspaceId: string, slug?: string): void {
+export function registerDeploymentRoute(deploymentId: string, workspaceId: string, slug?: string, customDomain?: string): void {
   const db = getSystemDatabase();
 
   // Check if another workspace already owns this deployment
@@ -447,10 +457,19 @@ export function registerDeploymentRoute(deploymentId: string, workspaceId: strin
     throw new Error('Deployment is owned by another workspace');
   }
 
+  if (customDomain) {
+    const domainOwner = db.prepare(
+      'SELECT deployment_id FROM deployment_routing WHERE custom_domain = ? AND deployment_id != ?'
+    ).get(customDomain, deploymentId) as { deployment_id: string } | undefined;
+    if (domainOwner) {
+      throw new Error('Domain is already registered to another deployment');
+    }
+  }
+
   db.prepare(`
-    INSERT OR REPLACE INTO deployment_routing (deployment_id, workspace_id, slug)
-    VALUES (?, ?, ?)
-  `).run(deploymentId, workspaceId, slug || null);
+    INSERT OR REPLACE INTO deployment_routing (deployment_id, workspace_id, slug, custom_domain)
+    VALUES (?, ?, ?, ?)
+  `).run(deploymentId, workspaceId, slug || null, customDomain || null);
 }
 
 /**
@@ -459,6 +478,15 @@ export function registerDeploymentRoute(deploymentId: string, workspaceId: strin
 export function removeDeploymentRoute(deploymentId: string): void {
   const db = getSystemDatabase();
   db.prepare('DELETE FROM deployment_routing WHERE deployment_id = ?').run(deploymentId);
+}
+
+/**
+ * Get the full routing record for a deployment
+ */
+export function getDeploymentRoute(deploymentId: string): { deployment_id: string; workspace_id: string; slug: string | null; custom_domain: string | null } | undefined {
+  const db = getSystemDatabase();
+  return db.prepare('SELECT deployment_id, workspace_id, slug, custom_domain FROM deployment_routing WHERE deployment_id = ?')
+    .get(deploymentId) as { deployment_id: string; workspace_id: string; slug: string | null; custom_domain: string | null } | undefined;
 }
 
 /**
@@ -478,6 +506,26 @@ export function getDeploymentBySlug(slug: string): { deployment_id: string; work
   const db = getSystemDatabase();
   return db.prepare('SELECT deployment_id, workspace_id FROM deployment_routing WHERE slug = ?')
     .get(slug) as { deployment_id: string; workspace_id: string } | undefined;
+}
+
+/**
+ * Look up a deployment by custom domain
+ */
+export function getDeploymentByDomain(domain: string): { deployment_id: string; workspace_id: string } | undefined {
+  const db = getSystemDatabase();
+  return db.prepare(
+    'SELECT deployment_id, workspace_id FROM deployment_routing WHERE custom_domain = ?'
+  ).get(domain) as { deployment_id: string; workspace_id: string } | undefined;
+}
+
+/**
+ * Get all deployments with custom domains (for Caddy config generation)
+ */
+export function getAllDomainRoutes(): { deployment_id: string; workspace_id: string; custom_domain: string }[] {
+  const db = getSystemDatabase();
+  return db.prepare(
+    'SELECT deployment_id, workspace_id, custom_domain FROM deployment_routing WHERE custom_domain IS NOT NULL ORDER BY custom_domain'
+  ).all() as { deployment_id: string; workspace_id: string; custom_domain: string }[];
 }
 
 /**

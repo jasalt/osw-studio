@@ -69,13 +69,13 @@ export function classifyBashCommand(cmd: string | string[] | undefined): 'bash' 
   if (/^(?:agent|delegate)\b/.test(s)) return 'agent';
   if (/^status\b/.test(s)) return 'status';
   if (/^build\b/.test(s)) return 'status';
-  if (/^cat\s.*>/.test(s)) return 'write';
   if (/^cat\s*>/.test(s)) return 'write';
-  if (/<<-?\s*['"]?\w+/.test(s)) return 'write';
+  if (/^cat\b/.test(s) && /(?<![2&])>>?\s*\//.test(s)) return 'write';
   if (/^sed\s+-i\b/.test(s)) return 'write';
   if (/^ss\b/.test(s)) return 'write';
   if (/^(mkdir|touch|rm|mv|cp)\b/.test(s)) return 'write';
-  if (/^echo\b.*>>?\s*\//.test(s)) return 'write';
+  if (/^echo\b/.test(s) && /(?<![2&])>>?\s*\//.test(s)) return 'write';
+  if (/<<-?\s*['"]?\w+/.test(s)) return 'write';
   return 'bash';
 }
 
@@ -251,9 +251,15 @@ export class EventProcessor {
         }
 
         case 'tool_status': {
-          const { toolIndex, status, result: toolStatusResult, error, args } = event.data || {};
-          // Match by index if available, otherwise find the last pending/executing tool
-          let tool = toolIndex != null ? state.currentIterationTools[toolIndex] : undefined;
+          const { toolCallId, toolIndex, status, result: toolStatusResult, error, args } = event.data || {};
+          // Match by toolCallId first (reliable), then by index, then by last pending/executing
+          let tool: ToolCall | undefined;
+          if (toolCallId) {
+            tool = state.currentIterationTools.find(t => t.id === toolCallId);
+          }
+          if (!tool && toolIndex != null) {
+            tool = state.currentIterationTools[toolIndex];
+          }
           if (!tool) {
             for (let i = state.currentIterationTools.length - 1; i >= 0; i--) {
               const t = state.currentIterationTools[i];
@@ -285,7 +291,13 @@ export class EventProcessor {
         }
 
         case 'tool_result': {
-          const toolResult = state.currentIterationTools[event.data?.toolIndex];
+          let toolResult: ToolCall | undefined;
+          if (event.data?.toolCallId) {
+            toolResult = state.currentIterationTools.find(t => t.id === event.data.toolCallId);
+          }
+          if (!toolResult) {
+            toolResult = state.currentIterationTools[event.data?.toolIndex];
+          }
           if (toolResult && event.data?.result) {
             toolResult.result = event.data.result;
           }
@@ -497,7 +509,10 @@ export class EventProcessor {
             const matchedTool = state.currentIterationTools.find(t => t.id === message.tool_call_id);
             if (matchedTool) {
               if (message.content) matchedTool.result = message.content;
-              if (matchedTool.status !== 'completed') matchedTool.status = 'completed';
+              if (matchedTool.status === 'pending' || matchedTool.status === 'executing') {
+                matchedTool.status = message.content?.startsWith('Error:') ? 'failed' : 'completed';
+                if (matchedTool.status === 'failed') matchedTool.error = message.content;
+              }
             }
           }
           break;

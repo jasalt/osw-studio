@@ -122,8 +122,13 @@ export function validateOrigin(
   const origin = request.headers.get('origin') || '';
   const referer = request.headers.get('referer') || '';
 
-  // Check if origin or referer starts with any allowed origin
   return allowedOrigins.some((allowed) => {
+    if (allowed.includes('*')) {
+      const suffix = allowed.replace(/^https?:\/\/\*/, '');
+      const matchesOrigin = origin.endsWith(suffix) && /^https?:\/\//.test(origin);
+      const matchesReferer = referer.endsWith(suffix) || referer.includes(suffix + '/');
+      return matchesOrigin || matchesReferer;
+    }
     return origin.startsWith(allowed) || referer.startsWith(allowed);
   });
 }
@@ -155,7 +160,14 @@ export function getAllowedOrigins(
   // Add custom domain if configured
   if (customDomain) {
     origins.push(`https://${customDomain}`);
-    origins.push(`http://${customDomain}`); // Allow http for testing
+    origins.push(`http://${customDomain}`);
+  }
+
+  // Allow subdomain-routed deployments (e.g., my-site.oswstudio.com)
+  const appHost = appUrl.replace(/^https?:\/\//, '').split(':')[0];
+  if (appHost && !appHost.includes('localhost')) {
+    origins.push(`https://*.${appHost}`);
+    origins.push(`http://*.${appHost}`);
   }
 
   return origins;

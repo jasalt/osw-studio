@@ -35,6 +35,7 @@ import type { PlacementResult, PlacementBlockInfo } from '@/lib/preview/types';
 import { pushRuntimeError, clearRuntimeErrors } from '@/lib/preview/runtime-errors';
 import { PalettePanel } from '@/components/semantic-blocks/palette-panel';
 import type { SemanticBlock } from '@/lib/semantic-blocks/types';
+import { useWorkspaceStore } from '@/lib/stores/workspace';
 
 export interface MultipagePreviewHandle {
   captureScreenshot: (waitForContent?: boolean) => Promise<string | null>;
@@ -684,9 +685,14 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
   }, [compileAndLoad]);
 
 
+  const workspaceReady = useWorkspaceStore(s => s.workspaceReady);
+  const workspaceReadyRef = useRef(workspaceReady);
+  workspaceReadyRef.current = workspaceReady;
+
   useEffect(() => {
+    if (!workspaceReady) return;
     compileAndLoad();
-  }, [projectId, compileAndLoad]);
+  }, [projectId, workspaceReady, compileAndLoad]);
 
   // refreshTrigger bumps coalesce with concurrent filesChanged events through
   // the same debounce so a bulk operation produces one compile, not two.
@@ -696,15 +702,18 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
       isFirstRefreshTrigger.current = false;
       return;
     }
+    if (!workspaceReadyRef.current) return;
     scheduleCompile(true);
   }, [refreshTrigger, scheduleCompile]);
 
   useEffect(() => {
     const handleFileChange = () => {
+      if (!workspaceReadyRef.current) return;
       scheduleCompile(true);
     };
 
     const handleFileContentChange = (event: Event) => {
+      if (!workspaceReadyRef.current) return;
       const customEvent = event as CustomEvent<{ projectId?: string }>;
       if (!customEvent.detail || customEvent.detail.projectId === projectId) {
         scheduleCompile(true);

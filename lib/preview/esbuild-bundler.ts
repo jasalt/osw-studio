@@ -244,7 +244,7 @@ async function loadCdnCompiler(url: string): Promise<any> {
  * esbuild's `transform()` (already loaded) to strip type annotations
  * from every <script> block before passing the file to the Svelte compiler.
  */
-async function preprocessSvelteTS(source: string): Promise<string> {
+export async function preprocessSvelteTS(source: string): Promise<string> {
   const esbuild = await ensureEsbuild();
 
   // Match <script ...> ... </script> blocks (non-greedy)
@@ -257,17 +257,43 @@ async function preprocessSvelteTS(source: string): Promise<string> {
     const body = match[2];
     const closeTag = match[3];
 
+    // Only transform TypeScript script blocks — plain JS doesn't need esbuild
+    const isTS = /lang\s*=\s*["']ts["']/.test(openTag);
+    if (!isTS) continue;
+
     try {
+      // Extract value import lines before transform — esbuild's transform
+      // drops imports not referenced in the script body (but they may be used
+      // in the Svelte/Vue template). Type-only imports should stay dropped.
+      const valueImports = (body.match(/^\s*import\s+.+$/gm) || [])
+        .filter(imp => !/^\s*import\s+type\b/.test(imp));
+
       const transformed = await esbuild.transform(body, {
         loader: 'ts',
         target: 'es2020',
       });
 
+      // Re-inject value imports that esbuild stripped (template-only usage)
+      let code = transformed.code;
+      for (const imp of valueImports) {
+        // Check if the imported identifier is already in the output
+        const defaultMatch = imp.match(/import\s+(\w+)/);
+        const namedMatch = imp.match(/import\s+\{([^}]+)\}/);
+        const ids = [
+          ...(defaultMatch ? [defaultMatch[1]] : []),
+          ...(namedMatch ? namedMatch[1].split(',').map(s => s.trim().split(/\s+as\s+/).pop()!.trim()) : []),
+        ];
+        const alreadyPresent = ids.length > 0 && ids.some(id => code.includes(id));
+        if (!alreadyPresent) {
+          code = imp.trimStart().replace(/;?\s*$/, ';\n') + code;
+        }
+      }
+
       // Remove lang="ts" / lang='ts' from the opening tag
       const cleanOpenTag = openTag.replace(/\s+lang\s*=\s*["']ts["']/g, '');
       replacements.push({
         original: match[0],
-        replacement: cleanOpenTag + transformed.code + closeTag,
+        replacement: cleanOpenTag + code + closeTag,
       });
     } catch {
       // If esbuild can't transform it, leave as-is — the Svelte compiler
@@ -352,12 +378,26 @@ function createVuePlugin(
             // (e.g. defineProps<{...}>(), defineEmits<{...}>()) — esbuild chokes
             // on these when loader is 'js'. Use esbuild transform to strip them.
             if (scriptBlock.lang === 'ts') {
+              const valueImports = (scriptCode.match(/^\s*import\s+.+$/gm) || [])
+                .filter(imp => !/^\s*import\s+type\b/.test(imp));
               const esbuild = await ensureEsbuild();
               const transformed = await esbuild.transform(scriptCode, {
                 loader: 'ts',
                 target: 'es2020',
               });
               scriptCode = transformed.code;
+              for (const imp of valueImports) {
+                const defaultMatch = imp.match(/import\s+(\w+)/);
+                const namedMatch = imp.match(/import\s+\{([^}]+)\}/);
+                const ids = [
+                  ...(defaultMatch ? [defaultMatch[1]] : []),
+                  ...(namedMatch ? namedMatch[1].split(',').map(s => s.trim().split(/\s+as\s+/).pop()!.trim()) : []),
+                ];
+                const alreadyPresent = ids.length > 0 && ids.some(id => scriptCode.includes(id));
+                if (!alreadyPresent) {
+                  scriptCode = imp.trimStart().replace(/;?\s*$/, ';\n') + scriptCode;
+                }
+              }
             }
           } else if (descriptor.descriptor.template) {
             // Template-only SFC (no <script> block) — compile template into
