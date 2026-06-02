@@ -8,8 +8,9 @@ import { logger } from '@/lib/utils';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildStaticDeployment } from '@/lib/compiler/static-builder';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
-import { getWorkspaceById, getWorkspaceDeploymentCount, getDeploymentWorkspace, registerDeploymentRoute, getDeploymentRoute } from '@/lib/auth/system-database';
+import { getWorkspaceById, getDeploymentWorkspace, registerDeploymentRoute, getDeploymentRoute } from '@/lib/auth/system-database';
 import { enqueueEvent } from '@/lib/webhooks/outbox';
+import { checkDeploymentQuota } from '@/lib/publishing/quota';
 
 export async function POST(
   _request: NextRequest,
@@ -22,17 +23,16 @@ export async function POST(
     // Quota enforcement (managed mode only — standalone has no limits)
     const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
     if (isManagedMode) {
-      const alreadyRegistered = !!getDeploymentWorkspace(id);
-      if (!alreadyRegistered) {
-        const workspace = getWorkspaceById(workspaceId);
-        if (workspace) {
-          const deploymentCount = getWorkspaceDeploymentCount(workspaceId);
-          if (deploymentCount >= workspace.max_deployments) {
-            return NextResponse.json(
-              { error: `Deployment limit reached (${workspace.max_deployments}).` },
-              { status: 403 }
-            );
-          }
+      const workspace = getWorkspaceById(workspaceId);
+      if (workspace) {
+        const actualDeployments = await adapter.listDeployments?.() || [];
+        const quota = checkDeploymentQuota({
+          isAlreadyRegistered: !!getDeploymentWorkspace(id),
+          maxDeployments: workspace.max_deployments,
+          actualDeploymentCount: actualDeployments.length,
+        });
+        if (!quota.allowed) {
+          return NextResponse.json({ error: quota.error }, { status: 403 });
         }
       }
     }

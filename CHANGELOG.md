@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.72.1 - 2026-06-02
+
+- **Fixed deployment quota counting stale entries**: Quota enforcement was counting entries in the routing table instead of actual deployments, blocking publishing even with 0 deployments. Now counts from the workspace database.
+- **Global error page**: Server-side render failures now show a friendly error page with retry and gateway navigation instead of the raw Next.js error.
+
 ## v1.72.0 - 2026-06-02
 
 ### Deployments
