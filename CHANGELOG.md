@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.72.2 - 2026-06-02
+
+- **Fixed custom_domain migration on existing databases**: The index creation ran before the column migration, crashing on startup for existing instances.
+
 ## v1.72.1 - 2026-06-02
 
 - **Fixed deployment quota counting stale entries**: Quota enforcement was counting entries in the routing table instead of actual deployments, blocking publishing even with 0 deployments. Now counts from the workspace database.

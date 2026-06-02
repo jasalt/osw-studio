@@ -147,7 +147,6 @@ function initSystemSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_workspace_access_workspace ON workspace_access(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_deployment_routing_workspace ON deployment_routing(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_deployment_routing_slug ON deployment_routing(slug);
-    CREATE INDEX IF NOT EXISTS idx_deployment_routing_domain ON deployment_routing(custom_domain);
 
     CREATE TABLE IF NOT EXISTS webhook_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
