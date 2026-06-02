@@ -164,8 +164,8 @@ function initSystemSchema(db: Database.Database): void {
   try {
     db.prepare('SELECT custom_domain FROM deployment_routing LIMIT 0').get();
   } catch {
-    db.prepare('ALTER TABLE deployment_routing ADD COLUMN custom_domain TEXT UNIQUE').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_deployment_routing_domain ON deployment_routing(custom_domain)').run();
+    db.prepare('ALTER TABLE deployment_routing ADD COLUMN custom_domain TEXT').run();
+    db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_routing_domain ON deployment_routing(custom_domain)').run();
   }
 }
 

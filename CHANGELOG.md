@@ -1,8 +1,16 @@
 # Changelog
 
+## v1.73.0 (WIP)
+
+*(nothing yet)*
+
+## v1.72.3 - 2026-06-02
+
+- **Fixed custom_domain migration on existing databases**: SQLite's `ALTER TABLE ADD COLUMN` doesn't support `UNIQUE`. Now adds the column without the constraint and enforces uniqueness via a unique index.
+
 ## v1.72.2 - 2026-06-02
 
-- **Fixed custom_domain migration on existing databases**: The index creation ran before the column migration, crashing on startup for existing instances.
+- **Fixed custom_domain migration index ordering**: The index creation ran before the column migration, crashing on startup for existing instances.
 
 ## v1.72.1 - 2026-06-02
 
