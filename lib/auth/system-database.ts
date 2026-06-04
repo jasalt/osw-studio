@@ -528,6 +528,16 @@ export function getAllDomainRoutes(): { deployment_id: string; workspace_id: str
 }
 
 /**
+ * Get all deployments with slugs (for Caddy subdomain config generation)
+ */
+export function getAllSlugRoutes(): { deployment_id: string; slug: string }[] {
+  const db = getSystemDatabase();
+  return db.prepare(
+    'SELECT deployment_id, slug FROM deployment_routing WHERE slug IS NOT NULL ORDER BY slug'
+  ).all() as { deployment_id: string; slug: string }[];
+}
+
+/**
  * Get workspace's deployment count (for quota enforcement)
  */
 export function getWorkspaceDeploymentCount(workspaceId: string): number {

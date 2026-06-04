@@ -6,6 +6,21 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.73.0 - Deployment Subdomains (2026-06-04)
+
+Published deployments now get a memorable subdomain automatically — publish your site and it's instantly live at `sunny-oak-river.your-instance.com`. The deployment card and settings show both the subdomain and direct URLs. Svelte and Vue multi-file projects also compile correctly again, and the preview loads reliably on workspace entry.
+
+### Deployments
+- **Auto-generated subdomains**: Each published deployment gets a 3-word slug and is accessible at `{slug}.{instance-domain}`
+- **Subdomain URL in UI**: The deployment card shows the subdomain URL immediately after publishing
+
+### Fixes
+- **Svelte/Vue compilation**: Multi-file component imports are no longer stripped during preprocessing
+- **Preview white screen**: Preview waits for workspace initialization before compiling
+- **Deployment quota**: Quota now counts actual deployments, not stale routing entries
+
+---
+
 ## v1.72.0 - Static Deployments & Custom Domains (2026-06-02)
 
 Published sites are now served as true static files — no Node.js processing per request. Custom domains are simpler to set up: enter your domain in deployment settings, point DNS to the server, and a domain resolution API handles routing. The preview also loads reliably on workspace entry, and Svelte/Vue multi-file projects now compile correctly again.

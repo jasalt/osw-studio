@@ -8,9 +8,10 @@ import { logger } from '@/lib/utils';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildStaticDeployment } from '@/lib/compiler/static-builder';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
-import { getWorkspaceById, getDeploymentWorkspace, registerDeploymentRoute, getDeploymentRoute } from '@/lib/auth/system-database';
-import { enqueueEvent } from '@/lib/webhooks/outbox';
+import { getWorkspaceById, getDeploymentWorkspace, getDeploymentBySlug, registerDeploymentRoute, getDeploymentRoute } from '@/lib/auth/system-database';
 import { checkDeploymentQuota } from '@/lib/publishing/quota';
+import { regenerateInstanceCaddy } from '@/lib/caddy/regenerate';
+import { generateUniqueSlug } from '@/lib/publishing/slug-generator';
 
 export async function POST(
   _request: NextRequest,
@@ -66,16 +67,22 @@ export async function POST(
     // Register deployment route for subdomain routing
     const previousRoute = getDeploymentRoute(id);
     const oldDomain = previousRoute?.custom_domain || null;
+    const oldSlug = previousRoute?.slug || null;
     const newDomain = deployment?.customDomain || null;
-    registerDeploymentRoute(id, workspaceId, deployment?.slug, deployment?.customDomain);
 
-    // Notify gateway of domain changes
-    if (oldDomain && oldDomain !== newDomain) {
-      enqueueEvent('deployment.domain_removed', { deploymentId: id, customDomain: oldDomain });
+    // Auto-generate a slug on first publish if none exists
+    const slug = oldSlug || deployment?.slug || generateUniqueSlug(s => !!getDeploymentBySlug(s));
+
+    // Save slug to deployment record so UI can display it
+    if (deployment && adapter.updateDeployment && deployment.slug !== slug) {
+      deployment.slug = slug;
+      await adapter.updateDeployment(deployment);
     }
-    if (newDomain && newDomain !== oldDomain) {
-      enqueueEvent('deployment.domain_registered', { deploymentId: id, workspaceId, customDomain: newDomain });
-    }
+
+    registerDeploymentRoute(id, workspaceId, slug, deployment?.customDomain);
+
+    // Regenerate Caddy config on every publish (no-op without STATIC_PROXY)
+    regenerateInstanceCaddy().catch(() => {});
 
     return NextResponse.json({
       success: true,
@@ -84,6 +91,7 @@ export async function POST(
       filesWritten: result.filesWritten,
       outputPath: result.outputPath,
       lastPublishedVersion: deployment?.settingsVersion ?? null,
+      slug,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {

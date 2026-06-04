@@ -43,6 +43,16 @@ export class ContextManagerImpl implements ContextManager {
   }
 
   addAssistantTurn(response: ParsedResponse): void {
+    // Sanitize tool call arguments: providers reject invalid JSON in history
+    if (response.toolCalls?.length) {
+      for (const tc of response.toolCalls) {
+        if (tc.function?.arguments) {
+          try { JSON.parse(tc.function.arguments); } catch {
+            tc.function.arguments = '{}';
+          }
+        }
+      }
+    }
     const msg: Message = {
       role: 'assistant',
       content: response.content || '',
@@ -276,10 +286,18 @@ export class ContextManagerImpl implements ContextManager {
         continue;
       }
 
-      // Filter out tool calls with empty arguments
+      // Filter out tool calls with empty arguments and repair invalid JSON args
       const validCalls = msg.tool_calls.filter(tc => {
         const args = tc.function?.arguments;
-        return typeof args === 'string' && args.trim() !== '';
+        if (typeof args !== 'string' || args.trim() === '') return false;
+        try {
+          JSON.parse(args);
+        } catch {
+          // Truncated/malformed args — replace with empty object so the
+          // conversation history stays valid JSON for every provider.
+          tc.function.arguments = '{}';
+        }
+        return true;
       });
 
       const contentEmpty = typeof msg.content === 'string'

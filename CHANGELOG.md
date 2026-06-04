@@ -1,8 +1,27 @@
 # Changelog
 
-## v1.73.0 (WIP)
+## v1.73.0 - 2026-06-04
 
-*(nothing yet)*
+### Deployment Subdomains
+
+- **Auto-generated subdomain slugs**: Publishing a deployment auto-assigns a memorable 3-word slug (e.g., `sunny-oak-river`). The deployment is accessible at `{slug}.{instance-domain}` as well as the direct `/deployments/{id}/` path.
+- **Subdomain URL in deployment card**: The card shows the subdomain URL immediately after publishing. Deployment settings show both the subdomain and direct path.
+- **Root-relative asset paths for subdomains**: Deployments served via subdomain or custom domain use root-relative paths, so assets load correctly at the domain root.
+
+### Server Mode
+
+- **Static proxy mode (`STATIC_PROXY`)**: Set `STATIC_PROXY=true` to disable Node.js deployment route handlers when a reverse proxy (e.g., Caddy) serves static files directly. Route handlers remain the default for bare `npm start` setups.
+- **Caddy config auto-regeneration**: When static proxy mode is enabled, publishing or deleting a deployment regenerates the proxy config and reloads it automatically.
+- **Global error page**: Server-side render failures show a friendly error page with retry and navigation options instead of the raw framework error.
+- **Fixed deployment quota enforcement**: Quota now counts actual deployments from the workspace database instead of routing table entries that could be stale.
+
+### AI & Preview
+
+- **Fixed Svelte and Vue multi-file compilation**: The preprocessor was stripping component imports from `.svelte` and `.vue` script blocks. Multi-file SFC projects now compile correctly.
+- **Fixed preview white screen on workspace entry**: All compile paths now wait for workspace initialization before running, preventing blank previews from stale or missing files.
+- **Fixed stale bundle blocking recompilation**: A `bundle.js` from a previous compile or checkpoint no longer prevents the bundler from running when source files are present.
+- **Fixed checkpoints capturing build artifacts**: Generated files like `bundle.js` are excluded from checkpoints and restore handles missing files gracefully.
+- **Sanitized malformed tool call arguments**: Truncated streaming can leave invalid JSON in conversation history. These are now repaired before sending to providers.
 
 ## v1.72.3 - 2026-06-02
 

@@ -180,9 +180,13 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
     }
 
     // Determine base URL for published deployment
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const instanceDomain = appUrl.replace(/^https?:\/\//, '');
     const baseUrl = deployment.customDomain
       ? `https://${deployment.customDomain}`
-      : `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/deployments/${deploymentId}`;
+      : deployment.slug
+      ? `https://${deployment.slug}.${instanceDomain}`
+      : `${appUrl}/deployments/${deploymentId}`;
 
     // Post-process files to replace asset references with absolute paths
     // and apply deployment settings (scripts, CDN, SEO, etc.)
@@ -190,12 +194,13 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
     for (const file of compiledProject.files) {
       if (typeof file.content === 'string') {
         // Replace both blob URLs and file path references with absolute paths
+        const servedAtRoot = !!(deployment.customDomain || deployment.slug);
         file.content = replaceAssetPathsWithDeploymentPrefix(
           file.content,
           blobUrlToPath,
           allFiles,
           deploymentId,
-          deployment.customDomain
+          servedAtRoot
         );
 
         // Remove VFS interceptor script from HTML files
@@ -416,14 +421,13 @@ function replaceAssetPathsWithDeploymentPrefix(
   blobUrlToPath: Map<string, string>,
   allFiles: VirtualFile[],
   deploymentId: string,
-  customDomain?: string
+  servedAtRoot?: boolean
 ): string {
   let result = content;
 
-  // Determine path prefix based on custom domain
-  // If custom domain is set, use root-relative paths (e.g., /styles/main.css)
-  // If no custom domain, use deployment-prefixed paths (e.g., /deployments/{deploymentId}/styles/main.css)
-  const pathPrefix = customDomain ? '' : `/deployments/${deploymentId}`;
+  // If served at domain root (custom domain or subdomain slug), use root-relative paths.
+  // Otherwise use deployment-prefixed paths for direct /deployments/{id}/ access.
+  const pathPrefix = servedAtRoot ? '' : `/deployments/${deploymentId}`;
 
   // First, replace all blob URLs with appropriate paths
   for (const [blobUrl, filePath] of blobUrlToPath) {

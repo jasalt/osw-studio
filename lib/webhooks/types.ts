@@ -8,10 +8,7 @@ export type WebhookEventType =
   | 'workspace.updated'
   | 'workspace.deleted'
   | 'workspace.access_granted'
-  | 'workspace.access_revoked'
-  | 'deployment.domain_registered'
-  | 'deployment.domain_removed'
-  | 'deployment.unpublished';
+  | 'workspace.access_revoked';
 
 export interface WebhookEvent {
   id: number;
@@ -66,21 +63,6 @@ export interface WorkspaceAccessRevokedPayload {
   email: string;
 }
 
-export interface DeploymentDomainRegisteredPayload {
-  deploymentId: string;
-  workspaceId: string;
-  customDomain: string;
-}
-
-export interface DeploymentDomainRemovedPayload {
-  deploymentId: string;
-  customDomain?: string;
-}
-
-export interface DeploymentUnpublishedPayload {
-  deploymentId: string;
-}
-
 export type WebhookPayload =
   | UserCreatedPayload
   | UserUpdatedPayload
@@ -89,7 +71,4 @@ export type WebhookPayload =
   | WorkspaceUpdatedPayload
   | WorkspaceDeletedPayload
   | WorkspaceAccessGrantedPayload
-  | WorkspaceAccessRevokedPayload
-  | DeploymentDomainRegisteredPayload
-  | DeploymentDomainRemovedPayload
-  | DeploymentUnpublishedPayload;
+  | WorkspaceAccessRevokedPayload;

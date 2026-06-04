@@ -424,6 +424,20 @@ Habits:
       }
     }
 
+    // Sanitize tool_calls: replace invalid JSON arguments with '{}' so providers
+    // don't reject the request. Truncated streaming can leave malformed args in history.
+    for (const msg of processedMessages) {
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          if (tc.function?.arguments) {
+            try { JSON.parse(tc.function.arguments); } catch {
+              tc.function.arguments = '{}';
+            }
+          }
+        }
+      }
+    }
+
     // --- All other providers: OpenAI-compatible request body ---
     const requestBody: Record<string, unknown> = {
       model: model || getDefaultModel(selectedProvider),

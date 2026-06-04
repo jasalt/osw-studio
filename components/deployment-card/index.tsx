@@ -69,8 +69,11 @@ export function DeploymentCard({
   const isPublished = deployment.lastPublishedVersion !== null && deployment.lastPublishedVersion !== undefined;
   const hasPendingChanges = isPublished && Number(deployment.settingsVersion) > Number(deployment.lastPublishedVersion);
 
+  const hostname = window.location.hostname;
   const publicUrl = deployment.customDomain
     ? `https://${deployment.customDomain}`
+    : deployment.slug
+    ? `https://${deployment.slug}.${hostname}`
     : `${window.location.origin}/deployments/${deployment.id}`;
 
   const handleCopyUrl = () => {
@@ -90,6 +93,8 @@ export function DeploymentCard({
           onCapture={isPublished ? async () => {
             const deploymentUrl = deployment.customDomain
               ? `https://${deployment.customDomain}`
+              : deployment.slug
+              ? `https://${deployment.slug}.${hostname}`
               : `${window.location.origin}/deployments/${deployment.id}`;
             return captureDeploymentScreenshot(deploymentUrl);
           } : undefined}
@@ -137,11 +142,6 @@ export function DeploymentCard({
               <Folder className="h-3 w-3" />
               <span className="truncate">{project.name}</span>
             </div>
-          )}
-          {deployment.slug && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Slug: {deployment.slug}
-            </p>
           )}
         </div>
 

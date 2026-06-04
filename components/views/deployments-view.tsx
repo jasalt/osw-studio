@@ -371,7 +371,8 @@ export function DeploymentsView({ onProjectSelect, workspaceId }: DeploymentsVie
         lastPublishedVersion: result.lastPublishedVersion,
         publishedAt: new Date(),
         updatedAt: new Date(),
-        databaseEnabled: true, // Deployment database is now enabled
+        databaseEnabled: true,
+        ...(result.slug && { slug: result.slug }),
       });
 
       // Clear publishing state immediately after successful publish

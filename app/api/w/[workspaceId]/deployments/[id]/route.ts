@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
 import { cleanStaticDeployment } from '@/lib/compiler/static-builder';
 import { removeDeploymentRoute } from '@/lib/auth/system-database';
-import { enqueueEvent } from '@/lib/webhooks/outbox';
+import { regenerateInstanceCaddy } from '@/lib/caddy/regenerate';
 
 export async function GET(
   _request: NextRequest,
@@ -115,12 +115,8 @@ export async function DELETE(
     removeDeploymentRoute(id);
 
     if (deployment.customDomain) {
-      enqueueEvent('deployment.domain_removed', {
-        deploymentId: id,
-        customDomain: deployment.customDomain,
-      });
+      regenerateInstanceCaddy().catch(() => {});
     }
-    enqueueEvent('deployment.unpublished', { deploymentId: id });
 
     return NextResponse.json({ success: true });
   } catch (error) {

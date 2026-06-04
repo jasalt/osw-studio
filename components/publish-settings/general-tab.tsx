@@ -14,11 +14,12 @@ interface GeneralTabProps {
   onChange: (settings: PublishSettings) => void;
   projectId: string;
   deploymentId: string;
+  slug?: string;
   projects?: Project[];
   onProjectChange?: (projectId: string) => void;
 }
 
-export function GeneralTab({ settings, onChange, projectId, deploymentId, projects, onProjectChange }: GeneralTabProps) {
+export function GeneralTab({ settings, onChange, projectId, deploymentId, slug, projects, onProjectChange }: GeneralTabProps) {
   const [originalProjectId] = useState(projectId);
   const handleChange = (field: keyof PublishSettings, value: any) => {
     onChange({
@@ -27,13 +28,13 @@ export function GeneralTab({ settings, onChange, projectId, deploymentId, projec
     });
   };
 
-  // Generate public URL (uses deploymentId, not projectId!)
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const directUrl = `${origin}/deployments/${deploymentId}`;
+  const subdomainUrl = slug ? `https://${slug}.${hostname}` : null;
   const publicUrl = settings.customDomain
     ? `https://${settings.customDomain}`
-    : `${typeof window !== 'undefined' ? window.location.origin : ''}/deployments/${deploymentId}`;
-
-  // Generate OSW Studio path URL (always show for debugging - uses deploymentId, not projectId!)
-  const oswStudioUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/deployments/${deploymentId}`;
+    : subdomainUrl || directUrl;
 
   return (
     <div className="space-y-6">
@@ -144,17 +145,14 @@ export function GeneralTab({ settings, onChange, projectId, deploymentId, projec
             </p>
           </div>
 
-          {/* Show OSW Studio path if custom domain is set */}
-          {settings.customDomain && (
+          {/* Show direct path when subdomain or custom domain is set */}
+          {(subdomainUrl || settings.customDomain) && (
             <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">OSW Studio Path (Debug)</Label>
+              <Label className="text-xs text-muted-foreground">Direct Path</Label>
               <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border border-dashed">
                 <Globe className="h-4 w-4 text-muted-foreground" />
-                <code className="text-xs flex-1 text-muted-foreground">{oswStudioUrl}</code>
+                <code className="text-xs flex-1 text-muted-foreground">{directUrl}</code>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Internal path used by reverse proxy. Map your custom domain to this URL.
-              </p>
             </div>
           )}
         </div>
