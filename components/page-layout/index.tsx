@@ -59,6 +59,7 @@ export function PageLayout({
   const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
 
   const isServerMode = process.env.NEXT_PUBLIC_SERVER_MODE === 'true';
+  const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
   const INIT_DISMISSED_KEY = 'osw-server-init-dismissed';
 
   // Set workspace context for auto-sync and sync-manager,
@@ -94,7 +95,6 @@ export function PageLayout({
     }
     checkServerInit();
 
-    const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
     async function checkQuota() {
       if (!isManagedMode) return;
       try {
@@ -116,8 +116,9 @@ export function PageLayout({
 
   // Check if this is a migration scenario (legacy data exists but workspace is empty)
   // Skip if needsPull is set — the user just needs to sync from server, not migrate legacy data
+  // Skip in managed mode — workspaces start empty by design, there's no legacy data to migrate
   useEffect(() => {
-    if (!initModalOpen || !isServerMode || needsPull) return;
+    if (!initModalOpen || !isServerMode || needsPull || isManagedMode) return;
 
     async function checkMigration() {
       try {
@@ -131,7 +132,7 @@ export function PageLayout({
       } catch {}
     }
     checkMigration();
-  }, [initModalOpen, isServerMode, needsPull]);
+  }, [initModalOpen, isServerMode, isManagedMode, needsPull]);
 
   const handleDismissInitModal = () => {
     localStorage.setItem(INIT_DISMISSED_KEY, 'true');

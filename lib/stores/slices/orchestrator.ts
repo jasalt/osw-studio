@@ -809,12 +809,6 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           get().addDebugEvent(event, data, projectId);
           return;
         }
-        if (event === 'usage_update') {
-          if (data.cost != null && get().projectId === projectId) {
-            set({ projectCost: (get().projectCost ?? 0) + (data.cost as number) });
-          }
-          return;
-        }
         if (event === 'usage') {
           if (data.totalCost != null && get().projectId === projectId) {
             set({ projectCost: data.totalCost as number });

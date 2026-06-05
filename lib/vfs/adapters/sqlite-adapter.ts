@@ -27,7 +27,8 @@ import {
   deleteProjectDatabase,
   listDeploymentIds,
   deploymentExists,
-  closeAllConnections
+  closeAllConnections,
+  closeCoreDatabaseByPath,
 } from './sqlite-connection';
 import { DeploymentDatabase } from './deployment-database';
 import { AnalyticsDatabase } from './analytics-database';
@@ -393,10 +394,11 @@ export class SQLiteAdapter implements StorageAdapter {
   }
 
   /**
-   * Initialize the adapter - sets up database and runs migrations
+   * Initialize the adapter - sets up database and runs migrations.
+   * Also recovers if the underlying connection was externally closed.
    */
   async init(): Promise<void> {
-    if (this.initialized) return;
+    if (this.initialized && this.db?.open) return;
 
     this.db = getCoreDatabase(this.dbPath);
     await this.runMigrations();
@@ -404,7 +406,7 @@ export class SQLiteAdapter implements StorageAdapter {
   }
 
   /**
-   * Close all connections
+   * Close this adapter's connections only (does not affect other workspaces)
    */
   async close(): Promise<void> {
     // Close all deployment databases
@@ -425,8 +427,12 @@ export class SQLiteAdapter implements StorageAdapter {
     }
     this.projectDatabases.clear();
 
-    // Close core database via connection manager
-    closeAllConnections();
+    // Close only this adapter's core database (scoped by path)
+    if (this.dbPath) {
+      closeCoreDatabaseByPath(this.dbPath);
+    } else {
+      closeAllConnections();
+    }
     this.db = null;
     this.initialized = false;
   }
@@ -448,8 +454,12 @@ export class SQLiteAdapter implements StorageAdapter {
    * Get the core database, ensuring it's initialized
    */
   private getDB(): Database {
-    if (!this.db) {
-      throw new Error('SQLiteAdapter not initialized. Call init() first.');
+    if (!this.db || !this.db.open) {
+      if (this.initialized) {
+        this.db = getCoreDatabase(this.dbPath);
+      } else {
+        throw new Error('SQLiteAdapter not initialized. Call init() first.');
+      }
     }
     return this.db;
   }

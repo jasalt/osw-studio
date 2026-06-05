@@ -373,6 +373,19 @@ export function closeDeploymentDatabase(deploymentId: string): void {
 }
 
 /**
+ * Close a specific core database connection by path.
+ * Use this when closing a single workspace adapter to avoid
+ * destroying connections belonging to other workspaces.
+ */
+export function closeCoreDatabaseByPath(dbPath: string): void {
+  const db = coreDatabases.get(dbPath);
+  if (db) {
+    try { db.close(); } catch {}
+    coreDatabases.delete(dbPath);
+  }
+}
+
+/**
  * Close all core database connections
  */
 export function closeCoreDatabase(): void {

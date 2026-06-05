@@ -6,6 +6,17 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.73.1 - Stability Fixes (2026-06-06)
+
+Token and cost tracking now works correctly across multi-turn conversations — no more negative counts or flickering values. Hosted instances with multiple workspaces are more reliable, and new users no longer get stuck in a setup loop on first login.
+
+### Fixes
+- **Token/cost display**: Per-message token counts and costs are accurate across project switches and multi-turn sessions
+- **Workspace stability**: Idle workspace cleanup no longer disrupts other active workspaces
+- **Hosted setup flow**: New users can complete workspace initialization without getting stuck
+
+---
+
 ## v1.73.0 - Deployment Subdomains (2026-06-04)
 
 Published deployments now get a memorable subdomain automatically — publish your site and it's instantly live at `sunny-oak-river.your-instance.com`. The deployment card and settings show both the subdomain and direct URLs. Svelte and Vue multi-file projects also compile correctly again, and the preview loads reliably on workspace entry.

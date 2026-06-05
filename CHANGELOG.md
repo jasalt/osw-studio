@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.73.1 - 2026-06-06
+
+### Bug Fixes
+
+- **Fixed negative token counts on multi-turn completions**: Token and cost displays now track per-task values directly. Switching projects or resuming a session no longer produces negative or incorrect token counts.
+- **Fixed project cost toggling in Server Mode**: The project cost display no longer alternates between correct and inflated values during AI generation.
+- **Fixed cross-workspace database errors**: Idle workspace cleanup no longer breaks active workspaces. Database connections recover automatically if interrupted.
+- **Fixed workspace setup loop in hosted mode**: New users on hosted instances no longer get stuck in a "Workspace Setup Required" re-login loop. Workspace owners can now complete setup without admin privileges.
+
 ## v1.73.0 - 2026-06-04
 
 ### Deployment Subdomains

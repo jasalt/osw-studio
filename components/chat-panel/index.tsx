@@ -863,8 +863,8 @@ function TurnDisplay({ turn, collatedUsage, collatedTaskStartTime, onRestore, on
           {collatedUsage && (() => {
             const cumulativeTokens = (collatedUsage.totalUsage?.totalTokens || collatedUsage.usage?.totalTokens || collatedUsage.totalTokens) || 0;
             const cumulativeCost = collatedUsage.totalCost ?? collatedUsage.cost ?? 0;
-            const taskTokens = cumulativeTokens - (collatedUsage.taskTokenOffset || 0);
-            const taskCost = cumulativeCost - (collatedUsage.taskCostOffset || 0);
+            const taskTokens = collatedUsage.taskTokens ?? Math.max(0, cumulativeTokens - (collatedUsage.taskTokenOffset || 0));
+            const taskCost = collatedUsage.taskCost ?? Math.max(0, cumulativeCost - (collatedUsage.taskCostOffset || 0));
             const startTime = collatedTaskStartTime || turn.taskStartTime;
             const durationMs = startTime && collatedUsage.timestamp
               ? collatedUsage.timestamp - startTime

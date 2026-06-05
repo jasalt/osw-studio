@@ -113,11 +113,6 @@ export async function runServerGeneration(
         { promptTokens: (eventData as any).promptTokens, completionTokens: (eventData as any).completionTokens },
         eventData.cost as number,
       );
-      eventBus.emit(taskId, request.projectId, 'usage_update', {
-        promptTokens: (eventData as any).promptTokens,
-        completionTokens: (eventData as any).completionTokens,
-        cost: eventData.cost,
-      }, task.sessionId);
     }
   };
 

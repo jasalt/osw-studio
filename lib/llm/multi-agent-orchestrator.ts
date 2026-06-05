@@ -127,6 +127,8 @@ export class MultiAgentOrchestrator {
 
   private totalCost = 0;
   private totalUsage: UsageInfo = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0 };
+  private taskCost = 0;
+  private taskTokens = 0;
   private toolCallCount = 0;
   private turnCount = 0;
   private apiErrorCount = 0;
@@ -194,6 +196,8 @@ export class MultiAgentOrchestrator {
 
     this.stopped = false;
     this.abortController = new AbortController();
+    this.taskCost = 0;
+    this.taskTokens = 0;
 
     // Strip trailing nudge messages from previous execution
     const conversation = this.conversations.get(this.currentConversationId)!;
@@ -240,8 +244,10 @@ export class MultiAgentOrchestrator {
             if (evalResult.usage) {
               const cost = CostCalculator.calculateCost(evalResult.usage, evalResult.usage.provider, evalResult.usage.model, true);
               this.totalCost += cost;
+              this.taskCost += cost;
               this.totalUsage.completionTokens += evalResult.usage.completionTokens;
               this.totalUsage.totalTokens += evalResult.usage.totalTokens;
+              this.taskTokens += evalResult.usage.totalTokens;
               this.getConfig().updateSessionCost({ ...evalResult.usage, cost }, cost);
             }
             this.onProgress?.('skill_evaluation', { skills: skillsMeta.map(s => s.id), matched: evalResult.skillIds, usage: evalResult.usage });
@@ -385,10 +391,12 @@ export class MultiAgentOrchestrator {
       record: (usage, provider, model) => {
         const cost = CostCalculator.calculateCost(usage, provider, model, true);
         this.totalCost += cost;
+        this.taskCost += cost;
         // promptTokens = current context window size (replace, not accumulate)
         this.totalUsage.promptTokens = usage.promptTokens;
         this.totalUsage.completionTokens += usage.completionTokens;
         this.totalUsage.totalTokens += usage.totalTokens;
+        this.taskTokens += usage.totalTokens;
         this.getConfig().updateSessionCost({ ...usage, cost }, cost);
 
         const sessionId = this.getConfig().getCurrentSession?.()?.sessionId;
@@ -400,7 +408,7 @@ export class MultiAgentOrchestrator {
           }).catch(err => logger.error('Failed to update project cost:', err));
         }
 
-        this.onProgress?.('usage', { usage, totalCost: this.totalCost, totalUsage: { ...this.totalUsage } });
+        this.onProgress?.('usage', { usage, totalCost: this.totalCost, totalUsage: { ...this.totalUsage }, taskCost: this.taskCost, taskTokens: this.taskTokens });
       },
       getTurnCost: () => 0,
       getTotalCost: () => this.totalCost,

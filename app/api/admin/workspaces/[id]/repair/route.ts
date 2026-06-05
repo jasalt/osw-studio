@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, verifyInstanceApiKey } from '@/lib/auth/session';
-import { getWorkspaceById } from '@/lib/auth/system-database';
+import { getWorkspaceById, verifyWorkspaceAccess } from '@/lib/auth/system-database';
 import { repairWorkspace } from '@/lib/auth/default-workspace';
 
 export async function POST(
@@ -15,11 +15,17 @@ export async function POST(
   try {
     const apiSession = verifyInstanceApiKey(request);
     const session = apiSession || await requireAuth();
+    const { id } = await params;
+
+    // Allow instance API keys, admins, or workspace owners
     if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+      try {
+        verifyWorkspaceAccess(session.userId, id, 'owner');
+      } catch {
+        return NextResponse.json({ error: 'Admin or workspace owner access required' }, { status: 403 });
+      }
     }
 
-    const { id } = await params;
     const workspace = getWorkspaceById(id);
     if (!workspace) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });

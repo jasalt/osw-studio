@@ -553,6 +553,8 @@ export class EventProcessor {
             timestamp: event.timestamp,
             taskTokenOffset: state.prevTaskCumulativeTokens,
             taskCostOffset: state.prevTaskCumulativeCost,
+            taskTokens: event.data.taskTokens,
+            taskCost: event.data.taskCost,
           };
           state.currentTurn.taskStartTime = state.taskStartTime;
           state.currentTurn.items = state.currentTurn.items.filter(item => item.type !== 'waiting');
