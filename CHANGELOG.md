@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.73.2 - 2026-06-06
+
+### AI & Editing
+
+- **Improved `ss` edit reliability**: Changed the search/replace separator from `===` to `=======` to avoid collisions with JavaScript code. Entity mode (`ss --entity`) no longer requires a separator — provide the full replacement and the old entity is auto-detected.
+- **Fixed `sed` with JS content**: Curly braces and commas in quoted sed expressions are no longer mangled by brace expansion. Backreferences (`\1`, `\2`, `&`) now work correctly in replacements.
+- **Fixed shell argument parsing**: Backslashes in double-quoted arguments are preserved correctly, and empty quoted arguments (`""`, `''`) are no longer silently dropped.
+
 ## v1.73.1 - 2026-06-06
 
 ### Bug Fixes

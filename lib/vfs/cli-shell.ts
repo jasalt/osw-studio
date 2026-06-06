@@ -222,7 +222,7 @@ function parseSedExpression(expr: string): { pattern: RegExp; replacement: strin
 
   // Detect multiline \n patterns — not supported in VFS sed
   if (patStr.includes('\\n') || replStr.includes('\\n')) {
-    return { error: `sed: multiline patterns with \\n are not supported.\n\nFor multiline edits, use ss (supersed):\n  ss /file << 'EOF'\n  text to find\n  ===\n  replacement text\n  EOF` };
+    return { error: `sed: multiline patterns with \\n are not supported.\n\nFor multiline edits, use ss (supersed):\n  ss /file << 'EOF'\n  text to find\n  =======\n  replacement text\n  EOF` };
   }
 
   const globalFlag = (flagStr || '').includes('g');
@@ -232,7 +232,16 @@ function parseSedExpression(expr: string): { pattern: RegExp; replacement: strin
     const erePattern = breToEre(patStr);
     const pattern = new RegExp(erePattern, globalFlag ? 'g' : '');
     // Unescape the replacement string (remove backslash-delimiter escapes)
-    const replacement = replStr.replace(new RegExp('\\\\' + delim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), delim);
+    let replacement = replStr.replace(new RegExp('\\\\' + delim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), delim);
+    // Translate sed backreferences to JS: \1→$1, \2→$2, etc. and &→$&
+    // First protect escaped ampersand (\&) and escaped backslash (\\)
+    replacement = replacement
+      .replace(/\\\\/g, '\x00BSLASH\x00')
+      .replace(/\\&/g, '\x00AMP\x00')
+      .replace(/&/g, '$$&')
+      .replace(/\\([1-9])/g, '$$$1')
+      .replace(/\x00AMP\x00/g, '&')
+      .replace(/\x00BSLASH\x00/g, '\\');
     return { pattern, replacement };
   } catch (e: any) {
     return { error: `sed: invalid regex "${patStr}": ${e?.message || 'parse error'}` };
@@ -2775,7 +2784,7 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
       }
       case 'ss': {
         // ss (supersed) — smart file editing with multiple modes
-        // Syntax: ss [flags] /path/to/file << 'EOF'\nsearch\n===\nreplacement\nEOF
+        // Syntax: ss [flags] /path/to/file << 'EOF'\nsearch\n=======\nreplacement\nEOF
         // Modes: (none) literal, --entity, --fuzzy, --regex
 
         // Parse flags (long form preferred: --entity, --fuzzy, --regex)
@@ -2795,14 +2804,22 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
           return { stdout: '', stderr: 'ss: missing heredoc input (use ss /file << \'EOF\')', exitCode: 2 };
         }
 
-        // Split on \n===\n separator
-        const sepIdx = stdin.indexOf('\n===\n');
-        if (sepIdx === -1) {
-          return { stdout: '', stderr: 'ss: missing === separator between search and replacement\n\nUsage: ss /file << \'EOF\'\nsearch content\n===\nreplacement content\nEOF', exitCode: 2 };
+        // Split on \n=======\n separator (7 equals signs — avoids collision with JS ===)
+        const sepIdx = stdin.indexOf('\n=======\n');
+        let ssSearch: string;
+        let ssReplace: string;
+        if (sepIdx !== -1) {
+          ssSearch = stdin.substring(0, sepIdx);
+          ssReplace = stdin.substring(sepIdx + '\n=======\n'.length);
+        } else if (ssMode === 'entity') {
+          // Entity mode: no separator needed — extract selector from first line,
+          // use entire stdin as replacement.
+          const firstLine = stdin.split('\n')[0].trim();
+          ssSearch = firstLine;
+          ssReplace = stdin;
+        } else {
+          return { stdout: '', stderr: 'ss: missing ======= separator between search and replacement\n\nUsage: ss /file << \'EOF\'\nsearch content\n=======\nreplacement content\nEOF', exitCode: 2 };
         }
-
-        const ssSearch = stdin.substring(0, sepIdx);
-        const ssReplace = stdin.substring(sepIdx + 5); // skip \n===\n
 
         // Read target file
         let ssContent: string;

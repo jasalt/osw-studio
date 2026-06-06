@@ -96,7 +96,7 @@ Commands: cat, head, tail, ls, tree, grep, rg, find, mkdir, mv, cp, rm, touch, s
 Pipes (cmd1 | cmd2), redirects (> file, >> file), heredocs (<< 'EOF'), chaining (&&, ||, ;), and brace expansion ({a,b,c}) are supported.
 Run scripts: python <file>, lua <file>. Show output in preview: preview <path>.
 
-Edit existing files: ss /file << 'EOF'\\nsearch\\n===\\nreplacement\\nEOF
+Edit existing files: ss /file << 'EOF'\\nsearch\\n=======\\nreplacement\\nEOF
 Create new files: cat > /file << 'EOF'\\ncontent\\nEOF
 
 One command at a time as a single string.`,
@@ -627,12 +627,14 @@ function unescapeHtmlEntities(cmd: string): string {
 /**
  * Parse a shell command string into an array of arguments
  */
-function parseBashCommand(cmdStr: string): string[] {
+export function parseBashCommand(cmdStr: string): string[] {
   const args: string[] = [];
+  const wasQuoted: boolean[] = [];
   let current = '';
   let inQuotes = false;
   let quoteChar = '';
   let escaped = false;
+  let argWasQuoted = false;
 
   for (let i = 0; i < cmdStr.length; i++) {
     const char = cmdStr[i];
@@ -648,9 +650,13 @@ function parseBashCommand(cmdStr: string): string[] {
         inQuotes = false;
         quoteChar = '';
       } else if (quoteChar === '"' && char === '\\') {
-        // Double quotes: backslash escapes the next character
-        escaped = true;
-        continue;
+        // Double quotes: only \" and \\ are escape sequences; other backslashes are literal
+        const next = cmdStr[i + 1];
+        if (next === '"' || next === '\\') {
+          escaped = true;
+          continue;
+        }
+        current += char;
       } else {
         // Single quotes: everything is literal (including backslashes)
         current += char;
@@ -663,10 +669,13 @@ function parseBashCommand(cmdStr: string): string[] {
       if (char === '"' || char === "'") {
         inQuotes = true;
         quoteChar = char;
+        argWasQuoted = true;
       } else if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
-        if (current.length > 0) {
+        if (current.length > 0 || argWasQuoted) {
           args.push(current);
+          wasQuoted.push(argWasQuoted);
           current = '';
+          argWasQuoted = false;
         }
       } else {
         current += char;
@@ -674,21 +683,28 @@ function parseBashCommand(cmdStr: string): string[] {
     }
   }
 
-  if (current.length > 0) {
+  if (current.length > 0 || argWasQuoted) {
     args.push(current);
+    wasQuoted.push(argWasQuoted);
   }
 
-  // Expand brace patterns like {a,b,c} (bash brace expansion)
-  return expandBraces(args);
+  // Expand brace patterns like {a,b,c} — but not inside quoted arguments (matches bash behavior)
+  return expandBraces(args, wasQuoted);
 }
 
 /**
  * Expand brace patterns in arguments (e.g., "file{1,2,3}.txt" -> ["file1.txt", "file2.txt", "file3.txt"])
+ * Skips quoted arguments — bash does not expand braces inside quotes.
  */
-function expandBraces(args: string[]): string[] {
+function expandBraces(args: string[], wasQuoted?: boolean[]): string[] {
   const expanded: string[] = [];
 
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (wasQuoted?.[i]) {
+      expanded.push(arg);
+      continue;
+    }
     // Check if arg contains brace expansion pattern
     const braceMatch = arg.match(/^(.+)\{([^}]+)\}(.*)$/);
 

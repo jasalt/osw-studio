@@ -6,6 +6,16 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.73.2 - Editing Reliability (2026-06-06)
+
+AI-driven file edits are more reliable. The `ss` and `sed` editing tools no longer break when working with JavaScript code containing `===`, object literals with curly braces, or backreferences in replacements. Shell argument parsing also handles edge cases correctly now.
+
+### AI & Editing
+- **`ss` edit reliability**: The search/replace separator no longer collides with JavaScript's `===` operator. Entity mode auto-detects the replacement target without needing a separator.
+- **`sed` fixes**: Curly braces in replacements no longer get mangled, and backreferences (`\1`, `&`) work correctly.
+
+---
+
 ## v1.73.1 - Stability Fixes (2026-06-06)
 
 Token and cost tracking now works correctly across multi-turn conversations — no more negative counts or flickering values. Hosted instances with multiple workspaces are more reliable, and new users no longer get stuck in a setup loop on first login.

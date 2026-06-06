@@ -127,8 +127,8 @@ Shell commands:
 - Move/copy: mv src dest, cp [-r] src dest
 - Remove: rm [-rf] path
 - Substitute: sed -i 's/old/new/g' file (single-line only)
-- Edit: ss /file << 'EOF' (multiline search===replace — primary editing tool)
-- Entity edit: ss --entity /file << 'EOF' (give opening line only — auto-finds closing tag/bracket)
+- Edit: ss /file << 'EOF' (multiline search/replace, ======= separator — primary editing tool)
+- Entity edit: ss --entity /file << 'EOF' (give full replacement — auto-detects entity from first line)
 - New file: cat > /file << 'EOF'\\ncontent\\nEOF (creation and full rewrites only)
 - Pipes: cmd1 | cmd2, cmd > file, cmd >> file
 - Ask user: ask [--prompt "Question"] "Option A" "Option B" "Option C" — present tappable chip choices when you need a single decision from the user with 2–5 candidate options. Prefer this over asking in prose for either/or choices: the user gets buttons instead of having to type. For open-ended elicitation (describe your brand, what's the content?), prose is the right shape. Example: ask --prompt "Aesthetic direction?" "Bold geometric" "Soft organic" "Editorial" "Minimal" "You pick". When you call ask, do NOT also run status in the same iteration — ask itself ends the iteration cleanly and the user's selection becomes the next message.`;
@@ -306,12 +306,14 @@ Return a structured analysis:
 }
 
 const SS_EDITING_DOCS = `Editing files — use ss for all edits to existing files:
-  bash({ command: "ss /file << 'EOF'\\nexact text to find\\n===\\nreplacement text\\nEOF" })
+  ss /file << 'EOF'
+  exact text to find
+  =======
+  replacement text
+  EOF
 Copy the exact text you want to replace (use rg -C 5 or head/tail to inspect first).
-To replace a whole function, element, or CSS rule — give just the opening line and ss --entity finds the end:
+To replace a whole function, element, or CSS rule — give the full replacement and ss --entity auto-detects the old entity from the first line:
   ss --entity /file << 'EOF'
-  function initApp() {
-  ===
   function initApp() { /* new body */ }
   EOF
 For creating new files or complete rewrites only: cat > /file << 'EOF'

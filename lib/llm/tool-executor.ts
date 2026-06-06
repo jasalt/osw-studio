@@ -270,7 +270,7 @@ export class OswsToolExecutor implements ToolExecutor {
     const isBashCommand = knownBashCommands.has(toolId) || (isSetupCommand && agentType === 'setup');
 
     if (toolId === 'ss') {
-      return `Error: "ss" is not a tool — it is a bash command. Call it via the bash tool:\n\n  bash({ command: "ss /file << 'EOF'\\nsearch text\\n===\\nreplacement text\\nEOF" })`;
+      return `Error: "ss" is not a tool — it is a bash command. Call it via the bash tool:\n\n  bash({ command: "ss /file << 'EOF'\\nsearch text\\n=======\\nreplacement text\\nEOF" })`;
     }
 
     if (isBashCommand) {

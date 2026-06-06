@@ -215,3 +215,88 @@ describe('sed negate + group integration', () => {
     );
   });
 });
+
+// ---------- sed backreferences ----------
+
+describe('sed backreferences', () => {
+  it('translates \\1 \\2 to $1 $2 in replacement', async () => {
+    mockVfs.readFile.mockResolvedValue({ content: 'hello world' });
+    const result = await exec([
+      'sed', '-i', 's/\\(hello\\) \\(world\\)/\\2 \\1/', '/test.txt'
+    ]);
+    expect(result.success).toBe(true);
+    expect(writtenContent).toBe('world hello');
+  });
+
+  it('translates & to $& (whole match) in replacement', async () => {
+    mockVfs.readFile.mockResolvedValue({ content: 'foo bar' });
+    const result = await exec([
+      'sed', '-i', 's/foo/[&]/', '/test.txt'
+    ]);
+    expect(result.success).toBe(true);
+    expect(writtenContent).toBe('[foo] bar');
+  });
+
+  it('preserves literal \\& (escaped ampersand)', async () => {
+    mockVfs.readFile.mockResolvedValue({ content: 'foo bar' });
+    const result = await exec([
+      'sed', '-i', 's/foo/a\\&b/', '/test.txt'
+    ]);
+    expect(result.success).toBe(true);
+    expect(writtenContent).toBe('a&b bar');
+  });
+});
+
+// ---------- sed error messages ----------
+
+describe('sed multiline error message', () => {
+  it('suggests ======= separator (not ===) when rejecting \\n patterns', async () => {
+    mockVfs.readFile.mockResolvedValue({ content: 'test' });
+    const result = await exec([
+      'sed', '-i', 's/line1\\nline2/replaced/', '/test.txt'
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.stderr).toContain('=======');
+    expect(result.stderr).not.toMatch(/[^=]===[^=]/);
+  });
+});
+
+// ---------- ss separator and entity mode ----------
+
+describe('ss separator format', () => {
+  it('splits on ======= (7 equals)', async () => {
+    mockVfs.readFile.mockResolvedValue({ content: 'old text here' });
+    const stdin = 'old text\n=======\nnew text';
+    const result = await exec(['ss', '/test.txt'], stdin);
+    expect(result.success).toBe(true);
+    expect(writtenContent).toBe('new text here');
+  });
+
+  it('rejects === (3 equals) as separator', async () => {
+    mockVfs.readFile.mockResolvedValue({ content: 'old text here' });
+    const stdin = 'old text\n===\nnew text';
+    const result = await exec(['ss', '/test.txt'], stdin);
+    expect(result.success).toBe(false);
+  });
+
+  it('handles JS code with === in content without collision', async () => {
+    const fileContent = 'if (x === 5) { return true; }';
+    mockVfs.readFile.mockResolvedValue({ content: fileContent });
+    const stdin = 'if (x === 5) { return true; }\n=======\nif (x === 10) { return false; }';
+    const result = await exec(['ss', '/test.txt'], stdin);
+    expect(result.success).toBe(true);
+    expect(writtenContent).toBe('if (x === 10) { return false; }');
+  });
+});
+
+describe('ss --entity without separator', () => {
+  it('auto-extracts selector from first line when no separator given', async () => {
+    const fileContent = 'function foo() {\n  return 1;\n}\n\nfunction bar() {\n  return 2;\n}';
+    mockVfs.readFile.mockResolvedValue({ content: fileContent });
+    const stdin = 'function foo() {\n  return 42;\n}';
+    const result = await exec(['ss', '--entity', '/test.txt'], stdin);
+    expect(result.success).toBe(true);
+    expect(writtenContent).toContain('return 42');
+    expect(writtenContent).toContain('function bar');
+  });
+});
