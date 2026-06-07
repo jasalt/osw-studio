@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback, DragEvent, ClipboardEvent } from 'react';
-import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, X, Brain, Image as ImageIcon } from 'lucide-react';
+import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, X, Brain, Image as ImageIcon, Type } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { DebugEvent } from '@/lib/stores/types';
 import { EventProcessor, classifyBashCommand, type Turn, type TurnItem, type ToolCall } from './event-processor';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -85,8 +86,9 @@ interface ChatPanelProps {
   onClearChat?: () => void;
   // Close panel
   onClose?: () => void;
-  // Vision support
+  // Model capabilities
   supportsVision?: boolean;
+  inputModalities?: string[];
   // Provider has credentials configured
   providerReady?: boolean;
   // Runtime errors
@@ -146,6 +148,7 @@ export function ChatPanel({
   onClearChat,
   onClose,
   supportsVision = false,
+  inputModalities = ['text'],
   providerReady = true,
   runtimeErrors = [],
   onSendRuntimeErrors,
@@ -507,8 +510,28 @@ export function ChatPanel({
           onRemoveImage={removeImage}
           onClearImages={() => setPendingImages([])}
         />
+        {/* Modality indicators */}
+        <div className="flex !mb-0">
+          {[
+            { key: 'text', icon: Type, label: 'Text input', enabled: true },
+            { key: 'image', icon: ImageIcon, label: inputModalities.includes('image') ? 'Image input — drop or paste images' : 'Image input — not supported by this model', enabled: inputModalities.includes('image') },
+          ].map((mod, i, arr) => (
+            <Tooltip key={mod.key}>
+              <TooltipTrigger asChild>
+                <div
+                  className={`flex items-center gap-1 px-2.5 py-1 border border-b-0 border-border text-xs cursor-default transition-colors ${
+                    mod.enabled ? 'text-foreground bg-card' : 'text-muted-foreground/30'
+                  } ${i === 0 ? 'rounded-tl-lg' : ''} ${i === arr.length - 1 ? 'rounded-tr-lg' : ''}`}
+                >
+                  <mod.icon className="h-3 w-3" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top">{mod.label}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
         <div
-          className={`bg-card border rounded-lg shadow-sm overflow-hidden transition-all ${
+          className={`bg-card border rounded-lg shadow-sm overflow-hidden transition-all rounded-tl-none ${
             isDragging ? 'border-primary border-2 bg-primary/5' : 'border-border'
           }`}
           onDrop={handleDrop}

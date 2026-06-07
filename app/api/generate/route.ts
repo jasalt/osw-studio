@@ -30,7 +30,7 @@ function toAnthropicContent(content: string | ContentBlock[]): any {
     if (block.type === 'text') {
       return { type: 'text', text: block.text };
     }
-    // Transform image_url to Anthropic's format
+    if (block.type === 'input_audio') return block;
     const { mediaType, data } = parseDataUrl(block.image_url.url);
     return {
       type: 'image',

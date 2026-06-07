@@ -151,6 +151,7 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
               }
             : undefined;
 
+          const orModalities = model.architecture?.input_modalities as import('@/lib/llm/providers/types').InputModality[] | undefined;
           const providerModel: ProviderModel = {
             id: model.id,
             name: model.name,
@@ -158,8 +159,9 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
             contextLength: model.context_length,
             maxTokens: model.top_provider?.max_completion_tokens,
             supportsFunctions: model.supported_parameters?.includes('tools'),
-            supportsVision: model.architecture?.input_modalities?.includes('image'),
+            supportsVision: orModalities?.includes('image'),
             supportsReasoning: model.supported_parameters?.includes('reasoning'),
+            ...(orModalities ? { inputModalities: orModalities } : {}),
             pricing
           };
 
@@ -178,7 +180,8 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
 
               const contextLength = bestProvider?.context_length || 32768;
               const supportsFunctions = hfProviders.some((p: any) => p.supports_tools);
-              const supportsVision = model.architecture?.input_modalities?.includes('image');
+              const hfModalities = model.architecture?.input_modalities as import('@/lib/llm/providers/types').InputModality[] | undefined;
+              const supportsVision = hfModalities?.includes('image');
 
               let pricing: { input: number; output: number } | undefined;
               if (bestProvider?.pricing?.input != null && bestProvider?.pricing?.output != null) {
@@ -194,6 +197,7 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
                 contextLength,
                 supportsFunctions,
                 supportsVision,
+                ...(hfModalities ? { inputModalities: hfModalities } : {}),
                 pricing,
               } as ProviderModel;
             });
@@ -210,11 +214,15 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
         loadedModels = modelEntries.map(entry => {
           const id = typeof entry === 'string' ? entry : entry.id;
           const contextLength = typeof entry === 'object' && entry.contextLength ? entry.contextLength : 32000;
+          const inputModalities = typeof entry === 'object' && entry.inputModalities
+            ? entry.inputModalities as import('@/lib/llm/providers/types').InputModality[]
+            : undefined;
           return {
             id,
             name: id.split('/').pop() || id,
             contextLength,
-            supportsFunctions: true
+            supportsFunctions: true,
+            ...(inputModalities ? { inputModalities, supportsVision: inputModalities.includes('image') } : {}),
           };
         });
       } else if (providerConfig.models) {

@@ -3,7 +3,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { Project } from '@/lib/vfs/types';
 import { vfs } from '@/lib/vfs';
-import { getSyncOverviewStatus, SyncOverviewStatus } from '@/lib/vfs/auto-sync';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/ui/logo';
 import {
@@ -139,7 +138,6 @@ function SidebarContent({
   const [hovering, setHovering] = useState(false);
   const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [loadingRecentProjects, setLoadingRecentProjects] = useState(true);
-  const [syncStatus, setSyncStatus] = useState<SyncOverviewStatus | null>(null);
 
   // Initialize expandedItems based on currentView to prevent flash
   const [expandedItems, setExpandedItems] = useState<Set<string>>(() => {
@@ -205,20 +203,6 @@ function SidebarContent({
     loadRecentProjects();
   }, []);
 
-  // Load sync status for Server Mode (only when workspace context exists)
-  useEffect(() => {
-    if (!isServerMode || !workspaceId) return;
-
-    async function loadSyncStatus() {
-      try {
-        const status = await getSyncOverviewStatus();
-        setSyncStatus(status);
-      } catch {
-        // Sync status unavailable — non-fatal
-      }
-    }
-    loadSyncStatus();
-  }, [isServerMode, workspaceId]);
 
   // Load pinned state from localStorage
   useEffect(() => {
@@ -613,8 +597,6 @@ function SidebarContent({
           {SYSTEM_ACTIONS.filter(item => !(isDesktop && item.id === 'logout')).map((item) => {
             const Icon = item.icon;
             const isLogout = item.id === 'logout';
-            const isSync = item.id === 'sync';
-            const showSyncIndicator = isSync && syncStatus?.needsSync;
 
             if (item.href) {
               return (
@@ -652,10 +634,6 @@ function SidebarContent({
               >
                 <Icon className={cn('h-4 w-4', !collapsed && 'mr-2')} />
                 {!collapsed && item.label}
-                {/* Orange indicator dot when sync is needed */}
-                {showSyncIndicator && (
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-orange-500 rounded-full" />
-                )}
               </Button>
             );
           })}

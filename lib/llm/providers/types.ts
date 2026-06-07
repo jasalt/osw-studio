@@ -18,6 +18,8 @@ export type ProviderId =
   | 'llamacpp'
   | 'meshllm';
 
+export type InputModality = 'text' | 'image' | 'audio' | 'file';
+
 export interface ProviderModel {
   id: string;
   name: string;
@@ -26,7 +28,8 @@ export interface ProviderModel {
   maxTokens?: number;
   supportsFunctions?: boolean;
   supportsVision?: boolean;
-  supportsReasoning?: boolean;  // Model supports toggleable reasoning (thinking tokens)
+  supportsReasoning?: boolean;
+  inputModalities?: InputModality[];
   pricing?: {
     input: number;  // per 1M tokens
     output: number; // per 1M tokens

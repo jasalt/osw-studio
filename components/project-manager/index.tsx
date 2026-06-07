@@ -149,8 +149,9 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
   const tourStep = tourState.currentStep?.id;
   const tourRunning = tourState.status === 'running';
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
+  const [backgroundPullDone, setBackgroundPullDone] = useState(
+    process.env.NEXT_PUBLIC_SERVER_MODE !== 'true'
+  );
   const [tourActionProjectId, setTourActionProjectId] = useState<string | null>(null);
   const loadingRef = useRef(false);
   const demoCreationRef = useRef(false);
@@ -177,34 +178,12 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
 
     loadingRef.current = true;
     setLoading(true);
+    let localLoadOk = false;
 
     try {
       await vfs.init();
 
-      // In server mode, pull updates from server before loading local projects
-      if (process.env.NEXT_PUBLIC_SERVER_MODE === 'true') {
-        setSyncing(true);
-        try {
-          const { autoPullAllProjects, setAutoSyncWorkspaceId } = await import('@/lib/vfs/auto-sync');
-          if (workspaceId) {
-            setAutoSyncWorkspaceId(workspaceId);
-          }
-          const result = await autoPullAllProjects((current, total) => {
-            setSyncProgress({ current, total });
-          });
-          if (result.conflicts.length > 0) {
-            toast.warning(`${result.conflicts.length} project(s) have conflicting changes. Open them to resolve.`, {
-              duration: 6000,
-            });
-          }
-        } catch (syncErr) {
-          logger.warn('[ProjectManager] Auto-pull failed, showing local state:', syncErr);
-        } finally {
-          setSyncing(false);
-          setSyncProgress(null);
-        }
-      }
-
+      // Load local projects immediately — don't block on server sync
       const projectList = await vfs.listProjects();
       const sorted = projectList.sort((a, b) =>
         b.updatedAt.getTime() - a.updatedAt.getTime()
@@ -214,6 +193,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
 
       // Also load custom templates
       await loadCustomTemplates();
+      localLoadOk = true;
 
     } catch (error) {
       logger.error('Failed to load projects:', error);
@@ -223,6 +203,36 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       setLoading(false);
       setInitialLoadComplete(true);
       loadingRef.current = false;
+    }
+
+    // In server mode, pull updates in the background and merge silently
+    if (localLoadOk && process.env.NEXT_PUBLIC_SERVER_MODE === 'true') {
+      try {
+        const { autoPullAllProjects, setAutoSyncWorkspaceId } = await import('@/lib/vfs/auto-sync');
+        if (workspaceId) {
+          setAutoSyncWorkspaceId(workspaceId);
+        }
+        const result = await autoPullAllProjects();
+        if (result.pulled > 0) {
+          // Silently refresh the project list with newly pulled data
+          const updated = await vfs.listProjects();
+          const sortedUpdated = updated.sort((a, b) =>
+            b.updatedAt.getTime() - a.updatedAt.getTime()
+          );
+          setProjects(sortedUpdated);
+          setProjectList(sortedUpdated);
+        }
+        if (result.conflicts.length > 0) {
+          toast.warning(
+            `${result.conflicts.length} project(s) were edited on another device. Open Server Sync to compare.`,
+            { duration: 8000 }
+          );
+        }
+      } catch (syncErr) {
+        logger.warn('[ProjectManager] Background sync failed:', syncErr);
+      } finally {
+        setBackgroundPullDone(true);
+      }
     }
   }, [setProjectList, loadCustomTemplates]);
 
@@ -315,13 +325,14 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
     }
   }, [tourRunning, tourStep, projects]);
 
-  // Handle automatic tour start for first-time users with no projects
+  // Handle automatic tour start for first-time users with no projects.
+  // Wait for background pull to finish so server projects are counted before
+  // deciding the user has "no projects" and auto-creating a demo.
   useEffect(() => {
-    if (initialLoadComplete && projects.length === 0 && !tourRunning && !configManager.hasSeenTour()) {
-      // First-time user with no projects - create demo before starting tour
+    if (initialLoadComplete && backgroundPullDone && projects.length === 0 && !tourRunning && !configManager.hasSeenTour()) {
       handleStartTour();
     }
-  }, [initialLoadComplete, projects.length, tourRunning]);
+  }, [initialLoadComplete, backgroundPullDone, projects.length, tourRunning]);
 
   const createProject = async () => {
     if (!newProjectName.trim()) {
@@ -607,7 +618,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <Spinner size={48} className="mx-auto text-primary" />
-          <p className="mt-4">{syncing ? (syncProgress ? `Syncing workspace... (${syncProgress.current}/${syncProgress.total} projects)` : 'Syncing workspace...') : 'Loading projects...'}</p>
+          <p className="mt-4">Loading projects...</p>
         </div>
       </div>
     );
@@ -697,7 +708,12 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
             {/* Projects Grid/List */}
             <div className="flex-1 px-4 pt-3 pb-4 sm:px-6 sm:pt-3 sm:pb-6">
               <div className="mx-auto max-w-7xl">
-                {filteredProjects.length === 0 ? (
+                {filteredProjects.length === 0 && !backgroundPullDone ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Spinner size={24} className="text-muted-foreground" />
+                    <span className="ml-3 text-muted-foreground">Loading projects...</span>
+                  </div>
+                ) : filteredProjects.length === 0 ? (
                   <div className="text-center py-12">
                     <FolderOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                     <h2 className="text-xl font-semibold mb-2">

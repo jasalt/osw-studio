@@ -6,6 +6,20 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.74.0 - Transparent Sync (2026-06-07)
+
+Server mode sync is now invisible infrastructure. Projects load instantly from local storage, server updates arrive in the background, and conflicts notify you immediately. No setup modals, no "syncing workspace" spinners, no manual intervention needed.
+
+### Server Mode
+- **Transparent sync**: Projects load instantly. Background sync handles push/pull automatically — no setup steps or blocking prompts.
+- **Immediate conflict alerts**: If a project was edited on another device, you're notified right away with a clear message.
+- **Faster first load**: Sync status checks are lightweight and project pulls run in parallel.
+
+### UI
+- **Input modality indicators**: Tabs above the chat input show what the current model accepts (text, image). Updates when you switch models.
+
+---
+
 ## v1.73.2 - Editing Reliability (2026-06-06)
 
 AI-driven file edits are more reliable. The `ss` and `sed` editing tools no longer break when working with JavaScript code containing `===`, object literals with curly braces, or backreferences in replacements. Shell argument parsing also handles edge cases correctly now.

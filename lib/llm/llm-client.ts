@@ -30,7 +30,7 @@ export async function validateApiKey(apiKey: string, provider: ProviderId): Prom
   }
 }
 
-export type ModelEntry = string | { id: string; contextLength?: number };
+export type ModelEntry = string | { id: string; contextLength?: number; inputModalities?: string[] };
 
 export async function getAvailableModels(apiKey?: string, provider?: ProviderId): Promise<ModelEntry[]> {
   const currentProvider = provider || configManager.getSelectedProvider() || 'openrouter';

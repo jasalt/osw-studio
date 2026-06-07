@@ -12,7 +12,15 @@ export type ImageContentBlock = {
   };
 };
 
-export type ContentBlock = TextContentBlock | ImageContentBlock;
+export type AudioContentBlock = {
+  type: 'input_audio';
+  input_audio: {
+    data: string;  // base64-encoded audio
+    format: 'wav' | 'mp3' | 'flac' | 'aac' | 'ogg' | 'pcm16';
+  };
+};
+
+export type ContentBlock = TextContentBlock | ImageContentBlock | AudioContentBlock;
 
 export interface ToolParameter {
   type?: string;

@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.74.0 - 2026-06-07
+
+### Server Mode
+
+- **Transparent sync**: Project syncing is now fully automatic and invisible. Projects load instantly from local storage while server updates are fetched in the background. The "Workspace Setup Required", "Server Database Not Initialized", and "Sync Your Projects" modals have been removed — auto-pull on load and auto-push on save handle everything.
+- **Immediate conflict notifications**: When a project is edited on another device, a persistent notification appears immediately with clear language and a path to resolution via Server Sync.
+- **Faster sync status**: The sync status endpoint uses lightweight SQL queries instead of loading full objects. Disk usage is cached. Concurrent callers share a single request. First-load sync pulls up to 4 projects in parallel.
+
+### UI
+
+- **Input modality indicators**: Icon tabs above the chat input show which input types the current model supports (text, image). Capability data is discovered from provider APIs — OpenRouter, Anthropic, HuggingFace, Gemini, and LM Studio all report real modality data. Providers without discovery default to text-only.
+
 ## v1.73.2 - 2026-06-06
 
 ### AI & Editing

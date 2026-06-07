@@ -36,6 +36,36 @@ export function getAutoSyncApiUrl(path: string): string {
   return `/api${path}`;
 }
 
+// ── Sync status request dedup ───────────────────────────────────────────────
+// Prevents duplicate /sync/status fetches when multiple callers (PageLayout
+// quota check, autoPullAllProjects) request it within the same tick.
+
+let _pendingSyncStatus: Promise<any | null> | null = null;
+let _cachedSyncData: { data: any; ts: number } | null = null;
+const SYNC_STATUS_CACHE_TTL = 5_000;
+
+export async function fetchSyncStatus(): Promise<any | null> {
+  if (_cachedSyncData && Date.now() - _cachedSyncData.ts < SYNC_STATUS_CACHE_TTL) {
+    return _cachedSyncData.data;
+  }
+  if (!_pendingSyncStatus) {
+    _pendingSyncStatus = (async () => {
+      try {
+        const res = await apiFetch(getAutoSyncApiUrl('/sync/status'));
+        if (!res.ok) return null;
+        const data = await res.json();
+        _cachedSyncData = { data, ts: Date.now() };
+        return data;
+      } catch {
+        return null;
+      } finally {
+        _pendingSyncStatus = null;
+      }
+    })();
+  }
+  return _pendingSyncStatus;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SyncStatus = 'synced' | 'local-newer' | 'server-newer' | 'conflict' | 'never-synced' | 'local-only' | 'server-only';
@@ -45,18 +75,6 @@ interface SyncStatusResult {
   message: string;
 }
 
-/**
- * Comprehensive sync status info for UI display
- */
-export interface SyncOverviewStatus {
-  serverProjectCount: number;
-  serverLastUpdated: Date | null;
-  localProjectCount: number;
-  isUninitialized: boolean;  // Server has no projects
-  needsSync: boolean;        // Local has projects but server is empty or out of sync
-  loading: boolean;
-  error: string | null;
-}
 
 /**
  * Calculate sync status using three-way timestamp comparison
@@ -170,16 +188,13 @@ export async function autoSyncProject(projectId: string, silent = true): Promise
     }
 
     if (response.status === 409) {
-      // Server has newer changes — pull first, mark conflict
       logger.warn(`[AutoSync] Conflict for ${projectId}: server has newer changes`);
       project.syncStatus = 'error';
       await vfs.updateProject(project, { preserveUpdatedAt: true });
-      if (!silent) {
-        toast.error('Sync conflict: server has newer changes. Pull latest first.', {
-          duration: 5000,
-          position: 'bottom-right'
-        });
-      }
+      toast.warning(
+        `"${project.name}" was edited on another device. Your local changes are preserved — open Server Sync to compare.`,
+        { duration: Infinity }
+      );
       syncRetries.delete(projectId);
       return;
     }
@@ -349,78 +364,6 @@ export async function pullServerUpdates(projectId: string, showToast = true): Pr
   }
 }
 
-/**
- * Get comprehensive sync overview status for UI display
- * Compares local IndexedDB with server SQLite state
- */
-export async function getSyncOverviewStatus(): Promise<SyncOverviewStatus> {
-  // Only available in Server Mode
-  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') {
-    return {
-      serverProjectCount: 0,
-      serverLastUpdated: null,
-      localProjectCount: 0,
-      isUninitialized: false,
-      needsSync: false,
-      loading: false,
-      error: 'Server mode not enabled',
-    };
-  }
-
-  try {
-    // Fetch server status
-    const response = await apiFetch(getAutoSyncApiUrl('/sync/status'));
-    if (!response.ok) {
-      // 404 = old route deleted (no workspace context), 401 = not authenticated
-      // Return empty status instead of throwing
-      if (response.status === 404 || response.status === 401) {
-        return {
-          serverProjectCount: 0, serverLastUpdated: null,
-          localProjectCount: 0, isUninitialized: false, needsSync: false, loading: false, error: null,
-        };
-      }
-      throw new Error(`Server error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const summary = data.summary || {
-      projectCount: 0,
-      deploymentCount: 0,
-      lastUpdated: null,
-      isUninitialized: true,
-    };
-
-    // Get local project count from IndexedDB
-    await vfs.init();
-    const localProjects = await vfs.listProjects();
-    const localProjectCount = localProjects.length;
-
-    // Determine if sync is needed
-    const isUninitialized = summary.projectCount === 0;
-    const needsSync = isUninitialized && localProjectCount > 0;
-
-    return {
-      serverProjectCount: summary.projectCount,
-      serverLastUpdated: summary.lastUpdated ? new Date(summary.lastUpdated) : null,
-      localProjectCount,
-      isUninitialized,
-      needsSync,
-      loading: false,
-      error: null,
-    };
-  } catch (error) {
-    logger.error('[AutoSync] Failed to get sync overview status:', error);
-    return {
-      serverProjectCount: 0,
-      serverLastUpdated: null,
-      localProjectCount: 0,
-      isUninitialized: true,
-      needsSync: false,
-      loading: false,
-      error: error instanceof Error ? error.message : 'Failed to fetch sync status',
-    };
-  }
-}
 
 const AUTO_PULL_SESSION_KEY = 'osw_auto_pull_done';
 
@@ -454,14 +397,13 @@ export async function autoPullAllProjects(onProgress?: (current: number, total: 
   let errors = 0;
 
   try {
-    // Lightweight check — just project IDs + timestamps from server
-    const response = await apiFetch(getAutoSyncApiUrl('/sync/status'));
-    if (!response.ok) {
+    // Lightweight check — just project IDs + timestamps from server (deduped)
+    const data = await fetchSyncStatus();
+    if (!data) {
       logger.debug('[AutoSync] Server not available for pull');
       return { pulled: 0, skipped: 0, conflicts: [], errors: 0 };
     }
 
-    const data = await response.json();
     const serverStatuses: { id: string; updatedAt: string }[] = data.projects || [];
 
     // Build local lookup: projectId → serverUpdatedAt (already cached from last sync)
@@ -498,14 +440,13 @@ export async function autoPullAllProjects(onProgress?: (current: number, total: 
 
     const total = needsPull.length;
     let processed = 0;
+    const CONCURRENCY = 4;
 
-    for (const item of needsPull) {
-      processed++;
-      onProgress?.(processed, total);
+    async function pullOne(item: typeof needsPull[number]) {
       try {
         if (item.isNew) {
           const pullResponse = await apiFetch(getAutoSyncApiUrl(`/sync/projects/${item.id}`));
-          if (!pullResponse.ok) { errors++; continue; }
+          if (!pullResponse.ok) { errors++; return; }
 
           const pullData = await pullResponse.json();
           const serverProject: Project = pullData.project;
@@ -537,7 +478,16 @@ export async function autoPullAllProjects(onProgress?: (current: number, total: 
       } catch (error) {
         logger.error(`[AutoSync] Failed to process project ${item.id}:`, error);
         errors++;
+      } finally {
+        processed++;
+        onProgress?.(processed, total);
       }
+    }
+
+    // Pull up to CONCURRENCY projects in parallel
+    for (let i = 0; i < needsPull.length; i += CONCURRENCY) {
+      const batch = needsPull.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(pullOne));
     }
 
     if (pulled > 0) {

@@ -15,7 +15,7 @@ import { configManager, migrateBackendKey } from '@/lib/config/storage';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
 import { PANEL_MAP } from '@/lib/stores/slices/layout';
 import { useCostSettings } from '@/lib/hooks/use-cost-settings';
-import { getProvider, modelSupportsVision } from '@/lib/llm/providers/registry';
+import { getProvider, modelSupportsVision, getModelInputModalities } from '@/lib/llm/providers/registry';
 import { toast } from 'sonner';
 import { debugEventsState } from '@/lib/llm/debug-events-state';
 import {
@@ -150,7 +150,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const { shouldShowCosts } = useCostSettings();
 
   // Check if current model supports vision for image input
-  const supportsVision = useMemo(() => {
+  const inputModalities = useMemo(() => {
     const currentProvider = configManager.getSelectedProvider();
     const modelId = currentModel || configManager.getDefaultModel();
 
@@ -159,14 +159,16 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     if (cached) {
       const model = (cached.models as import('@/lib/llm/providers/types').ProviderModel[])
         .find(m => m.id === modelId);
+      if (model?.inputModalities) return model.inputModalities;
       if (model?.supportsVision !== undefined) {
-        return model.supportsVision;
+        return model.supportsVision ? ['text' as const, 'image' as const] : ['text' as const];
       }
     }
 
-    // Fall back to name-based heuristics for hardcoded providers
-    return modelSupportsVision(currentProvider, modelId);
+    return getModelInputModalities(currentProvider, modelId);
   }, [currentModel]);
+
+  const supportsVision = inputModalities.includes('image');
 
   // Check if current provider has credentials configured
   const providerReady = useMemo(() => {
@@ -1695,6 +1697,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                   onClearChat={clearDebugEvents}
                   onClose={() => useWorkspaceStore.getState().togglePanel('chat')}
                   supportsVision={supportsVision}
+                  inputModalities={inputModalities}
                   providerReady={providerReady}
                   runtimeErrors={runtimeErrors}
                   onSendRuntimeErrors={handleSendRuntimeErrors}
@@ -1916,6 +1919,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                 isTourLockingInput={isTourLockingInput}
                 onClearChat={clearDebugEvents}
                 supportsVision={supportsVision}
+                inputModalities={inputModalities}
                 providerReady={providerReady}
                 runtimeErrors={runtimeErrors}
                 onSendRuntimeErrors={handleSendRuntimeErrors}

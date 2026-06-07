@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ models: [] });
     }
 
-    let models: Array<string | { id: string; contextLength: number }> = [];
+    let models: Array<string | { id: string; contextLength?: number; inputModalities?: string[] }> = [];
 
     try {
       switch (provider) {
@@ -43,9 +43,10 @@ export async function POST(request: NextRequest) {
                 model.id.includes('gpt') ||
                 model.id.includes('llama')
               )
-              ?.map((model: { id: string; context_length: number }) => ({
+              ?.map((model: { id: string; context_length: number; architecture?: { input_modalities?: string[] } }) => ({
                 id: model.id,
                 contextLength: model.context_length,
+                inputModalities: model.architecture?.input_modalities,
               })) || [];
           }
           break;
@@ -59,7 +60,11 @@ export async function POST(request: NextRequest) {
           });
           if (anthropicResponse.ok) {
             const anthropicData = await anthropicResponse.json();
-            models = anthropicData.data?.map((model: { id: string }) => model.id) || [];
+            models = anthropicData.data?.map((model: { id: string; capabilities?: Record<string, { supported?: boolean }> }) => {
+              const modalities: string[] = ['text'];
+              if (model.capabilities?.image_input?.supported) modalities.push('image');
+              return { id: model.id, inputModalities: modalities };
+            }) || [];
           }
           break;
 
@@ -103,13 +108,32 @@ export async function POST(request: NextRequest) {
           break;
 
         case 'lmstudio':
+          try {
+            // LM Studio REST API returns capabilities (vision, tool_use)
+            const lmsRestUrl = providerConfig.baseUrl?.replace('/v1', '') || 'http://localhost:1234';
+            const lmsResponse = await fetch(`${lmsRestUrl}/api/v1/models`);
+            if (lmsResponse.ok) {
+              const lmsData = await lmsResponse.json();
+              const lmsModels = Array.isArray(lmsData) ? lmsData : lmsData.data || [];
+              models = lmsModels
+                .filter((m: any) => m.type === 'llm' || !m.type)
+                .map((m: any) => {
+                  const modalities: string[] = ['text'];
+                  if (m.capabilities?.vision) modalities.push('image');
+                  return { id: m.id, inputModalities: modalities };
+                });
+            }
+          } catch (error) {
+            logger.error('LM Studio models fetch error:', error);
+          }
+          break;
+
         case 'llamacpp':
         case 'meshllm':
           try {
             const lmResponse = await fetch(`${providerConfig.baseUrl}/models`);
             if (lmResponse.ok) {
               const lmData = await lmResponse.json();
-              // OpenAI-compatible format with data array
               models = lmData.data?.map((m: any) => m.id) || [];
             }
           } catch (error) {
@@ -128,7 +152,12 @@ export async function POST(request: NextRequest) {
                 m.supportedGenerationMethods?.includes('generateContent') &&
                 /gemini/i.test(m.name)
               )
-              .map((m: any) => m.name.replace('models/', ''));
+              .map((m: any) => ({
+                id: m.name.replace('models/', ''),
+                contextLength: m.inputTokenLimit,
+                inputModalities: m.supportedGenerationMethods?.includes('generateContent')
+                  ? ['text', 'image'] : ['text'],
+              }));
           }
           break;
 
@@ -143,7 +172,10 @@ export async function POST(request: NextRequest) {
             });
             if (hfResponse.ok) {
               const hfData = await hfResponse.json();
-              models = hfData.data?.map((m: any) => m.id) || [];
+              models = hfData.data?.map((m: any) => ({
+                id: m.id,
+                inputModalities: m.architecture?.input_modalities,
+              })) || [];
             }
           } catch (error) {
             logger.error('HuggingFace models fetch error:', error);

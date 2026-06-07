@@ -861,6 +861,27 @@ export class SQLiteAdapter implements StorageAdapter {
     return rows.map(row => this.rowToProject(row));
   }
 
+  listProjectSummaries(): Array<{ id: string; name: string; updatedAt: string }> {
+    const db = this.getDB();
+    return db.prepare('SELECT id, name, updated_at as updatedAt FROM projects').all() as Array<{ id: string; name: string; updatedAt: string }>;
+  }
+
+  listSkillSummaries(): Array<{ id: string; name: string; updatedAt: string }> {
+    const db = this.getDB();
+    return db.prepare("SELECT id, name, updated_at as updatedAt FROM skills WHERE is_built_in = 0").all() as Array<{ id: string; name: string; updatedAt: string }>;
+  }
+
+  listTemplateSummaries(): Array<{ id: string; name: string; updatedAt: string }> {
+    const db = this.getDB();
+    return db.prepare('SELECT id, name, COALESCE(updated_at, imported_at) as updatedAt FROM custom_templates').all() as Array<{ id: string; name: string; updatedAt: string }>;
+  }
+
+  countDeployments(): number {
+    const db = this.getDB();
+    const row = db.prepare('SELECT COUNT(*) as c FROM deployments').get() as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
+
   /**
    * Convert a database row to a Project object
    */
