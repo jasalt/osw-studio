@@ -671,6 +671,16 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
         if (!isMounted) return;
         useWorkspaceStore.getState().initProject(latestProject);
         if (saveManager.isDirty(project.id)) useWorkspaceStore.getState().markDirty();
+
+        // Ensure a starting-point checkpoint exists so the user can always roll back
+        if (!latestProject.lastSavedCheckpointId) {
+          try {
+            const cp = await checkpointManager.createCheckpoint(project.id, 'Project opened', { kind: 'auto' });
+            latestProject.lastSavedCheckpointId = cp.id;
+            await vfs.updateProject(latestProject);
+            useWorkspaceStore.setState({ initialCheckpointId: cp.id });
+          } catch { /* non-fatal */ }
+        }
         // Initialize chatMode from localStorage
         if (typeof window !== 'undefined') {
           const stored = localStorage.getItem('osw-studio-chat-mode');

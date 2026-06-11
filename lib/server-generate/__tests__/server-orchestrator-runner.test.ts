@@ -89,6 +89,41 @@ describe('runServerGeneration', () => {
     expect(tm.getTask(taskId)?.status).toBe('completed');
   });
 
+  it('emits task_complete with result=failed when the loop reports failure without throwing', async () => {
+    mockExecute.mockResolvedValueOnce({
+      success: false,
+      summary: 'Reached maximum iterations (40)',
+      exitReason: 'max_iterations',
+    });
+    const taskId = tm.createTask('proj-1', 'sess-1', 'sk-test');
+    const emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
+    bus.addListener('sess-1', (e) => emitted.push(e));
+
+    await runServerGeneration(taskId, makeRequest(), makeDeps());
+
+    const complete = emitted.find((e) => e.event === 'task_complete');
+    expect(complete!.data.result).toBe('failed');
+    expect(complete!.data.error).toBe('Reached maximum iterations (40)');
+    expect(tm.getTask(taskId)?.status).toBe('failed');
+  });
+
+  it('emits task_complete with result=stopped when the loop reports a user stop', async () => {
+    mockExecute.mockResolvedValueOnce({
+      success: false,
+      summary: 'Stopped by user',
+      exitReason: 'stopped',
+    });
+    const taskId = tm.createTask('proj-1', 'sess-1', 'sk-test');
+    const emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
+    bus.addListener('sess-1', (e) => emitted.push(e));
+
+    await runServerGeneration(taskId, makeRequest(), makeDeps());
+
+    const complete = emitted.find((e) => e.event === 'task_complete');
+    expect(complete!.data.result).toBe('stopped');
+    expect(tm.getTask(taskId)?.status).toBe('cancelled');
+  });
+
   it('emits task_complete with result=failed when orchestrator throws', async () => {
     mockExecute.mockRejectedValueOnce(new Error('LLM API failed'));
     const taskId = tm.createTask('proj-1', 'sess-1', 'sk-test');

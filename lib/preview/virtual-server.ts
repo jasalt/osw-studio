@@ -42,13 +42,12 @@ export class VirtualServer {
     this.handlebars.registerHelper('gte', (a: any, b: any) => a >= b);
     
     // Logical helpers
-    this.handlebars.registerHelper('and', function(this: any) {
-      const args = Array.prototype.slice.call(arguments, 0, -1);
-      return args.every((arg: any) => arg);
+    this.handlebars.registerHelper('and', (...helperArgs: unknown[]) => {
+      // Last argument is the Handlebars options object
+      return helperArgs.slice(0, -1).every((arg) => arg);
     });
-    this.handlebars.registerHelper('or', function(this: any) {
-      const args = Array.prototype.slice.call(arguments, 0, -1);
-      return args.some((arg: any) => arg);
+    this.handlebars.registerHelper('or', (...helperArgs: unknown[]) => {
+      return helperArgs.slice(0, -1).some((arg) => arg);
     });
     this.handlebars.registerHelper('not', (value: any) => !value);
     
@@ -61,9 +60,8 @@ export class VirtualServer {
     // String helpers
     this.handlebars.registerHelper('uppercase', (str: string) => str?.toUpperCase());
     this.handlebars.registerHelper('lowercase', (str: string) => str?.toLowerCase());
-    this.handlebars.registerHelper('concat', function(this: any) {
-      const args = Array.prototype.slice.call(arguments, 0, -1);
-      return args.join('');
+    this.handlebars.registerHelper('concat', (...helperArgs: unknown[]) => {
+      return helperArgs.slice(0, -1).join('');
     });
     
     // Utility helpers

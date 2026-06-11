@@ -6,6 +6,26 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.75.0 - Agent Reliability (2026-06-12)
+
+A deep reliability pass on the AI agent. Task results are now truthful — a stopped or failed run says so instead of claiming success. Reasoning models (Qwen, DeepSeek) work correctly in multi-turn conversations, sub-agent output no longer garbles the chat, and long sessions compact their context without losing history. A new Messages tab in the debug panel shows the exact conversation sent to your provider.
+
+### AI Reliability
+- **Truthful task results**: Runs that fail or get stopped report what actually happened instead of "Task completed"
+- **Reasoning model support**: Thinking models no longer stall in reasoning loops, leave spinners hanging, or break tool calling after the first turn
+- **Sub-agent isolation**: Parallel sub-agents no longer interleave their output into the main chat
+- **Robust long sessions**: Context compaction survives reloads and project switches, and conversations interrupted mid-edit recover instead of being rejected by the provider
+- **Leaner context**: Repeated file reads, status echoes, and preview instrumentation no longer waste tokens
+
+### Debugging
+- **Messages tab**: Inspect the exact message history sent to the provider, with an optional provider-eye view of the final request shape
+
+### Projects
+- **Blank-canvas starters**: New projects open as a clean empty page with a subtle watermark — no placeholder content to clear out
+- **Guaranteed rollback**: Opening a project always ensures a checkpoint exists to restore to
+
+---
+
 ## v1.74.0 - Transparent Sync (2026-06-07)
 
 Server mode sync is now invisible infrastructure. Projects load instantly from local storage, server updates arrive in the background, and conflicts notify you immediately. No setup modals, no "syncing workspace" spinners, no manual intervention needed.

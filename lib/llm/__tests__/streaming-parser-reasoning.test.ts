@@ -139,3 +139,70 @@ describe('streaming-parser reasoning merge', () => {
     expect(reasoningDeltas[1].data.text).toBe('B');
   });
 });
+
+describe('streaming-parser reasoning_complete closure', () => {
+  function collectProgress() {
+    const progressEvents: { event: string; data?: any }[] = [];
+    const onProgress = (event: string, data?: any) => progressEvents.push({ event, data });
+    return { progressEvents, onProgress };
+  }
+
+  it('emits reasoning_complete at stream end for a reasoning-only response (delta.reasoning)', async () => {
+    const { progressEvents, onProgress } = collectProgress();
+    const chunks = [
+      sseChunk({ choices: [{ delta: { reasoning: 'Thinking about it. ' }, index: 0 }] }),
+      sseChunk({ choices: [{ delta: { reasoning: 'Still thinking.' }, index: 0, finish_reason: 'stop' }] }),
+      'data: [DONE]\n\n',
+    ];
+
+    await parseStreamingResponse(makeSSEStream(chunks), { provider: 'openrouter', model: 'test', onProgress });
+
+    const completes = progressEvents.filter(e => e.event === 'reasoning_complete');
+    expect(completes).toHaveLength(1);
+    expect(completes[0].data.reasoning).toBe('Thinking about it. Still thinking.');
+  });
+
+  it('emits reasoning_complete exactly once when delta.reasoning is followed by content', async () => {
+    const { progressEvents, onProgress } = collectProgress();
+    const chunks = [
+      sseChunk({ choices: [{ delta: { reasoning: 'Plan first.' }, index: 0 }] }),
+      sseChunk({ choices: [{ delta: { content: 'The answer.' }, index: 0, finish_reason: 'stop' }] }),
+      'data: [DONE]\n\n',
+    ];
+
+    await parseStreamingResponse(makeSSEStream(chunks), { provider: 'openrouter', model: 'test', onProgress });
+
+    expect(progressEvents.filter(e => e.event === 'reasoning_complete')).toHaveLength(1);
+  });
+
+  it('does not duplicate reasoning_complete when the think-block was already closed by tool calls', async () => {
+    const { progressEvents, onProgress } = collectProgress();
+    const chunks = [
+      sseChunk({ choices: [{ delta: { content: '<think>Let me act.' }, index: 0 }] }),
+      sseChunk({
+        choices: [{
+          delta: { tool_calls: [{ index: 0, id: 'tc1', function: { name: 'bash', arguments: '{"command":"ls"}' } }] },
+          index: 0,
+          finish_reason: 'tool_calls',
+        }],
+      }),
+      'data: [DONE]\n\n',
+    ];
+
+    await parseStreamingResponse(makeSSEStream(chunks), { provider: 'openrouter', model: 'test', onProgress });
+
+    expect(progressEvents.filter(e => e.event === 'reasoning_complete')).toHaveLength(1);
+  });
+
+  it('does not emit reasoning_complete when there was no reasoning', async () => {
+    const { progressEvents, onProgress } = collectProgress();
+    const chunks = [
+      sseChunk({ choices: [{ delta: { content: 'Plain answer.' }, index: 0, finish_reason: 'stop' }] }),
+      'data: [DONE]\n\n',
+    ];
+
+    await parseStreamingResponse(makeSSEStream(chunks), { provider: 'openrouter', model: 'test', onProgress });
+
+    expect(progressEvents.filter(e => e.event === 'reasoning_complete')).toHaveLength(0);
+  });
+});

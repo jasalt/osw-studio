@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { Dispatch, SetStateAction, useEffect, useRef } from 'react';
 import { SyncableItem } from '@/lib/vfs/sync-types';
 import { SummaryBar } from './summary-bar';
 import { SyncItemRow } from '../sync-item-row';
@@ -14,7 +14,7 @@ interface SkillsTabProps {
   selectedIds: Set<string>;
   syncingIds: Set<string>;
   onSelectedIdsChange: (ids: Set<string>) => void;
-  onSyncingIdsChange: (ids: Set<string>) => void;
+  onSyncingIdsChange: Dispatch<SetStateAction<Set<string>>>;
   onRefresh: () => void;
   onSyncComplete: () => void;
   onRegisterPushSelected: (handler: (() => Promise<void>) | null) => void;
@@ -55,7 +55,7 @@ export function SkillsTab({
   };
 
   const handlePushSingle = async (item: SyncableItem) => {
-    (onSyncingIdsChange as Function)((prev: Set<string>) => new Set(prev).add(item.id));
+    onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const skill = await skillsService.getSkill(item.id);
       if (!skill) {
@@ -84,7 +84,7 @@ export function SkillsTab({
       logger.error('Push skill error:', error);
       toast.error('Failed to push skill');
     } finally {
-      (onSyncingIdsChange as Function)((prev: Set<string>) => {
+      onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;
@@ -93,7 +93,7 @@ export function SkillsTab({
   };
 
   const handlePullSingle = async (item: SyncableItem) => {
-    (onSyncingIdsChange as Function)((prev: Set<string>) => new Set(prev).add(item.id));
+    onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullSkill(item.id);
 
@@ -112,7 +112,7 @@ export function SkillsTab({
       logger.error('Pull skill error:', error);
       toast.error('Failed to pull skill');
     } finally {
-      (onSyncingIdsChange as Function)((prev: Set<string>) => {
+      onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;

@@ -1,5 +1,6 @@
 import { ProjectTemplate } from '../../project-templates';
 import { STATIC_DOMAIN_PROMPT } from '@/lib/llm/prompts/static';
+import { CANVAS_CSS, CANVAS_HTML } from '../utils';
 
 export const BAREBONES_PROJECT_TEMPLATE: ProjectTemplate = {
   name: 'Website Starter',
@@ -17,10 +18,12 @@ export const BAREBONES_PROJECT_TEMPLATE: ProjectTemplate = {
     <link rel="stylesheet" href="/styles/style.css">
 </head>
 <body>
-    <div class="welcome-card">
-        <h1>Welcome</h1>
-        <p>Start building your website!</p>
-    </div>
+    ${CANVAS_HTML}
+
+    <!-- Replace the content below with your own -->
+    <header></header>
+    <main></main>
+    <footer></footer>
 
     <script src="/scripts/main.js"></script>
 </body>
@@ -36,22 +39,16 @@ export const BAREBONES_PROJECT_TEMPLATE: ProjectTemplate = {
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   margin: 0;
-  padding: 2rem;
-  background: #f9fafb;
-  color: #0f172a;
+  background: #121212;
+  color: #eaeaea;
+  min-height: 100vh;
 }
 
-h1 {
-  font-size: 2.25rem;
-  margin-bottom: 0.5rem;
-}
+${CANVAS_CSS}
 
-p {
-  font-size: 1rem;
-  line-height: 1.6;
-}
-
-.welcome-card {
+header, main, footer {
+  position: relative;
+  z-index: 1;
 }
 `
     },

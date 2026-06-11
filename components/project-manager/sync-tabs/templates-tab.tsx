@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { Dispatch, SetStateAction, useEffect, useRef } from 'react';
 import { SyncableItem } from '@/lib/vfs/sync-types';
 import { SummaryBar } from './summary-bar';
 import { SyncItemRow } from '../sync-item-row';
@@ -14,7 +14,7 @@ interface TemplatesTabProps {
   selectedIds: Set<string>;
   syncingIds: Set<string>;
   onSelectedIdsChange: (ids: Set<string>) => void;
-  onSyncingIdsChange: (ids: Set<string>) => void;
+  onSyncingIdsChange: Dispatch<SetStateAction<Set<string>>>;
   onRefresh: () => void;
   onSyncComplete: () => void;
   onRegisterPushSelected: (handler: (() => Promise<void>) | null) => void;
@@ -55,7 +55,7 @@ export function TemplatesTab({
   };
 
   const handlePushSingle = async (item: SyncableItem) => {
-    (onSyncingIdsChange as Function)((prev: Set<string>) => new Set(prev).add(item.id));
+    onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       // Get template from IndexedDB
       await vfs.init();
@@ -79,7 +79,7 @@ export function TemplatesTab({
       logger.error('Push template error:', error);
       toast.error('Failed to push template');
     } finally {
-      (onSyncingIdsChange as Function)((prev: Set<string>) => {
+      onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;
@@ -88,7 +88,7 @@ export function TemplatesTab({
   };
 
   const handlePullSingle = async (item: SyncableItem) => {
-    (onSyncingIdsChange as Function)((prev: Set<string>) => new Set(prev).add(item.id));
+    onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullTemplate(item.id);
 
@@ -116,7 +116,7 @@ export function TemplatesTab({
       logger.error('Pull template error:', error);
       toast.error('Failed to pull template');
     } finally {
-      (onSyncingIdsChange as Function)((prev: Set<string>) => {
+      onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;

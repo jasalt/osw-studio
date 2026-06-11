@@ -1,5 +1,6 @@
 import { ProjectTemplate } from '../../project-templates';
 import { HANDLEBARS_DOMAIN_PROMPT } from '@/lib/llm/prompts/handlebars';
+import { CANVAS_CSS, CANVAS_HTML } from '../utils';
 
 export const HANDLEBARS_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
   name: 'Starter (Handlebars)',
@@ -17,7 +18,13 @@ export const HANDLEBARS_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
     <link rel="stylesheet" href="/styles/style.css">
 </head>
 <body>
-    {{> welcome-card}}
+    ${CANVAS_HTML}
+
+    <!-- Use {{> partial-name}} to include Handlebars partials from /templates/ -->
+    <!-- Data from /data.json is available as template variables -->
+    <header></header>
+    <main></main>
+    <footer></footer>
 
     <script src="/scripts/main.js"></script>
 </body>
@@ -33,22 +40,16 @@ export const HANDLEBARS_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   margin: 0;
-  padding: 2rem;
-  background: #f9fafb;
-  color: #0f172a;
+  background: #121212;
+  color: #e4e4e7;
+  min-height: 100vh;
 }
 
-h1 {
-  font-size: 2.25rem;
-  margin-bottom: 0.5rem;
-}
+${CANVAS_CSS}
 
-p {
-  font-size: 1rem;
-  line-height: 1.6;
-}
-
-.welcome-card {
+header, main, footer {
+  position: relative;
+  z-index: 1;
 }
 `
     },
@@ -60,17 +61,17 @@ p {
 `
     },
     {
-      path: '/templates/welcome-card.hbs',
-      content: `<div class="welcome-card">
-    <h1>{{title}}</h1>
-    <p>{{message}}</p>
+      path: '/templates/example.hbs',
+      content: `{{!-- Example partial — include in HTML with {{> example}} --}}
+{{!-- Variables come from /data.json --}}
+<div>
+    <h1>{{siteName}}</h1>
 </div>`
     },
     {
       path: '/data.json',
       content: `{
-  "title": "Welcome",
-  "message": "Start building your website!"
+  "siteName": "My Site"
 }`
     },
     {

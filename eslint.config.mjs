@@ -19,7 +19,9 @@ const eslintConfig = [
         "varsIgnorePattern": "^_"
       }],
       // Warn on console usage; allow error/warn
-      "no-console": ["warn", { allow: ["error", "warn"] }]
+      "no-console": ["warn", { allow: ["error", "warn"] }],
+      // Apostrophes/quotes in JSX copy are fine — React escapes text content
+      "react/no-unescaped-entities": "off"
     }
   }
 ];

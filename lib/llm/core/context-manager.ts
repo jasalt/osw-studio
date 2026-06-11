@@ -243,10 +243,18 @@ export class ContextManagerImpl implements ContextManager {
 
     // 4. Rebuild conversation:
     //    [fresh system prompt] + [project context as user msg] + [summary as assistant] + [recent messages]
-    const freshSystemPrompt = opts?.freshSystemPrompt || (systemMessages[0] && typeof systemMessages[0].content === 'string' ? systemMessages[0].content : '');
+    let freshFromConfig: { systemPrompt?: string; projectContext?: string } = {};
+    if ((!opts?.freshSystemPrompt || !opts?.projectContext) && this.config.getFreshContext) {
+      try {
+        freshFromConfig = await this.config.getFreshContext();
+      } catch { /* fall back to stale system prompt */ }
+    }
+    const freshSystemPrompt = opts?.freshSystemPrompt
+      || freshFromConfig.systemPrompt
+      || (systemMessages[0] && typeof systemMessages[0].content === 'string' ? systemMessages[0].content : '');
     const summaryContent = `Here is a summary of the conversation so far:\n\n${summary}`;
 
-    const projectContext = opts?.projectContext;
+    const projectContext = opts?.projectContext ?? freshFromConfig.projectContext;
     const contextUserContent = projectContext
       ? `${projectContext}\n\nThe earlier conversation was compacted into the summary below.`
       : 'The earlier conversation was compacted into the summary below.';

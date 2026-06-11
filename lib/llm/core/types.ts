@@ -52,6 +52,8 @@ export interface ToolExecContext {
   agentType: string;
   isReadOnly: boolean;
   workingDirectory?: string;
+  /** Monotonic turn counter from the owning loop — lets executors scope per-turn behavior (e.g. dedup). */
+  turnId?: number;
 }
 
 export interface ToolExecutor {
@@ -65,10 +67,14 @@ export interface CompactionConfig {
   recentKeepRatio: number;
   summaryTokenRatio: number;
   buildCompactionPrompt: (previousSummary?: string) => string;
+  /** Resolves a fresh system prompt / project context for the post-compaction rebuild. */
+  getFreshContext?: () => Promise<{ systemPrompt?: string; projectContext?: string }>;
 }
 
 export interface ContextManager {
   getMessages(): Message[];
+  /** Messages with orphan tool calls repaired — what should actually be sent to providers. */
+  getSanitizedMessages(): Message[];
   setSystemPrompt(prompt: string): void;
   addUserMessage(content: string | ContentBlock[]): void;
   addAssistantTurn(response: ParsedResponse): void;
@@ -108,6 +114,7 @@ export interface AgentLoopConfig {
 export interface AgentLoopResult {
   success: boolean;
   summary: string;
+  exitReason: string;
   totalCost: number;
   totalUsage: UsageInfo;
   toolCount: number;

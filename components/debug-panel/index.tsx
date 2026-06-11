@@ -1,12 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronDown, ChevronUp, Bug, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp, Bug, Trash2, Copy, Download } from 'lucide-react';
 import { PanelContainer, PanelHeader } from '@/components/ui/panel';
 import { MemoryMonitor } from './memory-monitor';
+import { MessagesTab, type ForceState } from './messages-tab';
 import { configManager } from '@/lib/config/storage';
+import { requestSnapshotStore } from '@/lib/llm/request-snapshot';
+import { toast } from 'sonner';
 
 import type { DebugEvent } from '@/lib/stores/types';
 
@@ -17,10 +20,17 @@ interface DebugPanelProps {
 }
 
 export function DebugPanel({ events, onClear, onClose }: DebugPanelProps) {
+  const [activeTab, setActiveTab] = useState<'events' | 'messages'>('events');
   const [filter, setFilter] = useState<string>('');
   const eventsEndRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [streamDebug, setStreamDebug] = useState<boolean>(() => configManager.getDebugStreamEnabled());
+  const [eventsForce, setEventsForce] = useState<ForceState>(null);
+  const messageSnapshot = useSyncExternalStore(
+    (l) => requestSnapshotStore.subscribe(l),
+    () => requestSnapshotStore.getSnapshot(),
+    () => requestSnapshotStore.getSnapshot(),
+  );
 
   // Compress consecutive assistant_delta, tool_param_delta, and reasoning_delta events
   // Only store count, not individual events - prevents O(N²) memory growth
@@ -88,6 +98,15 @@ export function DebugPanel({ events, onClear, onClose }: DebugPanelProps) {
     URL.revokeObjectURL(url);
   };
 
+  const handleCopyEvents = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(events, null, 2));
+      toast.success('Events copied');
+    } catch {
+      toast.error('Copy failed');
+    }
+  };
+
   // Filter events
   const filteredEvents = filter
     ? compressedEvents.filter(e => e.event.toLowerCase().includes(filter.toLowerCase()))
@@ -106,114 +125,137 @@ export function DebugPanel({ events, onClear, onClose }: DebugPanelProps) {
         title="Debug Events"
         onClose={onClose}
         panelKey="debug"
-        actions={
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClear}
-              className="h-6 rounded-full border border-border/60 bg-muted/50 px-2.5 gap-1.5 md:h-5 md:w-5 md:px-0 md:border-0 md:bg-transparent md:rounded-md"
-              title="Clear all events"
-            >
-              <Trash2 className="h-2.5 w-2.5 md:h-3 md:w-3" />
-              <span className="text-xs md:hidden">Clear</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleExport}
-              className="h-6 rounded-full border border-border/60 bg-muted/50 px-2.5 text-xs md:h-5 md:px-1.5 md:border-0 md:bg-transparent md:rounded-md"
-              title="Export to JSON"
-            >
-              Export
-            </Button>
-          </>
-        }
       >
-        <span className="text-xs text-muted-foreground">
-          ({filteredEvents.length}/{events.length})
-        </span>
         <MemoryMonitor />
       </PanelHeader>
 
-      {/* Event Counts */}
-      <div className="p-2 border-b border-border bg-muted/20 text-xs">
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(eventCounts).map(([event, count]) => (
-            <button
-              key={event}
-              onClick={() => setFilter(filter === event ? '' : event)}
-              className={`px-2 py-1 rounded ${
-                filter === event
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted hover:bg-muted/80'
-              }`}
-            >
-              {event} ({count})
-            </button>
-          ))}
-        </div>
+      {/* Tabs */}
+      <div className="flex border-b border-border text-xs">
+        {([
+          ['events', `Events (${filteredEvents.length}/${events.length})`],
+          ['messages', messageSnapshot ? `Messages (${messageSnapshot.messages.length})` : 'Messages'],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`px-3 py-1.5 border-b-2 -mb-px whitespace-nowrap ${
+              activeTab === key
+                ? 'border-primary text-foreground font-semibold'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {/* Filter Input */}
-      <div className="p-2 border-b border-border">
-        <input
-          type="text"
-          placeholder="Filter events..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="w-full px-2 py-1 text-xs rounded bg-background border border-border"
-        />
-      </div>
-
-      {/* Toggles */}
-      <div className="p-2 border-b border-border flex items-center gap-4">
-        <label className="text-xs flex items-center gap-1 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={autoScroll}
-            onChange={(e) => setAutoScroll(e.target.checked)}
-            className="rounded"
-          />
-          Auto-scroll
-        </label>
-        <label
-          className="text-xs flex items-center gap-1 cursor-pointer"
-          title="Emit llm_request and stream_raw_chunk events. Ephemeral, not persisted."
-        >
-          <input
-            type="checkbox"
-            checked={streamDebug}
-            onChange={(e) => {
-              setStreamDebug(e.target.checked);
-              configManager.setDebugStreamEnabled(e.target.checked);
-            }}
-            className="rounded"
-          />
-          Stream debug
-        </label>
-      </div>
-
-      {/* Events List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {filteredEvents.length === 0 ? (
-          <div className="text-xs text-muted-foreground text-center p-4">
-            No events yet. Events will appear here as they occur.
+      {activeTab === 'messages' ? (
+        <MessagesTab />
+      ) : (
+        <>
+          {/* Event Counts */}
+          <div className="p-2 border-b border-border bg-muted/20 text-xs">
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(eventCounts).map(([event, count]) => (
+                <button
+                  key={event}
+                  onClick={() => setFilter(filter === event ? '' : event)}
+                  className={`px-2 py-1 rounded ${
+                    filter === event
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted hover:bg-muted/80'
+                  }`}
+                >
+                  {event} ({count})
+                </button>
+              ))}
+            </div>
           </div>
-        ) : (
-          filteredEvents.map((event) => (
-            <EventItem key={event.id} event={event} />
-          ))
-        )}
-        <div ref={eventsEndRef} />
-      </div>
+
+          {/* Filter Input */}
+          <div className="p-2 border-b border-border">
+            <input
+              type="text"
+              placeholder="Filter events..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="w-full px-2 py-1 text-xs rounded bg-background border border-border"
+            />
+          </div>
+
+          {/* Toggles + actions */}
+          <div className="p-2 border-b border-border flex items-center gap-3 flex-wrap">
+            <label className="text-xs flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoScroll}
+                onChange={(e) => setAutoScroll(e.target.checked)}
+                className="rounded"
+              />
+              Auto-scroll
+            </label>
+            <label
+              className="text-xs flex items-center gap-1 cursor-pointer"
+              title="Emit llm_request and stream_raw_chunk events. Ephemeral, not persisted."
+            >
+              <input
+                type="checkbox"
+                checked={streamDebug}
+                onChange={(e) => {
+                  setStreamDebug(e.target.checked);
+                  configManager.setDebugStreamEnabled(e.target.checked);
+                }}
+                className="rounded"
+              />
+              Stream debug
+            </label>
+            <div className="ml-auto flex items-center">
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Expand all"
+                onClick={() => setEventsForce(v => ({ open: true, v: (v?.v ?? 0) + 1 }))}>
+                <ChevronsUpDown className="h-3 w-3" />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Collapse all"
+                onClick={() => setEventsForce(v => ({ open: false, v: (v?.v ?? 0) + 1 }))}>
+                <ChevronsDownUp className="h-3 w-3" />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Copy events as JSON" onClick={handleCopyEvents}>
+                <Copy className="h-3 w-3" />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Export to JSON file" onClick={handleExport}>
+                <Download className="h-3 w-3" />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Clear all events" onClick={handleClear}>
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Events List */}
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {filteredEvents.length === 0 ? (
+              <div className="text-xs text-muted-foreground text-center p-4">
+                No events yet. Events will appear here as they occur.
+              </div>
+            ) : (
+              filteredEvents.map((event) => (
+                <EventItem key={event.id} event={event} force={eventsForce} />
+              ))
+            )}
+            <div ref={eventsEndRef} />
+          </div>
+        </>
+      )}
 
     </PanelContainer>
   );
 }
 
-function EventItem({ event }: { event: DebugEvent }) {
+function EventItem({ event, force }: { event: DebugEvent; force?: ForceState }) {
   const [isOpen, setIsOpen] = useState(false);
+  // Expand/collapse-all override — rows remain individually toggleable after
+  useEffect(() => {
+    if (force) setIsOpen(force.open);
+  }, [force]);
   const time = new Date(event.timestamp).toLocaleTimeString();
 
   // Color code by event type

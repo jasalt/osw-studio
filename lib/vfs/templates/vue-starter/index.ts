@@ -1,5 +1,6 @@
 import { ProjectTemplate } from '../../project-templates';
 import { VUE_DOMAIN_PROMPT } from '@/lib/llm/prompts/vue';
+import { CANVAS_CSS, CANVAS_HTML } from '../utils';
 
 export const VUE_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
   name: 'Starter (Vue)',
@@ -15,8 +16,10 @@ export const VUE_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vue App</title>
     <link rel="stylesheet" href="/bundle.css">
+    <style>body{margin:0;background:#121212;min-height:100vh} ${CANVAS_CSS} #root{position:relative;z-index:1}</style>
 </head>
 <body>
+    ${CANVAS_HTML}
     <div id="root"></div>
     <script type="module" src="/bundle.js"></script>
 </body>
@@ -32,18 +35,24 @@ createApp(App).mount("#root");
     },
     {
       path: '/src/App.vue',
-      content: `<template>
-  <main>
-    <h1>Hello World</h1>
-  </main>
+      content: `<!--
+  Root component — build your UI here.
+
+  Add components in /src/components/Name.vue:
+    import Header from "./components/Header.vue";
+
+  Composition API:
+    const count = ref(0);
+    const doubled = computed(() => count.value * 2);
+-->
+
+<script setup>
+</script>
+
+<template>
 </template>
 
 <style scoped>
-main {
-  font-family: sans-serif;
-  text-align: center;
-  padding: 2rem;
-}
 </style>
 `
     },

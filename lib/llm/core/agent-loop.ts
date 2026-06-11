@@ -161,10 +161,31 @@ const NUDGE_MESSAGE = 'Before finishing, run the status command:\n  status --tas
 
 const TOOL_ERROR_RETRY_MESSAGE = 'Your previous command failed (likely a streaming issue). Continue your work — retry writing the file. If the file is large, split it into multiple smaller cat commands.';
 
+const REASONING_ONLY_RETRY_MESSAGE = 'Your previous response contained only reasoning — no tool call and no user-visible text reached the conversation. Do not stop after thinking: invoke the bash tool via function calling to act (e.g. command="ls /"), or reply with your answer as plain text.';
+
 const MAX_MALFORMED_RETRIES = 2;
+const MAX_REASONING_ONLY_RETRIES = 2;
+
+// Tool outputs at or above this size that byte-for-byte repeat an earlier
+// result in the live context are replaced with a marker. Small outputs
+// ("Command succeeded…", build acks) repeat legitimately and stay verbatim.
+const RESULT_DEDUP_MIN_CHARS = 500;
+
+const RESULT_DEDUP_MARKER = '(Output identical to a previous tool result above — not repeated to save context.)';
+
 const MALFORMED_THRESHOLD_FOR_REMINDER = 3;
 const PATTERN_REPEAT_THRESHOLD = 2;
 const PATTERN_WINDOW_SIZE = 8;
+
+/**
+ * Wrap a harness-injected message so the model (and anyone reading the
+ * history) can distinguish it from genuine user input. Still sent with
+ * role 'user' — models weight user messages far more reliably than system
+ * messages deep into a conversation.
+ */
+function harnessMessage(text: string): string {
+  return `<automated_reminder>\n${text}\n</automated_reminder>`;
+}
 
 // --- Status result type ---
 
@@ -186,11 +207,16 @@ export class AgentLoop {
   private nudgeCount = 0;
   private malformedToolCallRetries = 0;
   private totalMalformedToolCalls = 0;
+  private reasoningOnlyRetries = 0;
   private lastToolCallSignature: string | null = null;
   private duplicateToolCallCount = 0;
   private recentToolSignatures: string[] = [];
   private lastIterationHadToolError = false;
   private lastStatusResult: StatusResult | null = null;
+  // Context size from THIS loop's most recent response. Do not read promptTokens
+  // from the shared CostTracker — parallel child loops record into it too, so
+  // its last value may describe another loop's context.
+  private lastPromptTokens = 0;
 
   private config: AgentLoopConfig;
   private provider: ProviderAdapter;
@@ -244,7 +270,7 @@ export class AgentLoop {
       let response: ParsedResponse;
       try {
         response = await this.provider.call({
-          messages: this.context.getMessages(),
+          messages: this.context.getSanitizedMessages(),
           tools: this.executor.getDefinitions(this.config.agentType),
           signal: this.abortController.signal,
         });
@@ -261,7 +287,7 @@ export class AgentLoop {
             break;
           }
           // 'continue' - inject error feedback and retry
-          this.context.addUserMessage(`⚠️ ${error.message}\n\nPlease try a different approach.`);
+          this.context.addUserMessage(harnessMessage(`⚠️ ${error.message}\n\nPlease try a different approach.`));
           continue;
         }
         throw error;
@@ -272,6 +298,7 @@ export class AgentLoop {
       // Record usage/cost
       if (response.usage) {
         this.cost.record(response.usage, this.provider.getProvider(), this.provider.getModel());
+        if (response.usage.promptTokens) this.lastPromptTokens = response.usage.promptTokens;
       }
 
       // Filter harmony artifacts from tool calls
@@ -305,7 +332,7 @@ export class AgentLoop {
             if (this.totalMalformedToolCalls >= MALFORMED_THRESHOLD_FOR_REMINDER) {
               errorMessage += MALFORMED_TOOL_CALL_PERSISTENT_REMINDER;
             }
-            this.context.addUserMessage(errorMessage);
+            this.context.addUserMessage(harnessMessage(errorMessage));
             this.progress.onEvent('malformed_tool_call', {
               retry: this.malformedToolCallRetries,
               maxRetries: MAX_MALFORMED_RETRIES,
@@ -317,23 +344,28 @@ export class AgentLoop {
         }
       } else if (response.toolCalls && response.toolCalls.length > 0) {
         this.malformedToolCallRetries = 0;
+        this.reasoningOnlyRetries = 0;
       }
 
       // --- NO TOOL CALLS: model wants to finish ---
       if (!response.toolCalls || response.toolCalls.length === 0) {
         const hasContent = !!(response.content && response.content.trim());
+        const hasReasoning = !!response.reasoningDetails?.length;
 
         // Explore/plan/setup agents exit immediately
         if (this.config.agentType === 'explore' || this.config.agentType === 'plan' || this.config.agentType === 'setup') {
           if (hasContent) {
-            this.context.addAssistantTurn({ content: response.content });
+            this.context.addAssistantTurn({ content: response.content, reasoningDetails: response.reasoningDetails });
           }
           exitReason = 'agent_type_exit';
           break;
         }
 
-        if (hasContent) {
-          this.context.addAssistantTurn({ content: response.content });
+        // Persist the turn even when it is reasoning-only — dropping it would
+        // erase the model's own thinking from history, so retries start from
+        // scratch and produce near-identical reasoning every iteration.
+        if (hasContent || hasReasoning) {
+          this.context.addAssistantTurn({ content: response.content, reasoningDetails: response.reasoningDetails });
         }
 
         // Check structured status result
@@ -341,7 +373,7 @@ export class AgentLoop {
           if (this.lastStatusResult.complete) {
             const gateResult = await this.runCompletionGate();
             if (gateResult) {
-              this.context.addUserMessage(gateResult);
+              this.context.addUserMessage(harnessMessage(gateResult));
               this.lastStatusResult = null;
               continue;
             }
@@ -359,7 +391,7 @@ export class AgentLoop {
             if (!rem || rem === 'none' || rem === 'n/a' || rem === 'nothing') {
               const gateResult = await this.runCompletionGate();
               if (gateResult) {
-                this.context.addUserMessage(gateResult);
+                this.context.addUserMessage(harnessMessage(gateResult));
                 this.lastStatusResult = null;
                 continue;
               }
@@ -377,8 +409,22 @@ export class AgentLoop {
         // After tool error + empty response: inject retry prompt
         if (this.lastIterationHadToolError && !hasContent) {
           this.lastIterationHadToolError = false;
-          this.context.addUserMessage(TOOL_ERROR_RETRY_MESSAGE);
+          this.context.addUserMessage(harnessMessage(TOOL_ERROR_RETRY_MESSAGE));
           this.progress.onEvent('tool_error_retry', { iteration });
+          continue;
+        }
+
+        // Reasoning-only response: the model thought but never acted (its tool
+        // call was lost upstream or never emitted). The status nudge is the
+        // wrong feedback here — tell it directly to act via function calling.
+        if (!hasContent && hasReasoning && this.reasoningOnlyRetries < MAX_REASONING_ONLY_RETRIES) {
+          this.reasoningOnlyRetries++;
+          this.progress.onEvent('reasoning_only_retry', {
+            attempt: this.reasoningOnlyRetries,
+            max: MAX_REASONING_ONLY_RETRIES,
+            iteration,
+          });
+          this.context.addUserMessage(harnessMessage(REASONING_ONLY_RETRY_MESSAGE));
           continue;
         }
 
@@ -386,7 +432,7 @@ export class AgentLoop {
         if (this.nudgeCount < this.config.maxNudges) {
           this.nudgeCount++;
           this.progress.onEvent('nudge', { attempt: this.nudgeCount, max: this.config.maxNudges });
-          this.context.addUserMessage(NUDGE_MESSAGE);
+          this.context.addUserMessage(harnessMessage(NUDGE_MESSAGE));
           continue;
         }
 
@@ -397,26 +443,28 @@ export class AgentLoop {
       }
 
       // --- HAS TOOL CALLS: execute them ---
-      const toolResults = await this.executeToolCalls(response.toolCalls);
+      const { results: toolResults, terminated } = await this.executeToolCalls(response.toolCalls);
 
-      // If execution was terminated by duplicate detection
-      if (toolResults === null) {
+      // Add assistant + tool results to context. Executed tools may have had
+      // side effects, so they must be committed even when terminating —
+      // getSanitizedMessages() synthesizes placeholders for unexecuted calls.
+      this.context.addAssistantTurn(response);
+      this.context.addToolResults(toolResults);
+
+      // If execution was terminated by duplicate/pattern detection
+      if (terminated) {
         exitReason = 'loop_detected';
         break;
       }
 
-      // Add assistant + tool results to context
-      this.context.addAssistantTurn(response);
-      this.context.addToolResults(toolResults);
-
       // Track tool errors
       this.lastIterationHadToolError = toolResults.some(r => !r.success);
 
-      // Check compaction — use reported prompt tokens, fall back to local estimate
-      const promptTokens = this.cost.getTotalUsage().promptTokens || this.context.getTokenEstimate();
+      // Check compaction — use this loop's reported prompt tokens, fall back to local estimate
+      const promptTokens = this.lastPromptTokens || this.context.getTokenEstimate();
       if (this.context.needsCompaction(promptTokens)) {
         const preTokens = promptTokens;
-        const compactionUsage = await this.context.compact(this.provider);
+        const compactionUsage = await this.context.compact(this.provider, { signal: this.abortController.signal });
         if (compactionUsage) {
           this.cost.record(compactionUsage, this.provider.getProvider(), this.provider.getModel());
         }
@@ -453,7 +501,7 @@ export class AgentLoop {
       if (this.lastStatusResult?.complete) {
         const gateResult = await this.runCompletionGate();
         if (gateResult) {
-          this.context.addUserMessage(gateResult);
+          this.context.addUserMessage(harnessMessage(gateResult));
           this.lastStatusResult = null;
           continue;
         }
@@ -481,6 +529,7 @@ export class AgentLoop {
     return {
       success,
       summary,
+      exitReason,
       totalCost: this.cost.getTotalCost(),
       totalUsage: this.cost.getTotalUsage(),
       toolCount: this.toolCallCount,
@@ -490,13 +539,15 @@ export class AgentLoop {
 
   /**
    * Execute tool calls with duplicate/pattern detection.
-   * Returns null if execution was terminated due to loop detection.
+   * `terminated` is true when execution stopped early due to loop detection;
+   * `results` always contains everything that actually executed.
    */
-  private async executeToolCalls(toolCalls: ToolCall[]): Promise<ToolResult[] | null> {
+  private async executeToolCalls(toolCalls: ToolCall[]): Promise<{ results: ToolResult[]; terminated: boolean }> {
     const results: ToolResult[] = [];
     const execContext: ToolExecContext = {
       agentType: this.config.agentType,
       isReadOnly: this.config.isReadOnly,
+      turnId: this.turnCount,
     };
 
     for (const toolCall of toolCalls) {
@@ -524,7 +575,7 @@ export class AgentLoop {
         // Terminate if too many consecutive duplicates
         if (this.duplicateToolCallCount >= this.config.maxDuplicateToolCalls) {
           this.progress.onEvent('exit_reason', { reason: 'loop_detected', duplicates: this.duplicateToolCallCount });
-          return null;
+          return { results, terminated: true };
         }
 
         continue;
@@ -543,14 +594,14 @@ export class AgentLoop {
         const repeating = detectRepeatingPattern(this.recentToolSignatures, PATTERN_REPEAT_THRESHOLD);
         if (repeating) {
           this.progress.onEvent('exit_reason', { reason: 'pattern_detected', cycleLength: repeating });
-          return null;
+          return { results, terminated: true };
         }
       }
 
       // Execute the tool (tool-executor emits tool_status events)
       try {
         const result = await this.executor.execute(toolCall, execContext);
-        results.push(result);
+        results.push(this.dedupRepeatedResult(result, results));
         this.toolCallCount++;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -568,7 +619,25 @@ export class AgentLoop {
       }
     }
 
-    return results;
+    return { results, terminated: false };
+  }
+
+  /**
+   * Replace a large tool output with a marker when an identical result is
+   * already in the live context (e.g. re-reading an unchanged file). Only
+   * matches verbatim copies still present post-compaction — if the earlier
+   * copy was compacted away or truncated, the fresh output is kept.
+   */
+  private dedupRepeatedResult(result: ToolResult, currentBatch: ToolResult[]): ToolResult {
+    if (!result.success || result.content.length < RESULT_DEDUP_MIN_CHARS) return result;
+
+    const seenInContext = this.context.getMessages().some(
+      m => m.role === 'tool' && typeof m.content === 'string' && m.content === result.content
+    );
+    const seenInBatch = currentBatch.some(r => r.content === result.content);
+    if (!seenInContext && !seenInBatch) return result;
+
+    return { ...result, content: RESULT_DEDUP_MARKER };
   }
 
   /**

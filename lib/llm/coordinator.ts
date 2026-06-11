@@ -26,6 +26,14 @@ export interface CoordinatorConfig {
   chatMode: boolean;
   compactionConfig: CompactionConfig;
   buildSystemPrompt: (agentType: string) => Promise<string>;
+  /**
+   * Build a provider/executor scoped to a child agent's progress reporter.
+   * Without these, children share the parent's instances — whose progress
+   * events (streaming deltas, tool statuses) leak unwrapped into the main
+   * UI channel instead of being nested under agent_progress.
+   */
+  createChildProvider?: (progress: ProgressReporter) => ProviderAdapter;
+  createChildExecutor?: (progress: ProgressReporter) => ToolExecutor;
 }
 
 export class MultiAgentCoordinator {
@@ -33,6 +41,12 @@ export class MultiAgentCoordinator {
   private runningChildren = new Set<AgentLoop>();
   private stopped = false;
   private lastAgentKey = '';
+  private lastAgentTurnId: number | null = null;
+
+  /** Child-loop events forwarded to the parent UI, wrapped in agent_progress. */
+  private static readonly FORWARDED_CHILD_EVENTS = new Set([
+    'tool_status', 'tool_result', 'error', 'stopped', 'nudge', 'exit_reason',
+  ]);
 
   private static readonly MAX_PARALLEL_AGENTS = 8;
 
@@ -59,21 +73,32 @@ export class MultiAgentCoordinator {
         const cmd = this.extractCmd(toolCall);
         const agents = this.parseAgentCommand(cmd);
         if (agents && context.agentType === 'orchestrator') {
-          // Dedup: some models emit the same agent command as multiple tool calls in one turn.
-          // Skip if the normalized prompt set matches the last agent call.
+          // Dedup: some models emit the same agent command as multiple tool calls
+          // in one turn. Only dedup within the same turn — an identical
+          // re-delegation in a later turn is legitimate.
           const key = agents.map(a => `${a.type}:${a.prompt.trim()}`).sort().join('|');
-          if (key === this.lastAgentKey) {
+          const turnId = context.turnId ?? null;
+          if (key === this.lastAgentKey && turnId !== null && turnId === this.lastAgentTurnId) {
             return {
               tool_call_id: toolCall.id,
               content: '(Duplicate agent call — already executed this turn. Results are above.)',
               success: true,
             };
           }
-          this.lastAgentKey = key;
           const result = await this.runAgents(agents);
+          // Don't record errored batches as executed — a retry must run, not
+          // get a false "already executed" response.
+          if (result.startsWith('Error:')) {
+            this.lastAgentKey = '';
+            this.lastAgentTurnId = null;
+          } else {
+            this.lastAgentKey = key;
+            this.lastAgentTurnId = turnId;
+          }
           return { tool_call_id: toolCall.id, content: result, success: true };
         }
         this.lastAgentKey = '';
+        this.lastAgentTurnId = null;
         return this.innerExecutor.execute(toolCall, context);
       },
     };
@@ -225,6 +250,7 @@ export class MultiAgentCoordinator {
     }
 
     const promptLabel = prompt.length > 80 ? prompt.slice(0, 80) + '...' : prompt;
+    const startedAt = Date.now();
     this.config.progress.onEvent('agent_progress', {
       type,
       event: 'agent_start',
@@ -232,8 +258,27 @@ export class MultiAgentCoordinator {
       agentPrompt: promptLabel,
     });
 
-    // Create fresh context for child
-    const childContext = new ContextManagerImpl(this.config.compactionConfig);
+    // One scoped reporter for the child's loop, provider, and executor —
+    // everything the child emits is filtered and wrapped in agent_progress.
+    const childProgress: ProgressReporter = {
+      onEvent: (event: string, data?: Record<string, unknown>) => {
+        if (!MultiAgentCoordinator.FORWARDED_CHILD_EVENTS.has(event)) return;
+        this.config.progress.onEvent('agent_progress', {
+          type,
+          event,
+          data,
+          agentIndex,
+          agentPrompt: promptLabel,
+        });
+      },
+    };
+
+    // Create fresh context for child. The child's system prompt differs from the
+    // orchestrator's, so the parent's getFreshContext must not leak into it.
+    const childContext = new ContextManagerImpl({
+      ...this.config.compactionConfig,
+      getFreshContext: undefined,
+    });
     const systemPrompt = await this.config.buildSystemPrompt(type);
     childContext.setSystemPrompt(systemPrompt);
 
@@ -247,25 +292,11 @@ export class MultiAgentCoordinator {
 
     const childLoop = new AgentLoop({
       config: childConfig,
-      provider: this.config.provider,
-      executor: this.innerExecutor, // Inner — children cannot spawn sub-agents
+      provider: this.config.createChildProvider?.(childProgress) ?? this.config.provider,
+      // Inner-level executor — children cannot spawn sub-agents
+      executor: this.config.createChildExecutor?.(childProgress) ?? this.innerExecutor,
       context: childContext,
-      progress: {
-        onEvent: (event: string, data?: Record<string, unknown>) => {
-          const FORWARDED = new Set([
-            'tool_status', 'tool_result', 'error', 'stopped', 'nudge', 'exit_reason',
-          ]);
-          if (FORWARDED.has(event)) {
-            this.config.progress.onEvent('agent_progress', {
-              type,
-              event,
-              data,
-              agentIndex,
-              agentPrompt: promptLabel,
-            });
-          }
-        },
-      },
+      progress: childProgress,
       cost: this.config.cost, // Shared — accumulates into parent
     });
 
@@ -296,7 +327,11 @@ export class MultiAgentCoordinator {
       event: 'agent_done',
       agentIndex,
       agentPrompt: promptLabel,
-      data: { body: body.slice(0, 120), success: result.success },
+      data: {
+        body: body.slice(0, 120),
+        success: result.success,
+        elapsed: Math.round((Date.now() - startedAt) / 1000),
+      },
     });
 
     return { type, prompt, body };

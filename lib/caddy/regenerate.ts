@@ -111,7 +111,7 @@ export async function regenerateInstanceCaddy(): Promise<void> {
 
     // Write to disk so Caddy restarts pick up the config
     const caddyfilePath = process.env.CADDYFILE_PATH || '/etc/caddy/Caddyfile';
-    const { promises: fs } = require('fs');
+    const { promises: fs } = await import('fs');
     await fs.writeFile(caddyfilePath, config, 'utf-8').catch(() => {});
 
     // Reload via admin API for immediate effect

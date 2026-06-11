@@ -1,5 +1,6 @@
 import { ProjectTemplate } from '../../project-templates';
 import { SVELTE_DOMAIN_PROMPT } from '@/lib/llm/prompts/svelte';
+import { CANVAS_CSS, CANVAS_HTML } from '../utils';
 
 export const SVELTE_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
   name: 'Starter (Svelte)',
@@ -15,8 +16,10 @@ export const SVELTE_STARTER_PROJECT_TEMPLATE: ProjectTemplate = {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Svelte App</title>
     <link rel="stylesheet" href="/bundle.css">
+    <style>body{margin:0;background:#121212;min-height:100vh} ${CANVAS_CSS} #root{position:relative;z-index:1}</style>
 </head>
 <body>
+    ${CANVAS_HTML}
     <div id="root"></div>
     <script type="module" src="/bundle.js"></script>
 </body>
@@ -32,16 +35,22 @@ mount(App, { target: document.getElementById("root")! });
     },
     {
       path: '/src/App.svelte',
-      content: `<main>
-  <h1>Hello World</h1>
-</main>
+      content: `<!--
+  Root component — build your UI here.
+
+  Add components in /src/components/Name.svelte:
+    import Header from "./components/Header.svelte";
+
+  Svelte 5 runes:
+    let count = $state(0);
+    let doubled = $derived(count * 2);
+    $effect(() => { console.log(count); });
+-->
+
+<script>
+</script>
 
 <style>
-  main {
-    font-family: sans-serif;
-    text-align: center;
-    padding: 2rem;
-  }
 </style>
 `
     },

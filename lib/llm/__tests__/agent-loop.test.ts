@@ -52,6 +52,7 @@ function createMockContext(): ContextManager {
   const messages: Message[] = [];
   return {
     getMessages: () => messages,
+    getSanitizedMessages: () => messages,
     setSystemPrompt: vi.fn((prompt: string) => {
       if (messages.length > 0 && messages[0].role === 'system') {
         messages[0] = { role: 'system', content: prompt };
@@ -599,5 +600,369 @@ describe('AgentLoop', () => {
 
     await loop.run('Build something');
     expect(context.compact).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentLoop history integrity and retry safeguards', () => {
+  const statusToolCall = (id: string): ToolCall => ({
+    id,
+    type: 'function',
+    function: { name: 'bash', arguments: '{"command":"status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete"}' },
+  });
+  const statusResultFor = (id: string): ToolResult => ({
+    tool_call_id: id,
+    content: 'ok',
+    success: true,
+    signals: { statusComplete: true, statusResult: { task: 't', done: 'd', remaining: 'none', complete: true, hasExplicitFlag: true } },
+  });
+
+  it('sends sanitized messages (orphan repair) to the provider', async () => {
+    const sanitized: Message[] = [{ role: 'user', content: 'SANITIZED' }];
+    const context = createMockContext();
+    context.getSanitizedMessages = () => sanitized;
+    const provider = createMockProvider([{ content: 'findings' }]);
+
+    const loop = new AgentLoop({
+      config: defaultConfig({ agentType: 'explore' }),
+      provider,
+      executor: createMockExecutor(),
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('hi');
+
+    const sentMessages = (provider.call as ReturnType<typeof vi.fn>).mock.calls[0][0].messages;
+    expect(sentMessages).toBe(sanitized);
+  });
+
+  it('uses its own last response promptTokens for compaction, not the shared cost tracker', async () => {
+    // Shared tracker reports a small (child-contaminated) value; this loop's own
+    // response reported 90000 prompt tokens — compaction must use 90000.
+    const provider = createMockProvider([
+      { content: '', toolCalls: [statusToolCall('tc1')], usage: { promptTokens: 90000, completionTokens: 500, totalTokens: 90500 } },
+      { content: 'Done.' },
+    ]);
+    const context = createMockContext();
+    context.getTokenEstimate = () => 5000;
+    const needsCompaction = vi.fn((tokenCount: number) => tokenCount >= 80000);
+    context.needsCompaction = needsCompaction;
+
+    const cost = createMockCost();
+    cost.getTotalUsage = () => ({ promptTokens: 50, completionTokens: 0, totalTokens: 50 });
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor: createMockExecutor(new Map([['tc1', statusResultFor('tc1')]])),
+      context,
+      progress: createMockProgress(),
+      cost,
+    });
+    await loop.run('Build something');
+
+    expect(needsCompaction).toHaveBeenCalledWith(90000);
+    expect(context.compact).toHaveBeenCalled();
+  });
+
+  it('commits executed tool results to context before terminating on loop detection', async () => {
+    const dup = (id: string): ToolCall => ({
+      id,
+      type: 'function',
+      function: { name: 'bash', arguments: '{"command":"ls"}' },
+    });
+    // One batch: first call executes, the next 3 identical calls trip the
+    // duplicate cap (maxDuplicateToolCalls: 3) mid-batch.
+    const provider = createMockProvider([
+      { content: '', toolCalls: [dup('a'), dup('b'), dup('c'), dup('d')] },
+    ]);
+    const context = createMockContext();
+
+    const loop = new AgentLoop({
+      config: defaultConfig({ maxDuplicateToolCalls: 3 }),
+      provider,
+      executor: createMockExecutor(),
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    const result = await loop.run('Do something');
+
+    expect(result.summary).toContain('loop');
+    // The assistant turn and the executed result for 'a' must be in history
+    expect(context.addAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(context.addToolResults).toHaveBeenCalled();
+    const committed = (context.addToolResults as ReturnType<typeof vi.fn>).mock.calls[0][0] as ToolResult[];
+    expect(committed.some(r => r.tool_call_id === 'a' && r.success)).toBe(true);
+  });
+
+  it('passes a per-turn turnId to the tool executor context', async () => {
+    const call = (id: string, cmd: string): ToolCall => ({
+      id,
+      type: 'function',
+      function: { name: 'bash', arguments: `{"command":"${cmd}"}` },
+    });
+    const provider = createMockProvider([
+      { content: '', toolCalls: [call('t1', 'ls')] },
+      { content: '', toolCalls: [call('t2', 'status --task \\"t\\" --done \\"d\\" --remaining \\"none\\" --complete')] },
+      { content: 'Done.' },
+    ]);
+    const turnIds: Array<number | undefined> = [];
+    const executor: ToolExecutor = {
+      execute: vi.fn(async (toolCall: ToolCall, ctx) => {
+        turnIds.push(ctx.turnId);
+        if (toolCall.id === 't2') return statusResultFor('t2');
+        return { tool_call_id: toolCall.id, content: 'OK', success: true };
+      }),
+      getDefinitions: () => [{ name: 'bash', description: 'Run shell', parameters: {} }],
+    };
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor,
+      context: createMockContext(),
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('Do something');
+
+    expect(turnIds).toEqual([1, 2]);
+  });
+
+  it('passes its abort signal to compact()', async () => {
+    const provider = createMockProvider([
+      { content: '', toolCalls: [statusToolCall('tc1')], usage: { promptTokens: 90000, completionTokens: 1, totalTokens: 90001 } },
+      { content: 'Done.' },
+    ]);
+    const context = createMockContext();
+    context.needsCompaction = (tokenCount: number) => tokenCount >= 80000;
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor: createMockExecutor(new Map([['tc1', statusResultFor('tc1')]])),
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('Build something');
+
+    const compactOpts = (context.compact as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(compactOpts?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('persists reasoning-only turns and injects a targeted retry instead of the status nudge', async () => {
+    const reasoningOnly = {
+      content: '',
+      reasoningDetails: [{ type: 'thinking', text: 'I should check index.html first.' }],
+    };
+    const provider = createMockProvider([
+      reasoningOnly,
+      { content: '', toolCalls: [statusToolCall('tc1')] },
+      { content: 'Done.' },
+    ]);
+    const context = createMockContext();
+    const progress = createMockProgress();
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor: createMockExecutor(new Map([['tc1', statusResultFor('tc1')]])),
+      context,
+      progress,
+      cost: createMockCost(),
+    });
+    const result = await loop.run('Build a landing page');
+
+    // The reasoning-only assistant turn must be persisted with its reasoning details
+    const assistantTurns = (context.addAssistantTurn as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+    expect(assistantTurns.some(r => r.reasoningDetails?.length && !r.content)).toBe(true);
+
+    // The injected user message must be the targeted retry, not the status nudge
+    const userMessages = (context.addUserMessage as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+    const retryMsg = userMessages.find((m: string) => typeof m === 'string' && m.includes('only reasoning'));
+    expect(retryMsg).toBeDefined();
+    expect(userMessages.some((m: string) => typeof m === 'string' && m.includes('status command'))).toBe(false);
+
+    expect((progress.onEvent as ReturnType<typeof vi.fn>).mock.calls.some(c => c[0] === 'reasoning_only_retry')).toBe(true);
+    expect(result.success).toBe(true);
+  });
+
+  it('falls back to status nudges after reasoning-only retries are exhausted', async () => {
+    const reasoningOnly = () => ({
+      content: '',
+      reasoningDetails: [{ type: 'thinking', text: 'Thinking again from scratch.' }],
+    });
+    const provider = createMockProvider([
+      reasoningOnly(), reasoningOnly(), reasoningOnly(), reasoningOnly(), reasoningOnly(),
+    ]);
+    const progress = createMockProgress();
+
+    const loop = new AgentLoop({
+      config: defaultConfig({ maxNudges: 1 }),
+      provider,
+      executor: createMockExecutor(),
+      context: createMockContext(),
+      progress,
+      cost: createMockCost(),
+    });
+    const result = await loop.run('Build a landing page');
+
+    const retryEvents = (progress.onEvent as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[0] === 'reasoning_only_retry');
+    expect(retryEvents).toHaveLength(2);
+    expect(result.success).toBe(false);
+    expect(result.exitReason).toBe('nudge_exhaustion');
+  });
+
+  it('keeps reasoning details on assistant turns that have content', async () => {
+    const provider = createMockProvider([
+      { content: 'Here is my answer.', reasoningDetails: [{ type: 'thinking', text: 'Considered options.' }] },
+      { content: '', toolCalls: [statusToolCall('tc1')] },
+      { content: 'Done.' },
+    ]);
+    const context = createMockContext();
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor: createMockExecutor(new Map([['tc1', statusResultFor('tc1')]])),
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('Question');
+
+    const assistantTurns = (context.addAssistantTurn as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0]);
+    const withContent = assistantTurns.find(r => r.content === 'Here is my answer.');
+    expect(withContent?.reasoningDetails?.length).toBe(1);
+  });
+
+  it('wraps synthetic harness messages in automated_reminder tags, but never the real user prompt', async () => {
+    // Run produces: reasoning-only retry, then text-only nudges
+    const provider = createMockProvider([
+      { content: '', reasoningDetails: [{ type: 'thinking', text: 'hmm' }] },
+      { content: 'text without status' },
+      { content: 'more text' },
+    ]);
+    const context = createMockContext();
+
+    const loop = new AgentLoop({
+      config: defaultConfig({ maxNudges: 1 }),
+      provider,
+      executor: createMockExecutor(),
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('Build a landing page');
+
+    const userMessages = (context.addUserMessage as ReturnType<typeof vi.fn>).mock.calls
+      .map(c => c[0])
+      .filter((m): m is string => typeof m === 'string');
+
+    // The real user prompt is untouched
+    expect(userMessages[0]).toBe('Build a landing page');
+    // Every synthetic injection is wrapped
+    const synthetic = userMessages.slice(1);
+    expect(synthetic.length).toBeGreaterThan(0);
+    for (const msg of synthetic) {
+      expect(msg.startsWith('<automated_reminder>')).toBe(true);
+      expect(msg.endsWith('</automated_reminder>')).toBe(true);
+    }
+  });
+
+  it('replaces large repeated tool outputs with a dedup marker', async () => {
+    const bigContent = 'SKILL FILE CONTENT '.repeat(50); // ~950 chars
+    const call = (id: string, cmd: string): ToolCall => ({
+      id,
+      type: 'function',
+      function: { name: 'bash', arguments: JSON.stringify({ command: cmd }) },
+    });
+    const provider = createMockProvider([
+      { content: '', toolCalls: [call('t1', 'cat /skill.md')] },
+      { content: '', toolCalls: [call('t2', 'head -n 999 /skill.md')] },
+      { content: '', toolCalls: [call('t3', 'status --task "t" --done "d" --remaining "none" --complete')] },
+      { content: 'Done.' },
+    ]);
+    const executor: ToolExecutor = {
+      execute: vi.fn(async (toolCall: ToolCall) => {
+        if (toolCall.id === 't3') return statusResultFor('t3');
+        return { tool_call_id: toolCall.id, content: bigContent, success: true };
+      }),
+      getDefinitions: () => [{ name: 'bash', description: 'Run shell', parameters: {} }],
+    };
+    const context = createMockContext();
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor,
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('Do something');
+
+    const toolBatches = (context.addToolResults as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0] as ToolResult[]);
+    // First read keeps full content
+    expect(toolBatches[0][0].content).toBe(bigContent);
+    // Identical repeat is replaced with a marker
+    expect(toolBatches[1][0].content).not.toBe(bigContent);
+    expect(toolBatches[1][0].content).toContain('identical');
+    expect(toolBatches[1][0].success).toBe(true);
+  });
+
+  it('does not dedup small repeated tool outputs', async () => {
+    const call = (id: string, cmd: string): ToolCall => ({
+      id,
+      type: 'function',
+      function: { name: 'bash', arguments: JSON.stringify({ command: cmd }) },
+    });
+    const provider = createMockProvider([
+      { content: '', toolCalls: [call('t1', 'mkdir /a')] },
+      { content: '', toolCalls: [call('t2', 'mkdir /b')] },
+      { content: '', toolCalls: [call('t3', 'status --task "t" --done "d" --remaining "none" --complete')] },
+      { content: 'Done.' },
+    ]);
+    const executor: ToolExecutor = {
+      execute: vi.fn(async (toolCall: ToolCall) => {
+        if (toolCall.id === 't3') return statusResultFor('t3');
+        return { tool_call_id: toolCall.id, content: 'Command succeeded with no output', success: true };
+      }),
+      getDefinitions: () => [{ name: 'bash', description: 'Run shell', parameters: {} }],
+    };
+    const context = createMockContext();
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor,
+      context,
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    await loop.run('Do something');
+
+    const toolBatches = (context.addToolResults as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0] as ToolResult[]);
+    expect(toolBatches[1][0].content).toBe('Command succeeded with no output');
+  });
+
+  it('reports the exit reason in the loop result', async () => {
+    const provider = createMockProvider([
+      { content: 'text only' },
+      { content: 'more text' },
+      { content: 'final text' },
+    ]);
+    const loop = new AgentLoop({
+      config: defaultConfig({ maxNudges: 2 }),
+      provider,
+      executor: createMockExecutor(),
+      context: createMockContext(),
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+    const result = await loop.run('Do something');
+    expect(result.exitReason).toBe('nudge_exhaustion');
   });
 });

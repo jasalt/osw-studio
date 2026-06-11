@@ -502,11 +502,26 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           { chatMode, model: modelToUse },
         );
 
-        // Only bootstrap conversation if viewing this project
+        // Only bootstrap conversation if viewing this project.
+        // Compaction rewrites the conversation via a conversation_replaced
+        // event — rebuild from the last one so the compacted context (with its
+        // summary) is restored instead of the full pre-compaction history.
         if (get().projectId === projectId) {
-          const conversationMessages = get().debugEvents
+          const events = get().debugEvents;
+          let baseMessages: unknown[] = [];
+          let replacedIdx = -1;
+          for (let i = events.length - 1; i >= 0; i--) {
+            if (events[i].event === 'conversation_replaced') {
+              baseMessages = (events[i].data?.messages as unknown[]) ?? [];
+              replacedIdx = i;
+              break;
+            }
+          }
+          const subsequentMessages = events
+            .slice(replacedIdx + 1)
             .filter(event => event.event === 'conversation_message')
             .map(event => event.data.message);
+          const conversationMessages = [...baseMessages, ...subsequentMessages];
 
           if (conversationMessages.length > 0) {
             orchestrator.importConversation(conversationMessages);
@@ -557,12 +572,17 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
         if (isForeground) playTaskCompleteSoundSubtle();
         toast.success('Task completed');
       } else {
-        track('task_fail', {
-          provider: currentProvider, model: modelToUse, reason: 'api_error',
-          duration_ms: Date.now() - taskStartTime, task_id: taskId,
-          tool_count: result.toolCount ?? 0, turn_count: result.turnCount ?? 0,
-          api_error_count: result.apiErrorCount ?? 0,
-        });
+        // User-initiated stops are not failures: stopGeneration already
+        // tracked task_fail (reason: stopped) and the user expects no error.
+        const wasStopped = result.exitReason === 'stopped' || result.exitReason === 'error_stop';
+        if (!wasStopped) {
+          track('task_fail', {
+            provider: currentProvider, model: modelToUse, reason: 'api_error',
+            duration_ms: Date.now() - taskStartTime, task_id: taskId,
+            tool_count: result.toolCount ?? 0, turn_count: result.turnCount ?? 0,
+            api_error_count: result.apiErrorCount ?? 0,
+          });
+        }
 
         const failForeground = isTabVisible() && get().projectId === projectId;
         const failTasks = new Map(get().generationTasks);
@@ -575,7 +595,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           }
         }
         set({ generationTasks: failTasks, ...deriveScalarFields(failTasks, get().projectId) });
-        toast.error(result.summary || 'Generation failed', { duration: 5000, position: 'bottom-center' });
+        if (!wasStopped) {
+          toast.error(result.summary || 'Generation failed', { duration: 5000, position: 'bottom-center' });
+        }
       }
     } catch (error) {
       logger.error('Generation error:', error);

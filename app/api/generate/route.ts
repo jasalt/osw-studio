@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider, getDefaultModel } from '@/lib/llm/providers/registry';
-import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock, ReasoningDetail } from '@/lib/llm/types';
+import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock } from '@/lib/llm/types';
+import { applyReasoningReplayPolicy } from '@/lib/llm/reasoning-replay';
+import { consolidateSystemMessages } from '@/lib/llm/consolidate-system-messages';
 import { logger } from '@/lib/utils';
 import { handleCodexGeneration } from '@/lib/llm/codex-adapter';
 
@@ -159,7 +161,7 @@ export async function POST(request: NextRequest) {
     const selectedProvider: ProviderId = provider || 'openrouter';
     const providerConfig = getProvider(selectedProvider);
 
-    let apiKey = clientApiKey;
+    const apiKey = clientApiKey;
 
     if (!prompt && !messages) {
       return NextResponse.json(
@@ -405,23 +407,12 @@ Habits:
       });
     }
 
-    // Convert reasoning_details → reasoning_content on assistant messages for providers
-    // that require reasoning to be passed back as a string (OpenRouter/DeepSeek/Zhipu).
-    // The streaming parser stores structured reasoning_details for internal use, but
-    // the API expects reasoning_content (string) on input messages for multi-turn replay.
+    // Apply the per-model reasoning replay policy: DeepSeek/GLM/MiniMax get prior
+    // reasoning back as reasoning_content (their APIs require it); other models
+    // (e.g. Qwen — whose template forbids replayed thinking) get reasoning-only
+    // turns promoted to plain assistant content instead. See lib/llm/reasoning-replay.ts.
     if (selectedProvider !== 'anthropic') {
-      for (const msg of processedMessages) {
-        if (msg.role === 'assistant' && msg.reasoning_details?.length) {
-          const reasoningText = msg.reasoning_details
-            .filter((rd: ReasoningDetail) => rd.text)
-            .map((rd: ReasoningDetail) => rd.text)
-            .join('');
-          if (reasoningText) {
-            (msg as Record<string, unknown>).reasoning_content = reasoningText;
-          }
-          delete (msg as Record<string, unknown>).reasoning_details;
-        }
-      }
+      applyReasoningReplayPolicy(processedMessages, model || '');
     }
 
     // Sanitize tool_calls: replace invalid JSON arguments with '{}' so providers
@@ -437,6 +428,10 @@ Habits:
         }
       }
     }
+
+    // Consolidate system messages: some providers (e.g. Ambient on OpenRouter) reject
+    // system messages at any position other than [0].
+    processedMessages = consolidateSystemMessages(processedMessages);
 
     // --- All other providers: OpenAI-compatible request body ---
     const requestBody: Record<string, unknown> = {

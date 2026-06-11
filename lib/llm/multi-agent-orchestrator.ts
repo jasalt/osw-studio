@@ -40,7 +40,7 @@ import { ContextManagerImpl } from './core/context-manager';
 import { OswsProviderAdapter, PausableApiError } from './provider-adapter';
 import { OswsToolExecutor } from './tool-executor';
 import { MultiAgentCoordinator } from './coordinator';
-import type { Message, ProgressReporter, CostTracker, AgentLoopConfig, CompactionConfig } from './core/types';
+import type { Message, ProgressReporter, CostTracker, AgentLoopConfig, AgentLoopResult, CompactionConfig } from './core/types';
 
 // ---------------------------------------------------------------------------
 // Exported types — consumed by 15+ files, must not change shape
@@ -97,6 +97,8 @@ export interface ContextBreakdown {
 export interface MultiAgentResult {
   success: boolean;
   summary: string;
+  /** Why the loop ended: status_complete, max_iterations, loop_detected, stopped, error_stop, … */
+  exitReason?: string;
   conversation: ConversationNode[];
   totalCost: number;
   totalUsage: UsageInfo;
@@ -160,7 +162,9 @@ export class MultiAgentOrchestrator {
 
   continue(): void {
     if (this.pauseResolve) {
-      this.abortController = new AbortController();
+      // Note: do NOT replace abortController here. It was not aborted on pause,
+      // and the ToolExecutor holds its signal — swapping it would disconnect
+      // stop() from in-flight tool execution for the rest of the run.
       this.pauseResolve();
       this.pauseResolve = null;
     }
@@ -201,6 +205,7 @@ export class MultiAgentOrchestrator {
 
     // Strip trailing nudge messages from previous execution
     const conversation = this.conversations.get(this.currentConversationId)!;
+    conversation.metadata.status = 'running';
     while (conversation.messages.length > 0) {
       const last = conversation.messages[conversation.messages.length - 1];
       if (last.role === 'user' && typeof last.content === 'string' && last.content.includes('Before finishing, run the status command')) {
@@ -288,7 +293,7 @@ export class MultiAgentOrchestrator {
       });
 
       // 4. Run agent loop via extracted modules
-      await this.runLoop(systemPrompt, projectContext);
+      const loopResult = await this.runLoop();
 
       // 5. Post-run: checkpoint
       if (this.rootAgent.type !== 'setup') {
@@ -296,8 +301,9 @@ export class MultiAgentOrchestrator {
       }
 
       return {
-        success: true,
-        summary: 'Task completed',
+        success: loopResult.success,
+        summary: loopResult.summary,
+        exitReason: loopResult.exitReason,
         conversation: Array.from(this.conversations.values()),
         totalCost: this.totalCost,
         totalUsage: this.totalUsage,
@@ -316,6 +322,7 @@ export class MultiAgentOrchestrator {
       return {
         success: false,
         summary: `Error: ${errorMessage}`,
+        exitReason: 'execution_error',
         conversation: Array.from(this.conversations.values()),
         totalCost: this.totalCost,
         totalUsage: this.totalUsage,
@@ -331,7 +338,7 @@ export class MultiAgentOrchestrator {
   // Private: runLoop — wire extracted modules and run
   // ---------------------------------------------------------------------------
 
-  private async runLoop(systemPrompt: string, projectContext: string): Promise<void> {
+  private async runLoop(): Promise<AgentLoopResult> {
     const conversation = this.conversations.get(this.currentConversationId)!;
     const compactionLimit = this.resolveCompactionLimit();
 
@@ -342,6 +349,21 @@ export class MultiAgentOrchestrator {
       recentKeepRatio: MultiAgentOrchestrator.RECENT_KEEP_RATIO,
       summaryTokenRatio: MultiAgentOrchestrator.SUMMARY_TOKEN_RATIO,
       buildCompactionPrompt,
+      // Post-compaction rebuild gets a current system prompt and file tree
+      // instead of reusing the stale pre-compaction system message.
+      getFreshContext: async () => {
+        let fileTreeStr: string | undefined;
+        try {
+          const files = await this.getVFS().listDirectory(this.projectId, '/');
+          if (files.length > 0) fileTreeStr = buildFileTree(files);
+        } catch { /* ignore */ }
+        const serverCtxMeta = this.getVFS().getServerContextMetadata();
+        const systemPrompt = await buildSystemPrompt(
+          this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, this.checkModelSupportsTools()
+        );
+        const projectContext = await buildProjectContext(fileTreeStr, serverCtxMeta);
+        return { systemPrompt, projectContext };
+      },
     };
     const contextManager = new ContextManagerImpl(compactionConfig);
 
@@ -366,7 +388,9 @@ export class MultiAgentOrchestrator {
       this.onProgress?.('conversation_message', { message: agentMsg });
     };
 
-    // When compaction replaces the context, sync the conversation node
+    // When compaction replaces the context, sync the conversation node and
+    // notify the event log — the store rebuilds conversations from events, so
+    // without this the pre-compaction history would be restored on re-import.
     contextManager.onMessagesReplaced = (newMessages: Message[]) => {
       conversation.messages = newMessages.map(msg => {
         const agentMsg: AgentMessage = { role: msg.role, content: msg.content as string | ContentBlock[] };
@@ -377,6 +401,7 @@ export class MultiAgentOrchestrator {
         return agentMsg;
       });
       skipNextUserMessage = false;
+      this.onProgress?.('conversation_replaced', { messages: conversation.messages });
     };
 
     // Build ProgressReporter (facade wraps onProgress + telemetry)
@@ -428,18 +453,24 @@ export class MultiAgentOrchestrator {
     });
 
     // Build ToolExecutor
-    const toolExecutor = new OswsToolExecutor({
-      projectId: this.projectId,
-      progress,
-      getAgent: () => this.rootAgent,
-      chatMode: this.chatMode,
-      abortSignal: this.abortController.signal,
-    });
-    toolExecutor.onAfterExecute = async (toolCall, result) => {
-      track('tool_call', extractToolAnalytics(toolCall.function.name, toolCall.function.arguments, result.success));
+    const buildToolExecutor = (executorProgress: ProgressReporter) => {
+      const executor = new OswsToolExecutor({
+        projectId: this.projectId,
+        progress: executorProgress,
+        getAgent: () => this.rootAgent,
+        chatMode: this.chatMode,
+        abortSignal: this.abortController.signal,
+      });
+      executor.onAfterExecute = async (toolCall, result) => {
+        track('tool_call', extractToolAnalytics(toolCall.function.name, toolCall.function.arguments, result.success));
+      };
+      return executor;
     };
+    const toolExecutor = buildToolExecutor(progress);
 
-    // Build Coordinator (wraps executor for delegation)
+    // Build Coordinator (wraps executor for delegation). Children get their own
+    // provider/executor instances scoped to the child progress reporter so their
+    // streaming and tool events don't leak unwrapped into the main UI channel.
     const coordinator = new MultiAgentCoordinator({
       innerExecutor: toolExecutor,
       provider: providerAdapter,
@@ -448,6 +479,16 @@ export class MultiAgentOrchestrator {
       projectId: this.projectId,
       chatMode: this.chatMode,
       compactionConfig,
+      createChildProvider: (childProgress: ProgressReporter) => new OswsProviderAdapter({
+        getProviderConfig: () => this.getProviderConfig(),
+        getApiUrl: () => this.getApiUrl(),
+        getReasoningEnabled: (m) => this.getConfig().getReasoningEnabled(m),
+        getDebugStreamEnabled: () => this.getConfig().getDebugStreamEnabled(),
+        getModelPricing: (p, m) => this.getConfig().getModelPricing(p, m),
+        getCachedModels: (p) => this.getConfig().getCachedModels(p),
+        progress: childProgress,
+      }),
+      createChildExecutor: (childProgress: ProgressReporter) => buildToolExecutor(childProgress),
       buildSystemPrompt: async (agentType: string) => {
         const serverCtxMeta = this.getVFS().getServerContextMetadata();
         return buildSystemPrompt(
@@ -518,7 +559,7 @@ export class MultiAgentOrchestrator {
     };
 
     const userContent = lastUserMsg?.content ?? '';
-    let result;
+    let result: AgentLoopResult;
     try {
       result = await loop.run(userContent);
     } finally {
@@ -528,13 +569,16 @@ export class MultiAgentOrchestrator {
     this.toolCallCount += result.toolCount;
     this.turnCount += result.turnCount;
 
-    // Mark conversation completed
+    // Mark conversation finished — status reflects the actual loop outcome
     conversation.metadata.completed_at = Date.now();
-    conversation.metadata.status = 'completed';
+    conversation.metadata.status = result.success ? 'completed' : 'failed';
+    conversation.metadata.cost = this.totalCost;
 
     // Emit context breakdown
     const breakdown = this.measureContextBreakdown(conversation.messages);
     this.contextBreakdowns.push(breakdown);
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -651,6 +695,10 @@ export class MultiAgentOrchestrator {
   }
 
   private toPortableMessages(messages: AgentMessage[]): Message[] {
-    return messages.map(({ ui_metadata, ...rest }) => rest as Message);
+    return messages.map(({ ui_metadata, ...rest }) => ({
+      ...rest,
+      // Keep the compact-summary marker — compact() uses it to chain summaries
+      ...(ui_metadata?.isCompactSummary ? { metadata: { isCompactSummary: true } } : {}),
+    }) as Message);
   }
 }

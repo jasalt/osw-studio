@@ -12,6 +12,7 @@ import { VirtualServer } from '@/lib/preview/virtual-server';
 import { VirtualFile, FileTreeNode, Deployment } from '@/lib/vfs/types';
 import { logger } from '@/lib/utils';
 import { processHtml } from '@/lib/publishing/html-processor';
+import { stripPreviewScripts } from '@/lib/preview/strip-preview-scripts';
 import { generateSitemap, generateRobotsTxt } from '@/lib/publishing/seo-generator';
 import { extractBackendFeatures } from './backend-feature-extractor';
 
@@ -203,9 +204,9 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
           servedAtRoot
         );
 
-        // Remove VFS interceptor script from HTML files
+        // Remove preview instrumentation scripts from HTML files
         if (file.path.endsWith('.html')) {
-          file.content = removePreviewScripts(file.content);
+          file.content = stripPreviewScripts(file.content);
           htmlFiles.push(file.path);
 
           // Apply deployment settings to HTML files
@@ -501,21 +502,6 @@ function replaceAssetPathsWithDeploymentPrefix(
   }
 
   return result;
-}
-
-/**
- * Remove live-preview-only scripts from HTML
- */
-function removePreviewScripts(html: string): string {
-  // Remove the VFS Asset Interceptor script tag
-  const vfsRegex = /<script>\s*\/\/ VFS Asset Interceptor[\s\S]*?<\/script>\s*/;
-  html = html.replace(vfsRegex, '');
-
-  // Remove the Console Capture script tag (only used inside preview iframe)
-  const consoleRegex = /<script>\s*\/\/ Console Capture[\s\S]*?<\/script>\s*/;
-  html = html.replace(consoleRegex, '');
-
-  return html;
 }
 
 /**

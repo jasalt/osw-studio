@@ -133,6 +133,23 @@ describe('ContextManagerImpl', () => {
     expect(provider.call).toHaveBeenCalled();
   });
 
+  it('uses config.getFreshContext when compact() is called without explicit opts', async () => {
+    const cm = new ContextManagerImpl({
+      ...smallConfig,
+      getFreshContext: async () => ({ systemPrompt: 'FRESH SYSTEM', projectContext: 'FRESH PROJECT CONTEXT' }),
+    });
+    cm.setSystemPrompt('stale system prompt');
+    for (let i = 0; i < 10; i++) {
+      cm.addUserMessage(`user msg ${i} - ${'x'.repeat(200)}`);
+      cm.addAssistantTurn({ content: `response ${i} - ${'y'.repeat(200)}` });
+    }
+    const provider = mockProvider('Summary of conversation');
+    await cm.compact(provider);
+    const msgs = cm.getMessages();
+    expect(msgs[0].content).toBe('FRESH SYSTEM');
+    expect(typeof msgs[1].content === 'string' && msgs[1].content.includes('FRESH PROJECT CONTEXT')).toBe(true);
+  });
+
   it('compaction skips when too few messages', async () => {
     const cm = new ContextManagerImpl(defaultConfig);
     cm.setSystemPrompt('system');

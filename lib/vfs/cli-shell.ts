@@ -1136,7 +1136,7 @@ async function vfsShellExecuteSingle(
 
         const outputs: string[] = [];
         let hadError = false;
-        let errorMessages: string[] = [];
+        const errorMessages: string[] = [];
 
         for (const path of filePaths) {
           if (!path) {
@@ -2483,9 +2483,10 @@ Only localhost URLs are supported (fetches compiled HTML from preview engine).`,
 
           let content = typeof compiled.content === 'string' ? compiled.content : '';
 
-          // Strip VFS Asset Interceptor script (only relevant for browser preview, noise for LLM)
-          const interceptorRegex = /<script>\s*\/\/ VFS Asset Interceptor[\s\S]*?<\/script>\s*/;
-          content = content.replace(interceptorRegex, '');
+          // Strip preview instrumentation (asset interceptor + console capture) —
+          // only relevant inside the preview iframe, pure noise for the LLM
+          const { stripPreviewScripts } = await import('@/lib/preview/strip-preview-scripts');
+          content = stripPreviewScripts(content);
 
           if (curlFlags.head) {
             // Headers only
@@ -2584,8 +2585,11 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
           proj.settings = { ...proj.settings, runtime };
           await vfs.updateProject(proj);
 
-          // Update .PROMPT.md to match the new runtime's domain prompt
-          const { getDomainPrompt, isDefaultDomainPrompt } = await import('@/lib/llm/prompts');
+          // Update .PROMPT.md to match the new runtime's domain prompt.
+          // Retried once — HMR can invalidate the webpack chunk for the lazy
+          // prompts module, failing the first import after a hot reload.
+          const { importWithRetry } = await import('./import-retry');
+          const { getDomainPrompt, isDefaultDomainPrompt } = await importWithRetry(() => import('@/lib/llm/prompts'));
           const newPrompt = getDomainPrompt(runtime);
           try {
             const existing = await vfs.readFile(projectId, '/.PROMPT.md');
@@ -2655,8 +2659,11 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
         const remaining = flags.remaining || 'none';
         // --complete wins over --incomplete if both present; neither = incomplete
         const complete = isComplete && !isIncomplete;
+        // Terse ack — don't echo task/done back (pure token duplication; the
+        // values are already in the command). Remaining/Complete lines stay:
+        // the loop's completion detection reads them.
         return {
-          stdout: `Task: ${flags.task}\nDone: ${flags.done}\nRemaining: ${remaining}\nComplete: ${complete ? 'yes' : 'no'}`,
+          stdout: `Status recorded.\nRemaining: ${remaining}\nComplete: ${complete ? 'yes' : 'no'}`,
           stderr: '',
           exitCode: 0
         };

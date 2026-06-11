@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { Dispatch, SetStateAction, useEffect, useRef } from 'react';
 import { SyncableItem } from '@/lib/vfs/sync-types';
 import { SummaryBar } from './summary-bar';
 import { SyncItemRow } from '../sync-item-row';
@@ -14,7 +14,7 @@ interface ProjectsTabProps {
   selectedIds: Set<string>;
   syncingIds: Set<string>;
   onSelectedIdsChange: (ids: Set<string>) => void;
-  onSyncingIdsChange: (ids: Set<string>) => void;
+  onSyncingIdsChange: Dispatch<SetStateAction<Set<string>>>;
   onRefresh: () => void;
   onSyncComplete: () => void;
   onRegisterPushSelected: (handler: (() => Promise<void>) | null) => void;
@@ -55,7 +55,7 @@ export function ProjectsTab({
   };
 
   const handlePushSingle = async (item: SyncableItem) => {
-    (onSyncingIdsChange as Function)((prev: Set<string>) => new Set(prev).add(item.id));
+    onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const project = await vfs.getProject(item.id);
       if (!project) {
@@ -86,7 +86,7 @@ export function ProjectsTab({
       logger.error('Push error:', error);
       toast.error('Failed to push project');
     } finally {
-      (onSyncingIdsChange as Function)((prev: Set<string>) => {
+      onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;
@@ -95,7 +95,7 @@ export function ProjectsTab({
   };
 
   const handlePullSingle = async (item: SyncableItem) => {
-    (onSyncingIdsChange as Function)((prev: Set<string>) => new Set(prev).add(item.id));
+    onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullSingleProject(item.id);
 
@@ -154,7 +154,7 @@ export function ProjectsTab({
       logger.error('Pull error:', error);
       toast.error('Failed to pull project');
     } finally {
-      (onSyncingIdsChange as Function)((prev: Set<string>) => {
+      onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;

@@ -135,17 +135,19 @@ export async function runServerGeneration(
 
       flushDirtyPaths();
 
-      const wasStopped = task.status === 'cancelled' || task.status === 'stopping' || task.status === 'paused';
+      const wasStopped = task.status === 'cancelled' || task.status === 'stopping' || task.status === 'paused'
+        || result.exitReason === 'stopped' || result.exitReason === 'error_stop';
       const session = serverConfig.getSessionCost();
-      const finalResult = wasStopped ? 'stopped' : 'success';
+      const finalResult = wasStopped ? 'stopped' : (result.success ? 'success' : 'failed');
 
       eventBus.emit(taskId, request.projectId, 'task_complete', {
         result: finalResult,
+        ...(finalResult === 'failed' ? { error: result.summary } : {}),
         tokens: session.totalPromptTokens + session.totalCompletionTokens,
         cost: session.totalCost,
       }, task.sessionId);
 
-      taskManager.completeTask(taskId, wasStopped ? 'cancelled' : 'completed');
+      taskManager.completeTask(taskId, wasStopped ? 'cancelled' : (result.success ? 'completed' : 'failed'));
     } catch (error) {
       if (task.status === 'cancelled' || task.status === 'stopping' || task.status === 'paused') {
         flushDirtyPaths();

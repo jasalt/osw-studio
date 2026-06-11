@@ -13,7 +13,9 @@ let db: ReturnType<typeof import('../vfs/adapters/sqlite-connection').getCoreDat
  */
 function getDB() {
   if (!db) {
-    // Dynamic import to avoid issues in non-server contexts
+    // Lazy require keeps better-sqlite3 (native module) out of non-server
+    // bundles; getDB() is sync so dynamic import() is not an option here.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getCoreDatabase } = require('../vfs/adapters/sqlite-connection');
     db = getCoreDatabase();
   }

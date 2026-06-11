@@ -55,11 +55,14 @@ export async function parseStreamingResponse(
   let usageInfo: UsageInfo | undefined;
   let wasTruncated = false;
   let lastFinishReason: string | undefined;
-  let reasoningDetails: ReasoningDetail[] = [];  // Structured reasoning blocks captured for multi-turn replay
+  const reasoningDetails: ReasoningDetail[] = [];  // Structured reasoning blocks captured for multi-turn replay
 
   // State for extracting inline <think>...</think> blocks (MiniMax, Ollama thinking models, etc.)
   let inThinkBlock = false;
   let thinkTagBuffer = '';
+  // Whether reasoning_complete was already emitted — the end-of-stream fallback
+  // must close reasoning exactly once (field-based reasoning has no close marker)
+  let reasoningCompleteEmitted = false;
 
   /**
    * Split a content piece into regular content and reasoning, handling
@@ -249,6 +252,7 @@ export async function parseStreamingResponse(
                 anthropicThinkingBlockIndex = null;
                 if (!suppressAssistantDelta) {
                   onProgress?.('reasoning_complete', { reasoning });
+                  reasoningCompleteEmitted = true;
                 }
               } else if (json.type === 'content_block_delta' && json.delta?.text_delta?.text) {
                 const piece = json.delta.text_delta.text as string;
@@ -453,7 +457,10 @@ export async function parseStreamingResponse(
                     thinkTagBuffer = '';
                   }
                   inThinkBlock = false;
-                  if (!suppressAssistantDelta) onProgress?.('reasoning_complete', { reasoning });
+                  if (!suppressAssistantDelta) {
+                    onProgress?.('reasoning_complete', { reasoning });
+                    reasoningCompleteEmitted = true;
+                  }
                 }
 
                 for (const tc of delta.tool_calls) {
@@ -595,6 +602,13 @@ export async function parseStreamingResponse(
     thinkTagBuffer = '';
   }
 
+  // Close reasoning at end of stream. Field-based reasoning (delta.reasoning /
+  // reasoning_details — Qwen, DeepSeek via OpenRouter) has no close marker, so
+  // without this a reasoning-final stream leaves the UI reasoning block open.
+  if (reasoning && !reasoningCompleteEmitted && !suppressAssistantDelta) {
+    onProgress?.('reasoning_complete', { reasoning });
+  }
+
   // Mark as truncated if the stream timed out with pending tool calls
   if (streamTimedOut) {
     if (Object.keys(toolCallsById).length > 0) {
@@ -645,12 +659,19 @@ export function buildFileTree(files: VirtualFile[]): string {
   for (const file of files) {
     const pathParts = file.path.split('/').filter(Boolean);
 
-    // Add intermediate directories
+    // Add intermediate directories and link each to its parent — VFS listings
+    // contain no directory entries, so without this linking, subdirectory
+    // contents are unreachable from the root and vanish from the tree.
     for (let i = 0; i < pathParts.length - 1; i++) {
       const dirPath = '/' + pathParts.slice(0, i + 1).join('/');
       if (!tree.has(dirPath)) {
         tree.set(dirPath, { isDirectory: true, children: new Set() });
       }
+      const dirParent = i === 0 ? '/' : '/' + pathParts.slice(0, i).join('/');
+      if (!tree.has(dirParent)) {
+        tree.set(dirParent, { isDirectory: true, children: new Set() });
+      }
+      tree.get(dirParent)!.children.add(dirPath);
     }
 
     // Add file

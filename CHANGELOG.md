@@ -1,5 +1,49 @@
 # Changelog
 
+## v1.75.0 - 2026-06-12
+
+### Projects & Templates
+
+- **Blank-canvas starters**: All starter templates now open as an empty page — bare `header`/`main`/`footer` scaffolding on a dark canvas with a subtle OSW watermark — instead of placeholder welcome content the AI had to clear out first.
+- **Guaranteed rollback point**: Opening a project that has no saved checkpoint automatically creates a "Project opened" checkpoint, so there is always a state to restore to.
+
+### Fixes
+
+- **Fixed runtime change failing after hot reload**: The `runtime` shell command could fail right after a dev-server hot reload invalidated its lazily loaded module. The import is now retried automatically.
+- **Fixed broken ESLint setup**: `eslint-config-next` v16 was installed against Next 15, crashing `npm run lint` since it was added. Pinned to the matching major and fixed all lint errors it surfaced.
+
+### Debugging
+
+- **Messages tab in the Debug Events panel**: Inspect the exact message history sent to the provider. A session-only "Capture requests" toggle (off by default) records the outgoing history of each LLM request; a "Provider view" toggle shows the precise shape after reasoning-replay and tool-argument processing. Captures update once per request — never per streamed token — and are independent of the Stream debug toggle. Local generations only.
+- **Debug panel layout**: Event and message counts moved into the tab labels, and each tab gained expand/collapse-all, copy, and clear actions (Events also keeps export-to-file). The panel header is no longer crowded.
+
+### AI Context Fixes
+
+- **Fixed project file tree omitting subdirectories**: The project structure shown to the AI listed only root-level files — everything inside subdirectories (`/styles`, `/scripts`, `/templates`, …) was silently dropped. The AI worked blind to existing files and could needlessly recreate or collide with them.
+- **`curl` no longer returns preview instrumentation**: The shell `curl` command now strips all preview-only scripts from fetched pages, so page inspections no longer feed the AI OSW Studio's own injected code.
+- **Harness messages are tagged**: Loop-injected user messages (status nudge, retry prompts, runtime-error reports) are wrapped in `<automated_reminder>` tags so the model — and anyone reading an exported history — can distinguish them from genuine user input. They are still sent with the user role, which models weight more reliably than system messages deep into a conversation.
+- **Token savings**: The `status` command no longer echoes the full task/done text back as its result. Large tool outputs that byte-for-byte repeat an earlier result still in context (e.g. re-reading an unchanged skill file) are replaced with a short marker. The system prompt now instructs the model to separate multi-file reads with echo markers so concatenated outputs can't be misparsed as one file.
+
+### AI Orchestration Fixes
+
+- **Truthful task results**: Generation results now reflect the actual loop outcome. Runs that hit max iterations, loop detection, or nudge exhaustion report failure with the real reason instead of "Task completed". Stopping a task no longer shows a success toast or fires duplicate telemetry.
+- **Conversation repair on send**: Orphaned tool calls (e.g. from stopping mid-execution) are repaired before every provider request. Previously a conversation with an unanswered tool call was permanently rejected by strict providers (OpenAI, Anthropic) with no recovery.
+- **Sub-agent event isolation**: Child agents' streaming text and tool calls no longer leak into the main chat transcript as if the orchestrator produced them — output stayed garbled when agents ran in parallel. The subagent status line now shows the running command and real elapsed time.
+- **Stop works after pause/resume**: Resuming from an API-error pause no longer disconnects the stop button from in-flight tool execution.
+- **Compaction correctness**:
+  - The compaction check uses the loop's own context size; previously sub-agent runs could delay needed compaction until the context overflowed.
+  - Compaction now survives project switches and reloads; previously the full pre-compaction history was silently restored without the summary.
+  - Follow-up compactions chain from the previous summary instead of starting over.
+  - The post-compaction rebuild uses a freshly built system prompt and file tree instead of the stale pre-compaction system message.
+  - In-flight compaction requests are aborted on stop.
+- **Loop detection preserves work**: When duplicate/pattern detection terminates a run, already-executed tool results are committed to the conversation. Previously they were discarded, leaving file changes the model had no record of.
+- **Agent dedup scoped to turn**: Duplicate agent-command suppression only applies within the same turn. Identical re-delegation in a later turn runs again, and a failed batch no longer answers retries with a false "already executed".
+- **System message consolidation**: All system messages in a request are merged into a single message at position 0. Some providers reject system messages at any other position in the conversation.
+- **Server Mode parity**: Server-generated tasks report `failed` with the failure reason when the loop ends unsuccessfully, and compaction events reach the client.
+- **Reasoning blocks now close**: Models that stream reasoning via the provider's reasoning field (Qwen, DeepSeek via OpenRouter) left the reasoning indicator spinning forever when the stream ended on reasoning.
+- **Reasoning-only responses handled**: When a model thinks but never emits a tool call or text (seen with Qwen 3.6 via OpenRouter), the loop now keeps the reasoning in conversation history and asks the model directly to act via function calling, instead of dropping the turn and sending the unrelated status nudge. Previously the model restarted identical reasoning every iteration until the run failed.
+- **Per-model reasoning replay**: Prior-turn reasoning is passed back only to model families whose APIs require it (DeepSeek, GLM, MiniMax) and stripped for everything else — Qwen3's template forbids replayed thinking, and sending it back broke tool calling on every turn after the first. Reasoning-only turns are promoted to plain assistant text at the provider boundary so the model still sees its own prior thinking; in the chat they remain reasoning blocks. Final text answers also keep their reasoning details for replay-required providers.
+
 ## v1.74.0 - 2026-06-07
 
 ### Server Mode

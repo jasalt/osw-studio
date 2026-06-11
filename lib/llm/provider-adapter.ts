@@ -9,6 +9,7 @@ import { CostCalculator } from './cost-calculator';
 import { registerOpenRouterPricingFromApi, registerPricingFromProviderModels } from './pricing-cache';
 import { fetchAvailableModels } from './models-api';
 import { apiFetch } from '@/lib/api/backend-status';
+import { requestSnapshotStore } from './request-snapshot';
 import { logger } from '@/lib/utils';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -74,7 +75,9 @@ export class OswsProviderAdapter implements ProviderAdapter {
   }
 
   async call(params: ProviderCallParams): Promise<ParsedResponse> {
-    let { provider, apiKey, model } = this.config.getProviderConfig();
+    const providerConfig = this.config.getProviderConfig();
+    const { provider, model } = providerConfig;
+    let apiKey = providerConfig.apiKey;
     const silent = params.silent === true;
 
     // Refresh Codex OAuth token if needed before making the API call
@@ -99,6 +102,12 @@ export class OswsProviderAdapter implements ProviderAdapter {
       ...(modelSupportsTools && params.tools?.length && { tool_choice: 'auto' }),
       ...(reasoningEnabled && { reasoning: { enabled: true } }),
     };
+
+    // Debug capture of the exact outgoing history (no-op unless enabled in the
+    // debug panel's Messages tab; skip compaction calls — not conversation requests)
+    if (!silent) {
+      requestSnapshotStore.capture({ messages: params.messages, provider, model });
+    }
 
     // Debug logging (skip for silent calls)
     if (!silent && this.config.getDebugStreamEnabled()) {

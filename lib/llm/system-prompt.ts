@@ -107,6 +107,8 @@ Prefer targeted reads over cat to save tokens:
   tail -n 50 /file     — sample end
   tree -L 2 /          — project structure
   cat /file             — full file (small files only, last resort)
+When reading multiple files in one command, separate the outputs:
+  cat /index.html && echo '=== /data.json ===' && cat /data.json
 
 Shell commands:
 - Search: rg [-C n] [-n] [-i] pattern path

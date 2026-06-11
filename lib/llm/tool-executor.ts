@@ -204,20 +204,22 @@ export class OswsToolExecutor implements ToolExecutor {
     // If the output contains an error, the status command failed - don't trust command-level parsing
     const hasError = output && /^Error:\s/im.test(output);
 
-    // 1. Check shell output for Task:/Done:/Remaining:/Complete: lines (from cli-shell status handler)
-    // Prefer output over command parsing since it reflects actual execution result
+    // 1. Check shell output for Remaining:/Complete: lines (from cli-shell status handler)
+    // Prefer output over command parsing — the shell parsed the arguments
+    // properly (escaped quotes etc.), the command regexes below cannot.
+    // Task:/Done: lines only exist in the legacy full-echo format.
     if (output) {
       const taskLine = output.match(/^Task:\s*(.+)/im);
       const doneLine = output.match(/^Done:\s*(.+)/im);
       const remainingLine = output.match(/^Remaining:\s*(.*)/im);
       const completeLine = output.match(/^Complete:\s*(yes|no)/im);
-      if (taskLine && doneLine) {
+      if (completeLine) {
         return {
-          task: taskLine[1].trim(),
-          done: doneLine[1].trim(),
+          task: taskLine ? taskLine[1].trim() : '',
+          done: doneLine ? doneLine[1].trim() : '',
           remaining: remainingLine ? remainingLine[1].trim() : 'none',
-          complete: completeLine ? completeLine[1].toLowerCase() === 'yes' : false,
-          hasExplicitFlag: !!completeLine,
+          complete: completeLine[1].toLowerCase() === 'yes',
+          hasExplicitFlag: true,
         };
       }
     }

@@ -1209,7 +1209,7 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
       }
 
       if (data.type === 'iframe-click') {
-        var ps = paletteStateRef.current;
+        const ps = paletteStateRef.current;
         if (ps.localPaletteOpen && ps.paletteVisible && !ps.draggingBlock) {
           setLocalPaletteOpen(false);
           setTimeout(() => onPlacementToggle?.(), 0);

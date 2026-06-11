@@ -146,7 +146,7 @@ function createVfsPlugin(
 
       // Relative / absolute imports → resolve against VFS
       build.onResolve({ filter: /^[./]/ }, (args) => {
-        let resolved = resolvePath(args.resolveDir, args.path);
+        const resolved = resolvePath(args.resolveDir, args.path);
 
         // Direct hit
         if (fileMap.has(resolved)) {
