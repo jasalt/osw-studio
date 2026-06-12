@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.76.0 - 2026-06-13
+
+### Desktop
+
+- **Fixed desktop app failing to start on Linux and Windows**: The server wrote its databases relative to the installation directory, which is read-only for AppImage and Program Files installs — workspace initialization failed silently and the app sat on "Loading..." forever (macOS was unaffected because app bundles happen to be user-writable). All data now goes to the platform user-data directory, a workspace initialization failure shows the actual error with a link to report it, and the release pipeline's smoke test now asserts the data location and bootstrap so this class of bug cannot ship again.
+- **User-controlled updates**: The desktop app no longer installs updates silently. It notifies you when a new version is available and only downloads and installs after you choose to — with a "Skip this version" option. macOS (where in-place updates require code signing) now gets update notifications too, linking to the releases page.
+- **Failure diagnostics instead of a blank window**: If the app fails to start or load, it shows a diagnostic page with the version, the error, a link to reinstall from the releases page, and the log file location — instead of loading forever.
+- **Help menu**: Check for Updates, Open Releases Page, Report an Issue, and Open Logs Folder.
+- **Atomic desktop releases**: Desktop releases are now published only after all three platforms build successfully and the complete artifact set is verified — a failed platform build means no release, so auto-updaters can never see a partial or broken release. Release notes are generated automatically, and a boot smoke test runs before any packaging.
+- **Single-source desktop shell**: The Electron shell now lives in the repository (`desktop/`), used identically by CI and local builds. Previously divergent copies could have caused desktop builds to behave differently from web releases.
+
 ## v1.75.0 - 2026-06-12
 
 ### Projects & Templates

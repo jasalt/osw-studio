@@ -6,6 +6,18 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.76.0 - Desktop Reliability (2026-06-13)
+
+The desktop app works again on Linux and Windows — a long-standing bug wrote app data into the read-only installation directory, leaving the app stuck on a loading screen. Updates are now under your control: the app asks before downloading or installing anything, and startup problems show a real error page instead of loading forever.
+
+### Desktop
+- **Fixed startup on Linux and Windows**: App data now goes to the proper user-data directory — no more infinite "Loading..." screen on AppImage and Windows installs
+- **Updates ask first**: The app notifies you about new versions and only downloads and installs when you choose — including a "Skip this version" option. macOS users now get update notifications too
+- **Clear errors instead of blank screens**: Startup and loading failures show what went wrong, with a link to the releases page and the log file location for bug reports
+- **Sturdier releases**: Desktop releases publish only when all three platforms build and verify successfully, so an update can never point at a broken or incomplete release
+
+---
+
 ## v1.75.0 - Agent Reliability (2026-06-12)
 
 A deep reliability pass on the AI agent. Task results are now truthful — a stopped or failed run says so instead of claiming success. Reasoning models (Qwen, DeepSeek) work correctly in multi-turn conversations, sub-agent output no longer garbles the chat, and long sessions compact their context without losing history. A new Messages tab in the debug panel shows the exact conversation sent to your provider.

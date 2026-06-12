@@ -1,0 +1,32 @@
+{
+  "name": "osw-studio-desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OSW Studio Desktop — Electron shell around the Next.js standalone server. The version is set at build time from the repo root package.json; 0.0.0 is a placeholder.",
+  "main": "app/main.js",
+  "homepage": "https://github.com/o-stahl/osw-studio",
+  "author": {
+    "name": "OSW Studio",
+    "email": "otst@oswstudio.com"
+  },
+  "scripts": {
+    "compile": "tsup",
+    "typecheck": "tsc --noEmit",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dev": "tsup && electron ."
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0",
+    "get-port-please": "^3.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "@types/node": "^20.0.0",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.9.0"
+  }
+}

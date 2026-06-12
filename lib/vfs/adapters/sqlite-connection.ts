@@ -34,7 +34,7 @@ function getDataDir(): string {
  * Includes backward compatibility: renames old sites/ dir to deployments/ if needed
  */
 function getDeploymentsDir(): string {
-  const deploymentsDir = path.join(process.cwd(), 'deployments');
+  const deploymentsDir = process.env.DEPLOYMENTS_DIR || path.join(process.cwd(), 'deployments');
   const oldSitesDir = path.join(process.cwd(), 'sites');
 
   // Backward compatibility: rename sites/ to deployments/ if old dir exists and new one doesn't

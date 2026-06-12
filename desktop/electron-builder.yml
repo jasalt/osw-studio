@@ -1,0 +1,52 @@
+appId: com.oswstudio.app
+productName: OSW Studio
+copyright: Copyright © 2026 OSW Studio
+
+directories:
+  output: dist
+  app: app
+
+extraMetadata:
+  main: main.js
+  author:
+    name: OSW Studio
+    email: otst@oswstudio.com
+
+asar: false
+
+files:
+  - "**/*"
+  - "!**/.env"
+  - "!node_modules/@img/sharp-*/**"
+  - "!node_modules/sharp/**"
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - universal
+  icon: electron/icons/icon.icns
+  category: public.app-category.developer-tools
+  darkModeSupport: true
+  x64ArchFiles: "**/*.node"
+
+win:
+  target:
+    - nsis
+  icon: electron/icons/icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: electron/icons/icon.png
+  category: Development
+
+publish:
+  provider: github
+  owner: o-stahl
+  repo: osw-studio

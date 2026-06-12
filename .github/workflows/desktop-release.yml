@@ -1,5 +1,13 @@
 name: Desktop Release
 
+# Atomic desktop release: all three platforms build first, then a single
+# publish job verifies the complete artifact set and publishes the GitHub
+# release in one step. If any platform fails, no release is created and
+# auto-updaters keep pointing at the last complete release.
+#
+# The desktop shell source lives in desktop/ — this workflow contains no
+# app code of its own.
+
 on:
   push:
     tags:
@@ -17,13 +25,10 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-            artifact: '*.dmg'
           - os: ubuntu-latest
             platform: linux
-            artifact: '*.AppImage'
           - os: windows-latest
             platform: win
-            artifact: '*.exe'
 
     steps:
       - name: Checkout source
@@ -40,6 +45,15 @@ jobs:
         shell: bash
         run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> $GITHUB_OUTPUT
 
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Tag desktop-v${{ steps.version.outputs.version }} does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
       - name: Install dependencies
         run: npm ci
 
@@ -49,255 +63,149 @@ jobs:
           NEXT_PUBLIC_DESKTOP: 'true'
         run: npm run build
 
-      - name: Setup desktop project
+      - name: Assemble desktop app
+        shell: bash
+        run: ./desktop/assemble-app.sh
+
+      - name: Smoke test desktop server boot
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
-          mkdir -p desktop-build/app
-          cp -r .next/standalone/. desktop-build/app/
-          mkdir -p desktop-build/app/.next/static
-          cp -r .next/static/* desktop-build/app/.next/static/
-          cp -r public desktop-build/app/public
-          rm -rf desktop-build/app/public/sites desktop-build/app/public/deployments
-          cp -r docs desktop-build/app/docs 2>/dev/null || true
+          # Boot with the exact env contract desktop/electron/main.ts sets.
+          # Asserts the app serves, the desktop workspace bootstrap succeeds,
+          # and all writable state lands in DATA_DIR — not in the (read-only
+          # when installed) app directory.
+          export PORT=34999
+          export HOSTNAME=localhost
+          export OSW_DESKTOP=true
+          export DATA_DIR="$RUNNER_TEMP/osw-data"
+          export DEPLOYMENTS_DIR="$RUNNER_TEMP/osw-deployments"
+          export SESSION_SECRET=smoke-test-secret
+          export SECRETS_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+          mkdir -p "$DATA_DIR" "$DEPLOYMENTS_DIR"
+          cd desktop/app
+          node server.js &
+          SERVER_PID=$!
+          cd "$GITHUB_WORKSPACE"
+          for i in $(seq 1 30); do
+            if curl -fs -o /dev/null "http://localhost:34999/"; then break; fi
+            sleep 1
+          done
+          STATUS=$(curl -sSL -o /dev/null -w '%{http_code}' "http://localhost:34999/" || echo "000")
+          INIT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:34999/api/auth/desktop-init" || echo "000")
+          kill $SERVER_PID || true
+          FAIL=""
+          [ "$STATUS" != "200" ] && FAIL="$FAIL / returned $STATUS;"
+          [ "$INIT_STATUS" != "200" ] && FAIL="$FAIL desktop-init returned $INIT_STATUS;"
+          [ -f "$DATA_DIR/system.sqlite" ] || FAIL="$FAIL system.sqlite not created in DATA_DIR;"
+          [ -d "desktop/app/data" ] && FAIL="$FAIL server wrote data/ into the app directory (read-only when installed);"
+          if [ -n "$FAIL" ]; then
+            echo "::error::Desktop smoke test failed —$FAIL"
+            exit 1
+          fi
+          echo "Smoke test passed — server up, workspace bootstrap ok, data in DATA_DIR"
 
-      - name: Install Electron dependencies
+      - name: Install desktop dependencies
         shell: bash
-        working-directory: desktop-build
+        working-directory: desktop
         run: |
-          cat > package.json << 'EOF'
-          {
-            "name": "osw-studio-desktop",
-            "version": "${{ steps.version.outputs.version }}",
-            "private": true,
-            "main": "app/main.js",
-            "homepage": "https://github.com/o-stahl/osw-studio",
-            "author": {
-              "name": "OSW Studio",
-              "email": "otst@oswstudio.com"
-            },
-            "dependencies": {
-              "electron-updater": "^6.3.0",
-              "get-port-please": "^3.1.0"
-            },
-            "devDependencies": {
-              "electron": "^34.0.0",
-              "electron-builder": "^25.0.0",
-              "@electron/rebuild": "^3.7.0",
-              "tsup": "^8.0.0"
-            }
-          }
-          EOF
-          npm install
-
-      - name: Copy Electron main process and config
-        shell: bash
-        run: |
-          # Copy the electron source from the repo's desktop reference
-          # The main.ts is compiled by tsup in CI
-          mkdir -p desktop-build/electron
-          cat > desktop-build/electron/main.ts << 'MAINEOF'
-          import { app, BrowserWindow, shell } from 'electron';
-          import { autoUpdater } from 'electron-updater';
-          import * as path from 'path';
-          import * as fs from 'fs';
-          import * as http from 'http';
-          import * as crypto from 'crypto';
-
-          let mainWindow: BrowserWindow | null = null;
-          let serverPort: number | null = null;
-
-          async function startNextServer(): Promise<number> {
-            const { getPort } = await import('get-port-please');
-            const port = await getPort({ portRange: [30011, 50000] });
-            process.env.PORT = String(port);
-            process.env.HOSTNAME = 'localhost';
-            process.env.NEXT_PUBLIC_APP_URL = `http://localhost:${port}`;
-            process.env.OSW_DESKTOP = 'true';
-            const dataDir = path.join(app.getPath('userData'), 'data');
-            fs.mkdirSync(dataDir, { recursive: true });
-            process.env.OSW_DATA_DIR = dataDir;
-            const deploymentsDir = path.join(app.getPath('userData'), 'deployments');
-            fs.mkdirSync(deploymentsDir, { recursive: true });
-            process.env.OSW_DEPLOYMENTS_DIR = deploymentsDir;
-            // Generate and persist security secrets
-            const secretsFile = path.join(app.getPath('userData'), '.secrets.json');
-            let secrets: { sessionSecret: string; encryptionKey: string };
-            try {
-              secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf-8'));
-            } catch {
-              secrets = {
-                sessionSecret: crypto.randomBytes(32).toString('hex'),
-                encryptionKey: crypto.randomBytes(32).toString('base64'),
-              };
-              fs.writeFileSync(secretsFile, JSON.stringify(secrets), { mode: 0o600 });
-            }
-            process.env.SESSION_SECRET = secrets.sessionSecret;
-            process.env.SECRETS_ENCRYPTION_KEY = secrets.encryptionKey;
-            // Use the standalone server.js which has __NEXT_PRIVATE_STANDALONE_CONFIG baked in
-            // In packaged app, getAppPath() points to Resources/app which contains server.js directly
-            // (electron-builder's directories.app: app flattens the app/ directory)
-            const appDir = app.getAppPath();
-            process.chdir(appDir);
-            require(path.join(appDir, 'server.js'));
-            return port;
-          }
-
-          async function waitForServer(url: string, maxRetries = 30): Promise<boolean> {
-            for (let i = 0; i < maxRetries; i++) {
-              const ok = await new Promise<boolean>((resolve) => {
-                const req = http.get(url, (res) => { res.resume(); resolve(true); });
-                req.on('error', () => resolve(false));
-                req.setTimeout(2000, () => { req.destroy(); resolve(false); });
-              });
-              if (ok) return true;
-              await new Promise(r => setTimeout(r, 1000));
-            }
-            return false;
-          }
-
-          async function createWindow(port: number) {
-            mainWindow = new BrowserWindow({
-              width: 1400, height: 900, minWidth: 800, minHeight: 600,
-              title: 'OSW Studio',
-              webPreferences: { nodeIntegration: false, contextIsolation: true },
-            });
-            const serverUrl = `http://localhost:${port}`;
-            const ready = await waitForServer(serverUrl);
-            if (ready) {
-              mainWindow.loadURL(serverUrl);
-            } else {
-              mainWindow.loadURL('data:text/html,<h1>Failed to start server</h1>');
-            }
-            mainWindow.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
-              if (url.startsWith('http://localhost')) return { action: 'allow' as const };
-              shell.openExternal(url);
-              return { action: 'deny' as const };
-            });
-            mainWindow.on('closed', () => { mainWindow = null; });
-          }
-
-          app.whenReady().then(async () => {
-            try {
-              serverPort = await startNextServer();
-              await createWindow(serverPort);
-              autoUpdater.checkForUpdatesAndNotify();
-            } catch (error) {
-              console.error('Failed to start:', error);
-              app.quit();
-            }
-          });
-          app.on('window-all-closed', () => app.quit());
-          app.on('activate', () => { if (!mainWindow && serverPort) createWindow(serverPort); });
-          MAINEOF
-
-          # tsup config
-          cat > desktop-build/tsup.config.ts << 'TSUPEOF'
-          import { defineConfig } from 'tsup';
-          export default defineConfig({
-            entry: ['electron/main.ts'],
-            outDir: 'app',
-            format: ['cjs'],
-            target: 'node20',
-            platform: 'node',
-            clean: false,
-            external: ['electron', /^next\//],
-            noExternal: ['get-port-please', 'electron-updater'],
-          });
-          TSUPEOF
+          npm ci
+          npm pkg set version="${{ steps.version.outputs.version }}"
 
       - name: Compile Electron main process
-        working-directory: desktop-build
+        working-directory: desktop
         run: npx tsup
 
-      # electron-updater and get-port-please are bundled into main.js by tsup (noExternal)
+      - name: Build installer (no publish)
+        working-directory: desktop
+        run: npx electron-builder --${{ matrix.platform }} --publish never
 
-      - name: Generate icons
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.yml
+            desktop/dist/*.blockmap
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Verify complete artifact set
         shell: bash
         run: |
-          mkdir -p desktop-build/electron/icons
-          npm install --no-save sharp 2>/dev/null
-          node -e "
-            const sharp = require('sharp');
-            const fs = require('fs');
-            const svg = fs.readFileSync('public/osw-studio-logo.svg');
-            sharp(svg).resize(1024, 1024).png().toFile('desktop-build/electron/icons/icon-1024.png')
-              .then(() => sharp(svg).resize(256, 256).png().toFile('desktop-build/electron/icons/icon.png'))
-              .then(() => console.log('PNGs generated'));
-          "
-          if [ "${{ matrix.platform }}" = "mac" ]; then
-            mkdir -p /tmp/icon.iconset
-            for size in 16 32 64 128 256 512; do
-              sips -z $size $size desktop-build/electron/icons/icon-1024.png --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null
-              double=$((size * 2))
-              sips -z $double $double desktop-build/electron/icons/icon-1024.png --out /tmp/icon.iconset/icon_${size}x${size}@2x.png 2>/dev/null
-            done
-            cp desktop-build/electron/icons/icon-1024.png /tmp/icon.iconset/icon_512x512@2x.png
-            iconutil -c icns /tmp/icon.iconset -o desktop-build/electron/icons/icon.icns
-            rm -rf /tmp/icon.iconset
+          cd artifacts
+          ls -la
+          MISSING=""
+          ls *.dmg >/dev/null 2>&1 || MISSING="$MISSING dmg"
+          ls *.exe >/dev/null 2>&1 || MISSING="$MISSING exe"
+          ls *.AppImage >/dev/null 2>&1 || MISSING="$MISSING AppImage"
+          ls *.deb >/dev/null 2>&1 || MISSING="$MISSING deb"
+          [ -f latest.yml ] || MISSING="$MISSING latest.yml"
+          [ -f latest-linux.yml ] || MISSING="$MISSING latest-linux.yml"
+          [ -f latest-mac.yml ] || MISSING="$MISSING latest-mac.yml"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Incomplete artifact set — missing:$MISSING. No release will be published."
+            exit 1
           fi
-          rm -f desktop-build/electron/icons/icon-1024.png
+          echo "All expected artifacts present."
 
-      - name: Create electron-builder config
+      - name: Generate release notes
         shell: bash
-        working-directory: desktop-build
         run: |
-          cat > electron-builder.yml << 'EOF'
-          appId: com.oswstudio.app
-          productName: OSW Studio
-          copyright: Copyright © 2026 OSW Studio
+          VERSION="${{ steps.version.outputs.version }}"
+          cd artifacts
+          DMG=$(ls *.dmg | head -1)
+          EXE=$(ls *.exe | head -1)
+          APPIMAGE=$(ls *.AppImage | head -1)
+          DEB=$(ls *.deb | head -1)
+          DOWNLOADS="- **macOS**: ${DMG}\n- **Windows**: ${EXE}\n- **Linux**: ${APPIMAGE} or ${DEB}"
+          cd ..
+          sed "s/{{VERSION}}/${VERSION}/g" .github/desktop-release-notes.md > notes.md
+          # Replace the {{DOWNLOADS}} placeholder with the actual artifact list
+          printf '%b' "$DOWNLOADS" > downloads.md
+          awk '/{{DOWNLOADS}}/{while((getline line < "downloads.md") > 0) print line; next} {print}' notes.md > notes-final.md
+          cat notes-final.md
 
-          directories:
-            output: dist
-            app: app
-
-          extraMetadata:
-            main: main.js
-            author:
-              name: OSW Studio
-              email: otst@oswstudio.com
-
-          asar: false
-
-          files:
-            - "**/*"
-            - "!**/.env"
-            - "!node_modules/@img/sharp-*/**"
-            - "!node_modules/sharp/**"
-
-          mac:
-            target:
-              - target: dmg
-                arch:
-                  - universal
-            icon: electron/icons/icon.icns
-            category: public.app-category.developer-tools
-            darkModeSupport: true
-            x64ArchFiles: "**/*.node"
-
-          win:
-            target:
-              - nsis
-            icon: electron/icons/icon.png
-
-          nsis:
-            oneClick: false
-            allowToChangeInstallationDirectory: true
-
-          linux:
-            target:
-              - AppImage
-              - deb
-            icon: electron/icons/icon.png
-            category: Development
-
-          publish:
-            provider: github
-            owner: o-stahl
-            repo: osw-studio
-          EOF
-
-      - name: Build installer
-        working-directory: desktop-build
+      - name: Publish release
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --${{ matrix.platform }} --publish always
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="desktop-v${{ steps.version.outputs.version }}"
+          # A leftover draft from a failed run can be replaced; a published release cannot.
+          if gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null | grep -q true; then
+            echo "Deleting leftover draft release for $TAG"
+            gh release delete "$TAG" --yes
+          elif gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists and is published. Delete it manually to re-release."
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --draft \
+            --title "OSW Studio Desktop v${{ steps.version.outputs.version }}" \
+            --notes-file notes-final.md \
+            artifacts/*
+          # Flip public only after every file is uploaded — updaters never see a partial release
+          gh release edit "$TAG" --draft=false
+          echo "Release $TAG published."
