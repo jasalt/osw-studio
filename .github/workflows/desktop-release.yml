@@ -112,9 +112,11 @@ jobs:
           npm ci
           npm pkg set version="${{ steps.version.outputs.version }}"
 
-      - name: Compile Electron main process
+      - name: Typecheck and compile Electron main process
         working-directory: desktop
-        run: npx tsup
+        run: |
+          npx tsc --noEmit
+          npx tsup
 
       - name: Build installer (no publish)
         working-directory: desktop
