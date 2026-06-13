@@ -6,6 +6,16 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.76.1 - Desktop Recovery (2026-06-13)
+
+A follow-up to v1.76.0 for anyone upgrading from older desktop versions. The app now recovers automatically if its workspace records were lost during a past update, and rescues project data that older versions stored inside the installation directory when it's still there.
+
+### Desktop
+- **Workspace recovery**: Startup validates the workspace and re-initializes cleanly if records were lost, instead of getting stuck on a dead reference
+- **Legacy data rescue**: Project data left in the installation directory by versions up to 1.75 is migrated to the proper user-data location when still present
+
+---
+
 ## v1.76.0 - Desktop Reliability (2026-06-13)
 
 The desktop app works again on Linux and Windows — a long-standing bug wrote app data into the read-only installation directory, leaving the app stuck on a loading screen. Updates are now under your control: the app asks before downloading or installing anything, and startup problems show a real error page instead of loading forever.

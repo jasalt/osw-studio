@@ -92,18 +92,37 @@ jobs:
             sleep 1
           done
           STATUS=$(curl -sSL -o /dev/null -w '%{http_code}' "http://localhost:34999/" || echo "000")
-          INIT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:34999/api/auth/desktop-init" || echo "000")
+          INIT_STATUS=$(curl -s -o /tmp/init1.json -w '%{http_code}' -X POST "http://localhost:34999/api/auth/desktop-init" || echo "000")
+          WS1=$(jq -r '.workspaceId // empty' /tmp/init1.json 2>/dev/null || true)
+
+          # Recovery path: simulate a lost workspace (e.g. database wiped by an
+          # old-version update while the stale reference survives) and assert
+          # the bootstrap re-initializes instead of returning a dead workspace.
+          RECOVERY="skipped"
+          if [ -n "$WS1" ] && [ -f "$DATA_DIR/system.sqlite" ]; then
+            sqlite3 "$DATA_DIR/system.sqlite" "DELETE FROM workspaces WHERE id='$WS1';"
+            INIT2_STATUS=$(curl -s -o /tmp/init2.json -w '%{http_code}' -X POST "http://localhost:34999/api/auth/desktop-init" || echo "000")
+            WS2=$(jq -r '.workspaceId // empty' /tmp/init2.json 2>/dev/null || true)
+            if [ "$INIT2_STATUS" = "200" ] && [ -n "$WS2" ] && [ "$WS2" != "$WS1" ]; then
+              RECOVERY="ok"
+            else
+              RECOVERY="failed (status=$INIT2_STATUS ws1=$WS1 ws2=$WS2)"
+            fi
+          fi
+
           kill $SERVER_PID || true
           FAIL=""
           [ "$STATUS" != "200" ] && FAIL="$FAIL / returned $STATUS;"
           [ "$INIT_STATUS" != "200" ] && FAIL="$FAIL desktop-init returned $INIT_STATUS;"
+          [ -n "$WS1" ] || FAIL="$FAIL desktop-init returned no workspaceId;"
+          [ "$RECOVERY" = "ok" ] || FAIL="$FAIL workspace recovery $RECOVERY;"
           [ -f "$DATA_DIR/system.sqlite" ] || FAIL="$FAIL system.sqlite not created in DATA_DIR;"
           [ -d "desktop/app/data" ] && FAIL="$FAIL server wrote data/ into the app directory (read-only when installed);"
           if [ -n "$FAIL" ]; then
             echo "::error::Desktop smoke test failed —$FAIL"
             exit 1
           fi
-          echo "Smoke test passed — server up, workspace bootstrap ok, data in DATA_DIR"
+          echo "Smoke test passed — server up, workspace bootstrap ok, recovery ok, data in DATA_DIR"
 
       - name: Install desktop dependencies
         shell: bash

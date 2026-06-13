@@ -12,6 +12,7 @@
 
 import { app, BrowserWindow, Menu, dialog, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { migrateLegacyDir } from './migrate-legacy';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
@@ -55,14 +56,23 @@ async function startNextServer(): Promise<number> {
   process.env.OSW_DESKTOP = 'true';
 
   // Platform-appropriate writable locations. The install dir is read-only on
-  // Linux (AppImage squashfs) and Windows (Program Files) — every server-side
-  // path that defaults to process.cwd() MUST be redirected here. The server
-  // reads DATA_DIR / DEPLOYMENTS_DIR; the CI smoke test asserts this contract.
+  // Linux (AppImage squashfs) and often on Windows — every server-side path
+  // that defaults to process.cwd() MUST be redirected here. The server reads
+  // DATA_DIR / DEPLOYMENTS_DIR; the CI smoke test asserts this contract.
+  const appDir = app.getAppPath();
   const dataDir = path.join(app.getPath('userData'), 'data');
+  const deploymentsDir = path.join(app.getPath('userData'), 'deployments');
+
+  // One-time rescue: versions ≤1.75 stored data inside the install directory.
+  // If that data is still reachable (e.g. a Windows update that preserved it),
+  // copy it to userData before first use. Best-effort — on macOS a drag-install
+  // replaces the bundle (and the data inside it) before this code can run.
+  migrateLegacyDir(path.join(appDir, 'data'), dataDir, logToFile);
+  migrateLegacyDir(path.join(appDir, 'deployments'), deploymentsDir, logToFile);
+
   fs.mkdirSync(dataDir, { recursive: true });
   process.env.DATA_DIR = dataDir;
 
-  const deploymentsDir = path.join(app.getPath('userData'), 'deployments');
   fs.mkdirSync(deploymentsDir, { recursive: true });
   process.env.DEPLOYMENTS_DIR = deploymentsDir;
 
@@ -83,8 +93,7 @@ async function startNextServer(): Promise<number> {
   // No admin password for desktop — it's a local single-user app
 
   // electron-builder's `directories.app: app` flattens the app directory,
-  // so getAppPath() points at the directory containing server.js.
-  const appDir = app.getAppPath();
+  // so appDir points at the directory containing server.js.
   process.chdir(appDir);
   require(path.join(appDir, 'server.js'));
 

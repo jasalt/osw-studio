@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.76.1 - 2026-06-13
+
+### Desktop
+
+- **Recovery from lost or stale workspace state**: Desktop startup now always validates the workspace instead of trusting a remembered reference — if the database was lost (e.g. during an update on older versions), the app re-initializes cleanly instead of getting stuck on a dead workspace. Legacy data stored inside the installation directory by versions ≤1.75 is migrated to the user-data directory when still present.
+
 ## v1.76.0 - 2026-06-13
 
 ### Desktop

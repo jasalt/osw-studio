@@ -20,8 +20,8 @@ import {
   setDefaultWorkspace,
   getUserDefaultWorkspace,
   getUserById,
-  createUser,
   updateWorkspace,
+  getWorkspaceById,
 } from './system-database';
 import { hashPassword } from './passwords';
 import { logger } from '@/lib/utils';
@@ -50,9 +50,11 @@ export async function ensureDefaultWorkspace(userId: string): Promise<string> {
   // On standalone instances, migrate legacy data/osws.sqlite into the workspace for all users.
   const isBalancerManaged = !!process.env.WEBHOOK_URL;
 
-  // Check if user already has a default workspace
+  // Check if user already has a default workspace — and that it still exists.
+  // A stale default (e.g. database partially lost during a desktop update)
+  // must fall through to recreation instead of returning a dead workspace id.
   const existing = getUserDefaultWorkspace(userId);
-  if (existing) {
+  if (existing && getWorkspaceById(existing)) {
     if (!isBalancerManaged) {
       migrateLegacyData(existing);
     }

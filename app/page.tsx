@@ -21,16 +21,10 @@ export default function Home() {
     if (!isServerMode) return;
 
     if (isDesktop) {
-      const existingWorkspace = document.cookie
-        .split('; ')
-        .find(c => c.startsWith('osw_workspace='))
-        ?.split('=')[1];
-
-      if (existingWorkspace) {
-        router.push(`/w/${existingWorkspace}/projects`);
-        return;
-      }
-
+      // Always bootstrap — desktop-init is idempotent and validates that the
+      // workspace actually exists. Trusting the cookie alone routed users into
+      // a dead workspace when the database was lost (e.g. during an update),
+      // with no way to recover.
       fetch('/api/auth/desktop-init', { method: 'POST' })
         .then(async r => {
           const data = await r.json().catch(() => ({}));

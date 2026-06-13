@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
-    exclude: ['e2e/**', '**/node_modules/**', 'desktop/**'],
+    exclude: ['e2e/**', '**/node_modules/**', 'desktop/app/**', 'desktop/dist/**'],
   },
   resolve: {
     alias: {
