@@ -281,6 +281,55 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('assistant text deduplication', () => {
+    it('does not duplicate assistant text streamed via delta then finalized via conversation_message', () => {
+      const events = [
+        userMsg('hello'),
+        evt('assistant_delta', { all: [{ text: 'Hi there!' }] }, { id: 'a1' }),
+        evt('conversation_message', { message: { role: 'assistant', content: 'Hi there!' } }),
+      ];
+      const turns = proc.process(events);
+      const textItems = turns.flatMap(t => t.items).filter(i => i.type === 'text');
+      expect(textItems).toHaveLength(1);
+      expect(textItems[0].data).toBe('Hi there!');
+    });
+
+    it('still shows assistant text on replay when only conversation_message is present (no delta)', () => {
+      const events = [
+        userMsg('hello'),
+        evt('conversation_message', { message: { role: 'assistant', content: 'Replayed answer' } }),
+      ];
+      const turns = proc.process(events);
+      const textItems = turns.flatMap(t => t.items).filter(i => i.type === 'text');
+      expect(textItems).toHaveLength(1);
+      expect(textItems[0].data).toBe('Replayed answer');
+    });
+  });
+
+  describe('interview gate surfacing', () => {
+    it('renders an interview_gate event as an interview_gate item', () => {
+      const events = [
+        userMsg('hello'),
+        evt('interview_gate', { complete: true, items: [{ id: 'a', elicit: 'Name', passed: true }] }),
+      ];
+      const item = proc.process(events).flatMap(t => t.items).find(i => i.type === 'interview_gate');
+      expect(item).toBeDefined();
+      expect(item!.data.complete).toBe(true);
+    });
+
+    it('does not render the gate feedback harness message as a user item', () => {
+      const events = [
+        userMsg('hello'),
+        evt('conversation_message', {
+          message: { role: 'user', content: "<automated_reminder>\nNot done yet — these items aren't captured.\n</automated_reminder>" },
+        }),
+      ];
+      const userItems = proc.process(events).flatMap(t => t.items).filter(i => i.type === 'user');
+      expect(userItems).toHaveLength(1);
+      expect(userItems[0].data).toBe('hello');
+    });
+  });
+
   describe('multi-turn conversations', () => {
     it('second user message starts a new turn', () => {
       const events = [

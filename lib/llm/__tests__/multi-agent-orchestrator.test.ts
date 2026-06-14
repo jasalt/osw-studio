@@ -13,8 +13,14 @@ const h = vi.hoisted(() => {
     toolCount: 1,
     turnCount: 1,
   };
+  const orchestratorAgent = {
+    type: 'orchestrator', maxIterations: 40, isReadOnly: false, tools: ['bash'], hasTool: () => true,
+  };
   return {
     okResult,
+    orchestratorAgent,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    agent: orchestratorAgent as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     loopBehavior: { run: async (_deps: any, _prompt: unknown): Promise<any> => ({ ...okResult }) },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,26 +78,21 @@ vi.mock('../coordinator', () => ({
   },
 }));
 
-vi.mock('../agent', () => {
-  const orchestratorAgent = {
-    type: 'orchestrator',
-    maxIterations: 40,
-    isReadOnly: false,
-    tools: ['bash'],
-    hasTool: () => true,
-  };
-  return {
-    agentRegistry: { get: () => orchestratorAgent },
-  };
-});
+vi.mock('../agent', () => ({
+  agentRegistry: { get: () => h.agent },
+}));
 
 vi.mock('@/lib/vfs', () => ({
   vfs: {
     listDirectory: vi.fn(async () => []),
     getServerContextMetadata: () => null,
     updateProjectCost: vi.fn(async () => undefined),
+    readFile: vi.fn(async () => ({ content: '# profile' })),
   },
 }));
+
+vi.mock('@/lib/testing/judge', () => ({ runStructuredJudge: vi.fn(async () => []) }));
+vi.mock('@/lib/testing/assertion-runner', () => ({ runAssertions: vi.fn(async () => []) }));
 
 vi.mock('@/lib/vfs/checkpoint', () => ({
   checkpointManager: { createCheckpoint: vi.fn(async () => ({ id: 'cp1', timestamp: 1 })) },
@@ -157,11 +158,14 @@ vi.mock('@/lib/telemetry', () => ({ track: vi.fn() }));
 vi.mock('@/lib/telemetry/tool-analytics', () => ({ extractToolAnalytics: () => ({}) }));
 
 import { MultiAgentOrchestrator, AgentMessage } from '../multi-agent-orchestrator';
+import { runStructuredJudge } from '@/lib/testing/judge';
+import { getInterviewTemplate } from '@/lib/interview/templates';
 
 beforeEach(() => {
   h.loops.length = 0;
   h.executorConfigs.length = 0;
   h.coordinatorConfigs.length = 0;
+  h.agent = h.orchestratorAgent;
   h.loopBehavior.run = async () => ({ ...h.okResult });
 });
 
@@ -271,6 +275,84 @@ describe('MultiAgentOrchestrator result propagation and lifecycle', () => {
     await orchestrator.execute('next step');
 
     expect(captured.some(m => m.metadata?.isCompactSummary)).toBe(true);
+  });
+
+  it('appends the template agenda to the interview agent system prompt', async () => {
+    h.agent = { type: 'interview', maxIterations: 30, isReadOnly: false, tools: ['bash'], hasTool: () => true };
+    let captured: Message[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    h.loopBehavior.run = async (deps: any): Promise<AgentLoopResult> => {
+      captured = deps.context.getMessages();
+      return { ...h.okResult };
+    };
+    const orchestrator = new MultiAgentOrchestrator(
+      'test-p1', 'interview', undefined,
+      { interviewTemplateId: 'understand-company' },
+    );
+    await orchestrator.execute('Understand a company');
+
+    const system = captured.find(m => m.role === 'system');
+    expect(system).toBeDefined();
+    const content = system!.content as string;
+    expect(content).toContain('SYS PROMPT');
+    expect(content).toContain('Understand a company');
+    expect(content).toContain('/.interviews/company-profile.md');
+  });
+
+  it('interview completion gate passes (null) when all required items are judged complete', async () => {
+    h.agent = { type: 'interview', maxIterations: 30, isReadOnly: false, tools: ['bash'], hasTool: () => true };
+    const template = getInterviewTemplate('understand-company')!;
+    const requiredCount = template.items.filter(i => i.required !== false).length;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (runStructuredJudge as any).mockResolvedValue({
+      verdicts: Array.from({ length: requiredCount }, () => ({ passed: true, reasoning: '' })),
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, provider: 'openrouter', model: 'm' },
+    });
+    const progress = vi.fn();
+    const orch = new MultiAgentOrchestrator('p', 'interview', progress, { interviewTemplateId: 'understand-company' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (orch as any).runInterviewCompletionGate(template);
+    expect(result).toBeNull();
+    expect(progress).toHaveBeenCalledWith('interview_gate', expect.objectContaining({
+      complete: true,
+      handoff: expect.objectContaining({ label: expect.any(String), prompt: expect.any(String), mode: 'code' }),
+    }));
+    // The judge's token usage is recorded and surfaced via a usage event.
+    expect(progress).toHaveBeenCalledWith('usage', expect.objectContaining({ taskCost: expect.any(Number) }));
+  });
+
+  it('interview completion gate returns feedback naming an unmet required item', async () => {
+    h.agent = { type: 'interview', maxIterations: 30, isReadOnly: false, tools: ['bash'], hasTool: () => true };
+    const template = getInterviewTemplate('understand-company')!;
+    const required = template.items.filter(i => i.required !== false);
+    // First required item fails its judge verdict, the rest pass.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (runStructuredJudge as any).mockResolvedValue({
+      verdicts: required.map((_, i) => ({ passed: i !== 0, reasoning: i === 0 ? 'name missing' : '' })),
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, provider: 'openrouter', model: 'm' },
+    });
+    const progress = vi.fn();
+    const orch = new MultiAgentOrchestrator('p', 'interview', progress, { interviewTemplateId: 'understand-company' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (orch as any).runInterviewCompletionGate(template);
+    expect(result).not.toBeNull();
+    expect(result).toContain(required[0].elicit);
+    expect(result).toContain('name missing');
+    expect(progress).toHaveBeenCalledWith('interview_gate', expect.objectContaining({ complete: false }));
+  });
+
+  it('does not append an agenda for the orchestrator agent', async () => {
+    let captured: Message[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    h.loopBehavior.run = async (deps: any): Promise<AgentLoopResult> => {
+      captured = deps.context.getMessages();
+      return { ...h.okResult };
+    };
+    const orchestrator = new MultiAgentOrchestrator('test-p1');
+    await orchestrator.execute('build a site');
+
+    const system = captured.find(m => m.role === 'system');
+    expect(system!.content as string).toBe('SYS PROMPT');
   });
 
   it('wires getFreshContext and child factories into the compaction/coordinator config', async () => {

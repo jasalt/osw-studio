@@ -23,7 +23,6 @@ import {
   updateWorkspace,
   getWorkspaceById,
 } from './system-database';
-import { hashPassword } from './passwords';
 import { logger } from '@/lib/utils';
 
 function openReadonlyDb(dbPath: string): Database.Database {
@@ -65,7 +64,10 @@ export async function ensureDefaultWorkspace(userId: string): Promise<string> {
   const user = getUserById(userId);
   if (!user) {
     const { randomBytes } = await import('crypto');
-    const hash = await hashPassword(randomBytes(32).toString('hex'));
+    // Synthetic local users (admin/desktop) never log in by this hash, so store
+    // a non-bcrypt placeholder — avoids loading bcrypt's native addon during
+    // desktop boot, where a load failure would block workspace init.
+    const hash = `nologin:${randomBytes(32).toString('hex')}`;
     const db = getSystemDatabase();
     db.prepare(`
       INSERT OR IGNORE INTO users (id, email, password_hash, display_name, is_admin, active)

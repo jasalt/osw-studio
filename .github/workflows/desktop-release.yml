@@ -154,8 +154,48 @@ jobs:
             desktop/dist/*.yml
             desktop/dist/*.blockmap
 
-  publish:
+  # Boot the packaged AppImage on Fedora and assert workspace init succeeds.
+  # The build-job smoke test runs `node server.js` under the runner's system
+  # Node, so it never exercises native modules under Electron's ABI — this job
+  # runs the real binary's --self-test entry point to cover that path.
+  selftest-fedora:
+    name: Self-test (Fedora)
     needs: build
+    runs-on: ubuntu-latest
+    # Pinned to the reported environment (Fedora 43). Bump or add distros later.
+    container: fedora:43
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux
+          path: dist
+
+      - name: Install Electron runtime libraries
+        # Electron needs an X/GTK userland even to reach app.whenReady() with no
+        # window. This list is the likeliest iteration point — a missing lib
+        # surfaces as the app failing to start under xvfb; add packages here.
+        run: |
+          dnf -y install \
+            nss nspr atk at-spi2-atk at-spi2-core cups-libs gtk3 \
+            libdrm mesa-libgbm libX11 libXcomposite libXdamage libXext \
+            libXfixes libXrandr libxcb libxkbcommon alsa-lib pango cairo \
+            libXScrnSaver xorg-x11-server-Xvfb findutils
+
+      - name: Boot AppImage headlessly and assert workspace init
+        run: |
+          set -euo pipefail
+          APPIMAGE=$(ls dist/*.AppImage | head -1)
+          echo "Testing: $APPIMAGE"
+          chmod +x "$APPIMAGE"
+          # APPIMAGE_EXTRACT_AND_RUN: no FUSE needed inside the container.
+          # --no-sandbox: Chromium's sandbox needs privileges the container lacks.
+          # --self-test: headless boot + desktop-init probe, exits 0/1 with the
+          #   real cause printed on failure.
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a "$APPIMAGE" --self-test --no-sandbox
+
+  publish:
+    needs: [build, selftest-fedora]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source

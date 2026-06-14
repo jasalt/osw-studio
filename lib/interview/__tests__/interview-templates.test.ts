@@ -1,0 +1,110 @@
+import { describe, it, expect } from 'vitest';
+import { listInterviewTemplates, getInterviewTemplate, filterInterviewTemplates } from '../templates';
+import { renderInterviewAgenda, withInterviewAgenda } from '../agenda';
+
+describe('interview template registry', () => {
+  it('exposes the built-in templates by id', () => {
+    expect(getInterviewTemplate('understand-company')?.title).toBe('Understand a company');
+    expect(getInterviewTemplate('plan-feature')?.title).toBe('Plan a feature');
+    expect(getInterviewTemplate('nope')).toBeUndefined();
+    expect(listInterviewTemplates().length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('exposes the website and publish templates with their artifacts and handoffs', () => {
+    const site = getInterviewTemplate('plan-website');
+    expect(site?.title).toBe('Plan a website');
+    expect(site?.artifacts[0].path).toBe('/.interviews/site-plan.md');
+    expect(site?.handoff?.mode).toBe('code');
+
+    const pub = getInterviewTemplate('prepare-publish');
+    expect(pub?.title).toBe('Get ready to publish');
+    expect(pub?.artifacts[0].path).toBe('/.interviews/publish-checklist.md');
+    expect(pub?.handoff?.mode).toBe('code');
+  });
+
+  it('every built-in item is well-formed (id, elicit, completion)', () => {
+    for (const t of listInterviewTemplates()) {
+      expect(t.artifacts.length).toBeGreaterThan(0);
+      expect(t.items.length).toBeGreaterThan(0);
+      for (const item of t.items) {
+        expect(item.id).toBeTruthy();
+        expect(item.elicit).toBeTruthy();
+        expect(item.completion.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe('renderInterviewAgenda', () => {
+  it('renders the title, artifact target, and each item elicit', () => {
+    const t = getInterviewTemplate('understand-company')!;
+    const agenda = renderInterviewAgenda(t);
+    expect(agenda).toContain('Understand a company');
+    expect(agenda).toContain('/.interviews/company-profile.md');
+    for (const item of t.items) {
+      expect(agenda).toContain(item.elicit);
+    }
+  });
+
+  it('marks optional items', () => {
+    const agenda = renderInterviewAgenda(getInterviewTemplate('understand-company')!);
+    expect(agenda).toMatch(/optional/i);
+  });
+
+  it('does not leak raw completion assertions to the agent', () => {
+    const t = getInterviewTemplate('plan-feature')!;
+    const agenda = renderInterviewAgenda(t);
+    expect(agenda).not.toContain('judge');
+    for (const item of t.items) {
+      for (const assertion of item.completion) {
+        if (assertion.type === 'judge') {
+          expect(agenda).not.toContain(assertion.criteria);
+        }
+      }
+    }
+  });
+});
+
+describe('filterInterviewTemplates', () => {
+  const all = listInterviewTemplates();
+
+  it('returns all templates for an empty or whitespace query', () => {
+    expect(filterInterviewTemplates(all, '')).toHaveLength(all.length);
+    expect(filterInterviewTemplates(all, '   ')).toHaveLength(all.length);
+  });
+
+  it('matches on title, case-insensitively', () => {
+    const ids = filterInterviewTemplates(all, 'COMPANY').map(t => t.id);
+    expect(ids).toContain('understand-company');
+    expect(ids).not.toContain('plan-feature');
+  });
+
+  it('matches on description', () => {
+    const ids = filterInterviewTemplates(all, 'spec').map(t => t.id);
+    expect(ids).toContain('plan-feature');
+    expect(ids).not.toContain('understand-company');
+  });
+
+  it('returns empty when nothing matches', () => {
+    expect(filterInterviewTemplates(all, 'zzzzz')).toHaveLength(0);
+  });
+});
+
+describe('withInterviewAgenda', () => {
+  it('appends the rendered agenda when the template id resolves', () => {
+    const base = 'SYSTEM PROMPT';
+    const result = withInterviewAgenda(base, 'understand-company');
+    expect(result.startsWith(base)).toBe(true);
+    expect(result).toContain('Understand a company');
+    expect(result).toContain('/.interviews/company-profile.md');
+    expect(result.length).toBeGreaterThan(base.length);
+  });
+
+  it('returns the prompt unchanged when no template id is given', () => {
+    expect(withInterviewAgenda('SYSTEM PROMPT', undefined)).toBe('SYSTEM PROMPT');
+  });
+
+  it('returns the prompt unchanged when the template id is unknown', () => {
+    expect(withInterviewAgenda('SYSTEM PROMPT', 'no-such-template')).toBe('SYSTEM PROMPT');
+  });
+});

@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.77.0 - 2026-06-14
+
+### Interview Mode
+
+- **Interview mode**: A new workspace mode alongside Code and Chat. An AI agent conducts a structured, conversational interview from a template — asking one question at a time, reading the project to verify answers where relevant, and recording what it learns as a Markdown artifact under `/.interviews/`. Four templates ship built in: "Understand a company", "Plan a website", "Plan a feature", and "Get ready to publish".
+- **Template picker**: Switching to Interview mode replaces the message box with a searchable list of templates; pick one to begin. The active interview's name appears in the chat header, and clearing the chat returns you to the picker.
+- **Completion check**: An interview only wraps up once its required items are actually recorded in the artifact. When the agent goes to finish, each required item is verified in a single pass — anything missing is sent back to the agent and surfaced in the chat so it gets captured first. When everything's covered, a clear "interview complete" marker is shown, prompting you to clear the chat to start a new one.
+- **Handoff**: A completed interview offers a one-click follow-up — e.g. "Build a site from this" or "Implement this plan" — that switches to Code mode and starts the work from the recorded artifact.
+- **Read-broad, write-narrow**: The interview agent can read anywhere in the project but only writes within `/.interviews/`, so an interview never touches your code.
+
+### Fixes
+
+- **Duplicate messages in chat**: Assistant replies could render twice in the transcript. Now shown once.
+- **Relative paths in the shell**: Shell commands like `find .` now resolve `.` and `./` to the project root, instead of a non-existent path that silently returned nothing.
+- **Chained `status --complete` now ends the task**: Ending a task with a chained command like `build && status --complete` now registers completion. Previously it could leave the AI re-running status and appearing to "complete" several times.
+- **No "Task completed" toast on pause**: Pausing for your input — an interview question or `ask` chips — no longer shows a completion toast or plays the done sound.
+
+### Desktop
+
+- **Boot reliability**: Desktop workspace initialization no longer invokes bcrypt for the synthetic local accounts (admin/desktop) that never sign in by password — avoiding a class of startup failure when bcrypt's native addon fails to load under the packaged runtime.
+- **Boot-failure diagnostics**: When the app can't initialize its workspace, the diagnostic screen now shows the underlying error and stack trace instead of a generic message, so failures are reportable.
+- **Release self-test**: Desktop releases now boot the real packaged binary headlessly (on Fedora, under Electron's own runtime) and assert workspace initialization before publishing — exercising the native-module and filesystem paths a system-Node smoke test can't.
+
 ## v1.76.1 - 2026-06-13
 
 ### Desktop

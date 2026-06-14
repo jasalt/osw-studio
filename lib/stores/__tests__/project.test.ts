@@ -69,18 +69,29 @@ describe('project slice', () => {
     expect(store.getState().refreshTrigger).toBe(before + 1);
   });
 
-  it('setChatMode defers reset when generating', () => {
+  it('defaults to code mode', () => {
+    expect(store.getState().mode).toBe('code');
+  });
+
+  it('setMode sets the workspace mode (including interview)', () => {
+    store.getState().setMode('chat');
+    expect(store.getState().mode).toBe('chat');
+    store.getState().setMode('interview');
+    expect(store.getState().mode).toBe('interview');
+  });
+
+  it('setMode defers reset when generating', () => {
     store.getState().initProject({ id: 'p', name: 'P' });
     // Create an active task for the viewed project to make generating=true
     setActiveTask(store, 'p', { persistedInstance: { fake: true } as any });
-    store.getState().setChatMode(true);
+    store.getState().setMode('chat');
     // persistedInstance should not be cleared because generation is active
     const task = store.getState().generationTasks.get('p');
     expect(task?.persistedInstance).not.toBeNull();
-    expect(store.getState().chatMode).toBe(true);
+    expect(store.getState().mode).toBe('chat');
   });
 
-  it('setChatMode resets orchestrator when not generating', () => {
+  it('setMode resets orchestrator when not generating', () => {
     store.getState().initProject({ id: 'p', name: 'P' });
     // Create a completed task with a fake persistedInstance
     setActiveTask(store, 'p', {
@@ -89,10 +100,29 @@ describe('project slice', () => {
     });
     store.setState({ generating: false });
 
-    store.getState().setChatMode(true);
+    store.getState().setMode('chat');
 
     const task = store.getState().generationTasks.get('p');
     expect(task?.persistedInstance).toBeNull();
+  });
+
+  it('defaults to no active interview', () => {
+    expect(store.getState().activeInterview).toBeNull();
+  });
+
+  it('setActiveInterview sets and clears the active interview', () => {
+    store.getState().initProject({ id: 'p', name: 'P' });
+    store.getState().setActiveInterview({ templateId: 'understand-company', title: 'Understand a company' });
+    expect(store.getState().activeInterview).toEqual({ templateId: 'understand-company', title: 'Understand a company' });
+    store.getState().setActiveInterview(null);
+    expect(store.getState().activeInterview).toBeNull();
+  });
+
+  it('resetProject clears the active interview', () => {
+    store.getState().initProject({ id: 'p', name: 'P' });
+    store.getState().setActiveInterview({ templateId: 'plan-feature', title: 'Plan a feature' });
+    store.getState().resetProject();
+    expect(store.getState().activeInterview).toBeNull();
   });
 
   it('resetProject clears all project state', () => {

@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { track } from '@/lib/telemetry';
 import { vfs } from '@/lib/vfs';
 import type { ProjectRuntime } from '@/lib/vfs/types';
+import type { WorkspaceMode } from './project';
 import { debugEventsState } from '@/lib/llm/debug-events-state';
 import { drainRuntimeErrors } from '@/lib/preview/runtime-errors';
 import { logger } from '@/lib/utils';
@@ -119,11 +120,13 @@ function deriveScalarFields(tasks: Map<string, GenerationTask>, viewedProjectId:
 
 interface StartGenerationOptions {
   chatMode?: boolean;
+  mode?: WorkspaceMode;
   projectId: string;
   focusContext?: any;
   placedBlocks?: any[];
   isTourLockingInput?: boolean;
   displayPrompt?: string;
+  templateId?: string;
 }
 
 export interface OrchestratorSlice {
@@ -497,9 +500,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       if (!orchestrator) {
         orchestrator = new MultiAgentOrchestrator(
           projectId,
-          'orchestrator',
+          options?.mode === 'interview' ? 'interview' : 'orchestrator',
           progressCallback,
-          { chatMode, model: modelToUse },
+          { chatMode, model: modelToUse, interviewTemplateId: options?.templateId },
         );
 
         // Only bootstrap conversation if viewing this project.
@@ -550,6 +553,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
         if (vfs.hasServerContext()) {
           await vfs.refreshServerContext();
         }
+        // awaiting_user is a pause (e.g. interview question, ask chips), not a
+        // completion — clean up the task but skip the completion toast/sounds.
+        const awaitingUser = result.exitReason === 'awaiting_user';
         track('task_complete', {
           provider: currentProvider, model: modelToUse,
           duration_ms: Date.now() - taskStartTime, task_id: taskId,
@@ -566,11 +572,11 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           if (successTask) {
             successTasks.set(projectId, { ...successTask, result: 'completed' });
           }
-          playTaskCompleteSound();
+          if (!awaitingUser) playTaskCompleteSound();
         }
         set({ generationTasks: successTasks, ...deriveScalarFields(successTasks, get().projectId) });
-        if (isForeground) playTaskCompleteSoundSubtle();
-        toast.success('Task completed');
+        if (isForeground && !awaitingUser) playTaskCompleteSoundSubtle();
+        if (!awaitingUser) toast.success('Task completed');
       } else {
         // User-initiated stops are not failures: stopGeneration already
         // tracked task_fail (reason: stopped) and the user expects no error.

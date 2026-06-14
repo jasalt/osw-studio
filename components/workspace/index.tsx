@@ -13,9 +13,10 @@ import { AppHeader, HeaderAction } from '@/components/ui/app-header';
 import { PendingImage } from '@/lib/llm/multi-agent-orchestrator';
 import { configManager, migrateBackendKey } from '@/lib/config/storage';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
+import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
 import { PANEL_MAP } from '@/lib/stores/slices/layout';
 import { useCostSettings } from '@/lib/hooks/use-cost-settings';
-import { getProvider, modelSupportsVision, getModelInputModalities } from '@/lib/llm/providers/registry';
+import { getProvider, getModelInputModalities } from '@/lib/llm/providers/registry';
 import { toast } from 'sonner';
 import { debugEventsState } from '@/lib/llm/debug-events-state';
 import {
@@ -52,7 +53,6 @@ import { ProjectSettingsModal } from '@/components/project-backend';
 import { SkillsPanel } from '@/components/workspace/skills-panel';
 import { PanelDragProvider } from '@/components/ui/panel';
 import { ConsolePanel } from '@/components/console';
-import { getRuntimeConfig } from '@/lib/runtimes/registry';
 import { drainRuntimeErrors, peekRuntimeErrors, formatRuntimeErrors } from '@/lib/preview/runtime-errors';
 
 interface WorkspaceProps {
@@ -75,7 +75,8 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const entryPoint = useWorkspaceStore(s => s.entryPoint);
   const projectRuntime = useWorkspaceStore(s => s.projectRuntime);
   const focusContext = useWorkspaceStore(s => s.focusContext);
-  const chatMode = useWorkspaceStore(s => s.chatMode);
+  const mode = useWorkspaceStore(s => s.mode);
+  const activeInterview = useWorkspaceStore(s => s.activeInterview);
   const runtimeErrors = useWorkspaceStore(s => s.runtimeErrors);
   const initialCheckpointId = useWorkspaceStore(s => s.initialCheckpointId);
   const checkpointRefreshKey = useWorkspaceStore(s => s.checkpointRefreshKey);
@@ -90,9 +91,10 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const generatingRef = useRef(false);
   const handleGenerateRef = useRef<((promptText?: string, images?: PendingImage[]) => Promise<void>) | null>(null);
   const setCurrentModel = useWorkspaceStore(s => s.setCurrentModel);
-  const storeChatMode = useWorkspaceStore(s => s.setChatMode);
+  const storeSetMode = useWorkspaceStore(s => s.setMode);
+  const storeSetActiveInterview = useWorkspaceStore(s => s.setActiveInterview);
   const storeFocusContext = useWorkspaceStore(s => s.setFocusContext);
-  const { state: tourState, start: startTour, setWorkspaceHandler } = useGuidedTour();
+  const { state: tourState, setWorkspaceHandler } = useGuidedTour();
   const tourStep = tourState.currentStep?.id;
   const tourRunning = tourState.status === 'running';
   const isTourLockingInput = tourRunning && tourStep !== 'wrap-up';
@@ -180,7 +182,6 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   }, [currentModel]);
   
   // Console panel — visible by default for terminal-mode runtimes (Python, Lua), togglable for all
-  const isTerminalRuntime = getRuntimeConfig(projectRuntime || 'handlebars').previewMode === 'terminal';
 
   const showChat = useWorkspaceStore(s => s.showChat);
   const showFiles = useWorkspaceStore(s => s.showFiles);
@@ -393,12 +394,12 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     await useWorkspaceStore.getState().clearChat(project.id);
     // Clear auto-checkpoints when conversation is cleared (keep manual saves)
     await checkpointManager.clearAutoCheckpoints(project.id);
+    // Clearing the chat also ends any active interview (returns to the picker)
+    useWorkspaceStore.getState().setActiveInterview(null);
   }, [project.id]);
   
   const visiblePanelCount = [showChat, showFiles, showEditor, showConsole, showPreview, showCheckpoints, showDebugPanel, showSkillsPanel].filter(Boolean).length;
   const baseSize = visiblePanelCount > 0 ? Math.floor(100 / visiblePanelCount) : 100;
-  // Last panel absorbs remainder so sizes sum to exactly 100 (avoids layout normalization warnings)
-  const lastPanelSize = visiblePanelCount > 0 ? 100 - baseSize * (visiblePanelCount - 1) : 100;
 
   const getModelDisplayName = (modelId: string) => {
     if (!modelId) return 'Select Model';
@@ -681,10 +682,29 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             useWorkspaceStore.setState({ initialCheckpointId: cp.id });
           } catch { /* non-fatal */ }
         }
-        // Initialize chatMode from localStorage
+        // Initialize mode from localStorage (migrating the legacy chat-mode key)
         if (typeof window !== 'undefined') {
-          const stored = localStorage.getItem('osw-studio-chat-mode');
-          if (stored === 'true') useWorkspaceStore.setState({ chatMode: true });
+          const storedMode = localStorage.getItem('osw-studio-mode');
+          if (storedMode === 'chat' || storedMode === 'interview' || storedMode === 'code') {
+            useWorkspaceStore.setState({ mode: storedMode });
+          } else if (localStorage.getItem('osw-studio-chat-mode') === 'true') {
+            useWorkspaceStore.setState({ mode: 'chat' });
+            localStorage.setItem('osw-studio-mode', 'chat');
+          }
+        }
+        // Initialize the active interview from localStorage (per project)
+        if (typeof window !== 'undefined') {
+          let restored = null;
+          const stored = localStorage.getItem(`osw-interview-${project.id}`);
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (parsed && typeof parsed.templateId === 'string' && typeof parsed.title === 'string') {
+                restored = { templateId: parsed.templateId, title: parsed.title };
+              }
+            } catch { /* ignore malformed */ }
+          }
+          useWorkspaceStore.setState({ activeInterview: restored });
         }
         // Initialize backendEnabled from localStorage
         if (migrateBackendKey(project.id)) {
@@ -723,7 +743,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
         } else {
           useWorkspaceStore.getState().setProjectCost(0);
         }
-      } catch (error) {
+      } catch {
         if (!isMounted) return;
         useWorkspaceStore.getState().setProjectCost(0);
       }
@@ -1177,12 +1197,16 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     if (contextParts.length > 0) messageContent = contextParts.join('\n\n') + '\n\n' + messageContent;
 
     await storeStartGeneration(messageContent, images, {
-      chatMode,
+      mode,
+      chatMode: mode === 'chat',
       projectId: project.id,
       focusContext,
       placedBlocks,
       isTourLockingInput,
       displayPrompt: (promptText ?? '').trim(),
+      // Resuming an interview: keep the template's agenda available so it is
+      // re-injected if the system message ever has to be rebuilt fresh.
+      templateId: mode === 'interview' ? activeInterview?.templateId : undefined,
     });
 
     // Post-generation UI cleanup
@@ -1192,7 +1216,32 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
       placedBlocks.forEach(b => previewRef.current?.removePlaceholder(b.placementId));
       useWorkspaceStore.setState({ placedBlocks: [] });
     }
-  }, [storeStartGeneration, chatMode, project.id, focusContext, placedBlocks, isTourLockingInput, handleFilesChange, formatFocusContextBlock, formatPlacedBlocksContext]);
+  }, [storeStartGeneration, mode, activeInterview, project.id, focusContext, placedBlocks, isTourLockingInput, handleFilesChange, formatFocusContextBlock, formatPlacedBlocksContext]);
+
+  const handleStartInterview = useCallback(async (template: InterviewTemplate) => {
+    if (!project.id) return;
+    // Start fresh: an interview should not append onto a prior conversation.
+    await useWorkspaceStore.getState().clearChat(project.id);
+    storeSetActiveInterview({ templateId: template.id, title: template.title });
+    await storeStartGeneration(template.title, undefined, {
+      mode: 'interview',
+      projectId: project.id,
+      templateId: template.id,
+    });
+  }, [project.id, storeSetActiveInterview, storeStartGeneration]);
+
+  const handleHandoff = useCallback(async (handoff: InterviewHandoff) => {
+    if (!project.id) return;
+    // End the interview and start the follow-up task fresh in its target mode.
+    storeSetActiveInterview(null);
+    storeSetMode(handoff.mode);
+    await useWorkspaceStore.getState().clearChat(project.id);
+    await storeStartGeneration(handoff.prompt, undefined, {
+      mode: handoff.mode,
+      chatMode: handoff.mode === 'chat',
+      projectId: project.id,
+    });
+  }, [project.id, storeSetActiveInterview, storeSetMode, storeStartGeneration]);
 
   handleGenerateRef.current = handleGenerate;
 
@@ -1698,8 +1747,11 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                   focusContext={focusContext}
                   setFocusContext={storeFocusContext}
                   focusPreviewSnippet={focusPreviewSnippet}
-                  chatMode={chatMode}
-                  setChatMode={storeChatMode}
+                  mode={mode}
+                  setMode={storeSetMode}
+                  activeInterview={activeInterview}
+                  onStartInterview={handleStartInterview}
+                  onHandoff={handleHandoff}
                   currentModel={currentModel}
                   setCurrentModel={setCurrentModel}
                   getModelDisplayName={getModelDisplayName}
@@ -1921,8 +1973,11 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                 focusContext={focusContext}
                 setFocusContext={storeFocusContext}
                 focusPreviewSnippet={focusPreviewSnippet}
-                chatMode={chatMode}
-                setChatMode={storeChatMode}
+                mode={mode}
+                setMode={storeSetMode}
+                activeInterview={activeInterview}
+                onStartInterview={handleStartInterview}
+                onHandoff={handleHandoff}
                 currentModel={currentModel}
                 setCurrentModel={setCurrentModel}
                 getModelDisplayName={getModelDisplayName}

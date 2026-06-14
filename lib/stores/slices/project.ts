@@ -4,6 +4,13 @@ import type { FocusContextPayload } from '@/lib/preview/types';
 
 type FocusTarget = FocusContextPayload & { timestamp: number };
 
+export type WorkspaceMode = 'code' | 'chat' | 'interview';
+
+export interface ActiveInterview {
+  templateId: string;
+  title: string;
+}
+
 export interface ProjectSlice {
   projectId: string;
   projectName: string;
@@ -13,7 +20,8 @@ export interface ProjectSlice {
   entryPoint: string | undefined;
   projectRuntime: ProjectRuntime | undefined;
   focusContext: FocusTarget | null;
-  chatMode: boolean;
+  mode: WorkspaceMode;
+  activeInterview: ActiveInterview | null;
   backendEnabled: boolean;
   selectedDeploymentId: string | null;
   initialCheckpointId: string | null;
@@ -28,7 +36,8 @@ export interface ProjectSlice {
   bumpRefreshTrigger: () => void;
   incrementCheckpointRefresh: () => void;
   updateProjectSettings: (settings: { runtime?: ProjectRuntime; previewEntryPoint?: string }) => void;
-  setChatMode: (mode: boolean) => void;
+  setMode: (mode: WorkspaceMode) => void;
+  setActiveInterview: (interview: ActiveInterview | null) => void;
   setBackendEnabled: (enabled: boolean) => void;
   setDeployment: (id: string | null) => void;
   setFocusContext: (ctx: FocusTarget | null) => void;
@@ -47,7 +56,8 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
   entryPoint: undefined,
   projectRuntime: undefined,
   focusContext: null,
-  chatMode: false,
+  mode: 'code',
+  activeInterview: null,
   backendEnabled: false,
   selectedDeploymentId: null,
   initialCheckpointId: null,
@@ -81,13 +91,26 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
     }));
   },
 
-  setChatMode: (mode: boolean) => {
-    set({ chatMode: mode });
+  setMode: (mode: WorkspaceMode) => {
+    set({ mode });
     if (typeof window !== 'undefined') {
-      localStorage.setItem('osw-studio-chat-mode', String(mode));
+      localStorage.setItem('osw-studio-mode', mode);
     }
     if (!get().generating) {
       get().resetOrchestrator();
+    }
+  },
+
+  setActiveInterview: (interview: ActiveInterview | null) => {
+    set({ activeInterview: interview });
+    const pid = get().projectId;
+    if (pid && typeof window !== 'undefined') {
+      const key = `osw-interview-${pid}`;
+      if (interview) {
+        localStorage.setItem(key, JSON.stringify(interview));
+      } else {
+        localStorage.removeItem(key);
+      }
     }
   },
 
@@ -114,6 +137,7 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
       entryPoint: undefined,
       projectRuntime: undefined,
       focusContext: null,
+      activeInterview: null,
       backendEnabled: false,
       selectedDeploymentId: null,
       initialCheckpointId: null,

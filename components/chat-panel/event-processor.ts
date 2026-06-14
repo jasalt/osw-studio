@@ -5,6 +5,7 @@
  * React rendering. The ChatPanel hooks into this via process() on each render.
  */
 import type { DebugEvent } from '@/lib/stores/types';
+import { INCOMPLETE_PREFIX } from '@/lib/interview/completion';
 
 export interface ToolCall {
   id: string;
@@ -17,7 +18,7 @@ export interface ToolCall {
 
 export interface TurnItem {
   id: string;
-  type: 'waiting' | 'reasoning' | 'plan' | 'agent' | 'progress' | 'tool' | 'text' | 'error' | 'error_paused' | 'user' | 'synthetic_error' | 'project_context' | 'compaction' | 'ask';
+  type: 'waiting' | 'reasoning' | 'plan' | 'agent' | 'progress' | 'tool' | 'text' | 'error' | 'error_paused' | 'user' | 'synthetic_error' | 'project_context' | 'compaction' | 'ask' | 'interview_gate';
   timestamp: number;
   data: any;
   eventId?: string;
@@ -408,11 +409,23 @@ export class EventProcessor {
           });
           break;
 
+        case 'interview_gate':
+          state.currentTurn.items.push({
+            id: `item-${state.itemIdCounter++}`,
+            type: 'interview_gate',
+            timestamp: event.timestamp,
+            data: event.data,
+          });
+          break;
+
         case 'conversation_message': {
           if (event.version) this.lastEventVersions.set(event.id, event.version);
           const message = event.data?.message;
           if (message?.role === 'user') {
             if (message.content?.includes('Before finishing, run the status command')) break;
+          // The interview gate's incomplete feedback is surfaced via the
+          // interview_gate item — don't also render it as a user message.
+          if (message.content?.includes(INCOMPLETE_PREFIX)) break;
             const isSyntheticError = message.ui_metadata?.isSyntheticError === true;
             if (!isSyntheticError && state.currentTurn.items.length > 0) {
               state.result.push(state.currentTurn);
@@ -496,12 +509,20 @@ export class EventProcessor {
               }
             }
             if (message.content?.trim()) {
-              state.currentTurn.items.push({
-                id: `item-${state.itemIdCounter++}`,
-                type: 'text',
-                timestamp: event.timestamp,
-                data: message.content,
-              });
+              // Dedup against the streamed assistant_delta text item (same
+              // content already shown live). On replay there is no streamed
+              // item, so this pushes fresh.
+              const existingText = state.currentTurn.items.find(
+                item => item.type === 'text' && item.data === message.content
+              );
+              if (!existingText) {
+                state.currentTurn.items.push({
+                  id: `item-${state.itemIdCounter++}`,
+                  type: 'text',
+                  timestamp: event.timestamp,
+                  data: message.content,
+                });
+              }
             }
             state.currentTurn.items = state.currentTurn.items.filter(item => item.type !== 'waiting');
           } else if (message?.role === 'tool') {

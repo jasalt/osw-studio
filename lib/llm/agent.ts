@@ -2,13 +2,14 @@
  * Agent System - Defines different agent types and their capabilities
  */
 
-export type AgentType = 'orchestrator' | 'explore' | 'task' | 'plan' | 'setup';
+export type AgentType = 'orchestrator' | 'explore' | 'task' | 'plan' | 'setup' | 'interview';
 
 interface AgentConfig {
   type: AgentType;
   tools: string[]; // Tool IDs from registry
   maxIterations: number;
   isReadOnly?: boolean; // If true, only allow read operations
+  writeScope?: string; // If set, writes are restricted to this directory prefix (reads unrestricted)
 }
 
 /**
@@ -19,12 +20,14 @@ export class Agent {
   public readonly tools: string[];
   public readonly maxIterations: number;
   public readonly isReadOnly: boolean;
+  public readonly writeScope?: string;
 
   constructor(config: AgentConfig) {
     this.type = config.type;
     this.tools = config.tools;
     this.maxIterations = config.maxIterations;
     this.isReadOnly = config.isReadOnly ?? false;
+    this.writeScope = config.writeScope;
   }
 
   /**
@@ -79,6 +82,15 @@ export class AgentRegistry {
       type: 'setup',
       tools: ['bash'],
       maxIterations: 20
+    }));
+
+    // Interview agent: reads the project freely, writes only into /.interviews/
+    // (enforced by writeScope).
+    this.register(new Agent({
+      type: 'interview',
+      tools: ['bash'],
+      maxIterations: 30,
+      writeScope: '/.interviews/',
     }));
   }
 

@@ -7,6 +7,7 @@ import { ToolDefinition, ToolCall } from './types';
 import { getActiveVFS } from '@/lib/vfs';
 import { vfsShell } from '@/lib/vfs/cli-shell';
 import { logger } from '../utils';
+import { checkWriteScope } from './write-scope';
 import {
   isJSONTruncationError,
   attemptJSONRepair,
@@ -62,6 +63,7 @@ interface ToolExecutor {
 export interface ToolExecutionContext {
   agentType?: string;
   isReadOnly?: boolean;
+  writeScope?: string; // If set, writes are restricted to this directory prefix
   onProgress?: (event: string, data?: any) => void;
 }
 
@@ -462,6 +464,14 @@ async function executeShellSegment(
   // Block write operations in read-only mode
   if (context.isReadOnly && isWriteOperation(cmdArray)) {
     return `Error: Write operations are disabled in read-only mode. "${command}" is not allowed.`;
+  }
+
+  // Enforce per-agent write scope (reads unrestricted; writes confined to a directory)
+  if (context.writeScope) {
+    const scopeCheck = checkWriteScope(cmdArray, context.writeScope);
+    if (!scopeCheck.allowed) {
+      return `Error: ${scopeCheck.reason}.`;
+    }
   }
 
   // cd — no-op (VFS has no working directory concept)

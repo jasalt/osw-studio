@@ -182,6 +182,44 @@ describe('AgentLoop', () => {
     expect(result.summary).toContain('nudge');
   });
 
+  it('interview agent pauses (awaiting_user) on a prose question instead of nudging', async () => {
+    // A prose question is content with no tool call and no status — the
+    // interview must hand control back to the user, not nudge toward completion.
+    const provider = createMockProvider([
+      { content: "What's your company's name?" },
+    ]);
+    const loop = new AgentLoop({
+      config: defaultConfig({ agentType: 'interview' }),
+      provider,
+      executor: createMockExecutor(),
+      context: createMockContext(),
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+
+    const result = await loop.run('Understand a company');
+    expect(result.exitReason).toBe('awaiting_user');
+    expect(result.success).toBe(true);
+  });
+
+  it('interview agent does not pause on a reasoning-only turn (no user-facing content)', async () => {
+    // Reasoning without content is not a question — it should retry/nudge, not pause.
+    const provider = createMockProvider([
+      { reasoningDetails: [{ type: 'reasoning.text', text: 'thinking' }] as ParsedResponse['reasoningDetails'] },
+    ]);
+    const loop = new AgentLoop({
+      config: defaultConfig({ agentType: 'interview', maxNudges: 1 }),
+      provider,
+      executor: createMockExecutor(),
+      context: createMockContext(),
+      progress: createMockProgress(),
+      cost: createMockCost(),
+    });
+
+    const result = await loop.run('Understand a company');
+    expect(result.exitReason).not.toBe('awaiting_user');
+  });
+
   it('detects duplicate tool calls and stops after maxDuplicateToolCalls', async () => {
     const duplicateCall: ToolCall = {
       id: 'tc-dup',

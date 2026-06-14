@@ -21,6 +21,9 @@ import * as crypto from 'crypto';
 
 const isDev = !app.isPackaged;
 const isMac = process.platform === 'darwin';
+// Headless CI/diagnostic flag: runs the real boot path as a pass/fail command
+// (no window). End users never pass it, so normal launch is unaffected.
+const isSelfTest = process.argv.includes('--self-test') || process.env.OSW_SELFTEST === '1';
 const RELEASES_URL = 'https://github.com/o-stahl/osw-studio/releases/latest';
 const RELEASES_API_URL = 'https://api.github.com/repos/o-stahl/osw-studio/releases/latest';
 
@@ -111,6 +114,63 @@ async function waitForServer(url: string, maxRetries = 30): Promise<boolean> {
     await new Promise(r => setTimeout(r, 1000));
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Self-test — full headless boot, used by CI and manual distro checks.
+// ---------------------------------------------------------------------------
+
+function postJson(url: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method: 'POST' }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: data }));
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(new Error('request timed out')); });
+    req.end();
+  });
+}
+
+/**
+ * Boots the real server and drives the workspace-init request, exiting 0/1.
+ * Exercises the native-module/filesystem paths under Electron's ABI that a
+ * system-Node smoke test misses.
+ */
+async function runSelfTest(): Promise<void> {
+  console.log(`[self-test] OSW Studio Desktop v${app.getVersion()} on ${process.platform}/${process.arch}`);
+  console.log(`[self-test] electron=${process.versions.electron} node=${process.versions.node} abi(modules)=${process.versions.modules}`);
+  try {
+    const port = await startNextServer();
+    const base = `http://localhost:${port}`;
+
+    const ready = await waitForServer(base);
+    if (!ready) {
+      console.error('[self-test] FAIL: server did not respond within the startup timeout');
+      app.exit(1);
+      return;
+    }
+
+    const { status, body } = await postJson(`${base}/api/auth/desktop-init`);
+    let parsed: { workspaceId?: string; error?: string; detail?: string } = {};
+    try { parsed = JSON.parse(body); } catch { /* keep raw body for the log */ }
+
+    if (status === 200 && parsed.workspaceId) {
+      console.log(`[self-test] PASS: workspace initialized (${parsed.workspaceId})`);
+      app.exit(0);
+      return;
+    }
+
+    console.error(`[self-test] FAIL: desktop-init returned HTTP ${status}`);
+    if (parsed.error) console.error(`[self-test] error: ${parsed.error}`);
+    if (parsed.detail) console.error(`[self-test] detail:\n${parsed.detail}`);
+    if (!parsed.error && body) console.error(`[self-test] body: ${body}`);
+    app.exit(1);
+  } catch (err) {
+    console.error(`[self-test] FAIL: ${(err as Error)?.stack || String(err)}`);
+    app.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +475,12 @@ async function createWindow(port: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(async () => {
+  if (isSelfTest) {
+    // Headless: boot, probe workspace init, exit. No window, no menu, no updater.
+    await runSelfTest();
+    return;
+  }
+
   buildMenu();
   try {
     if (isDev) {

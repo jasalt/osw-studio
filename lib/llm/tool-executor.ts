@@ -16,6 +16,10 @@ import { Agent } from './agent';
 
 const HARMONY_TOKEN_STRIP_RE = /<\|[^|]*\|>/g;
 
+// Matches `status` whether standalone or chained (e.g. `build && status --complete`),
+// so completion is detected in compound commands.
+const STATUS_SEGMENT_RE = /(?:^|&&|\|\||;|\|)\s*status\b/i;
+
 export interface OswsToolExecutorConfig {
   projectId: string;
   progress: ProgressReporter;
@@ -80,6 +84,7 @@ export class OswsToolExecutor implements ToolExecutor {
     const execContext: ToolExecutionContext = {
       agentType: context.agentType,
       isReadOnly: context.isReadOnly || this.config.chatMode,
+      writeScope: agent.writeScope,
       onProgress: (event, data) => {
         if (event === 'ask') awaitingUser = true;
         if (event === 'project_ready') setupComplete = true;
@@ -170,8 +175,8 @@ export class OswsToolExecutor implements ToolExecutor {
       return signals;
     }
 
-    // Detect status commands
-    if (/^\s*status\b/i.test(cmd)) {
+    // Detect status commands (also when chained after another command)
+    if (STATUS_SEGMENT_RE.test(cmd)) {
       // Simple complete detection: command contains "complete" flag but not "--incomplete"
       if (/--complete\b/i.test(cmd) && !/--incomplete\b/i.test(cmd)) {
         signals.statusComplete = true;
@@ -226,7 +231,7 @@ export class OswsToolExecutor implements ToolExecutor {
 
     // 2. Fallback: check the command itself for `status --task ... --done ... --remaining ...`
     // Skip if the output had errors - the command may have been malformed
-    if (!hasError && /^\s*status\b/i.test(cmd)) {
+    if (!hasError && STATUS_SEGMENT_RE.test(cmd)) {
       const taskMatch =
         cmd.match(/--task\s+"([^"]*)"/) ||
         cmd.match(/--task\s+'([^']*)'/) ||

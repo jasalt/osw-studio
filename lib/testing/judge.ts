@@ -1,19 +1,45 @@
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
+import type { UsageInfo } from '@/lib/llm/types';
 
-interface JudgeConfig {
+/** Normalizes a judge provider's response usage into UsageInfo (undefined if absent). */
+export function extractJudgeUsage(provider: string, model: string, data: unknown): UsageInfo | undefined {
+  const d = data as Record<string, unknown>;
+  if (provider === 'gemini') {
+    const u = d?.usageMetadata as Record<string, number> | undefined;
+    if (!u) return undefined;
+    return {
+      promptTokens: u.promptTokenCount || 0,
+      completionTokens: u.candidatesTokenCount || 0,
+      totalTokens: u.totalTokenCount || 0,
+      model, provider,
+    };
+  }
+  const u = d?.usage as Record<string, number> | undefined;
+  if (!u) return undefined;
+  if (provider === 'anthropic') {
+    const pt = u.input_tokens || 0;
+    const ct = u.output_tokens || 0;
+    return { promptTokens: pt, completionTokens: ct, totalTokens: pt + ct, model, provider };
+  }
+  const pt = u.prompt_tokens || 0;
+  const ct = u.completion_tokens || 0;
+  return { promptTokens: pt, completionTokens: ct, totalTokens: u.total_tokens || pt + ct, model, provider };
+}
+
+export interface JudgeConfig {
   provider: ProviderId;
   apiKey: string;
   model: string;
 }
 
-interface JudgeContext {
+export interface JudgeContext {
   prompt: string;
   files: Record<string, string>;
   summary: string;
 }
 
-interface JudgeResult {
+export interface JudgeResult {
   passed: boolean;
   reasoning: string;
 }
@@ -72,7 +98,7 @@ async function callOpenAICompatible(
   provider: ProviderId,
   systemPrompt: string,
   userMessage: string
-): Promise<string> {
+): Promise<{ text: string; usage?: UsageInfo }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   if (provider === 'openrouter') {
@@ -101,7 +127,7 @@ async function callOpenAICompatible(
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || '';
+  return { text: data.choices?.[0]?.message?.content || '', usage: extractJudgeUsage(provider, model, data) };
 }
 
 async function callAnthropic(
@@ -109,7 +135,7 @@ async function callAnthropic(
   model: string,
   systemPrompt: string,
   userMessage: string
-): Promise<string> {
+): Promise<{ text: string; usage?: UsageInfo }> {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -132,7 +158,7 @@ async function callAnthropic(
   }
 
   const data = await response.json();
-  return data.content?.[0]?.text || '';
+  return { text: data.content?.[0]?.text || '', usage: extractJudgeUsage('anthropic', model, data) };
 }
 
 async function callGemini(
@@ -140,7 +166,7 @@ async function callGemini(
   model: string,
   systemPrompt: string,
   userMessage: string
-): Promise<string> {
+): Promise<{ text: string; usage?: UsageInfo }> {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
@@ -162,7 +188,7 @@ async function callGemini(
   }
 
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return { text: data.candidates?.[0]?.content?.parts?.[0]?.text || '', usage: extractJudgeUsage('gemini', model, data) };
 }
 
 export async function runJudgeEvaluation(
@@ -176,15 +202,91 @@ export async function runJudgeEvaluation(
   let responseText: string;
 
   if (config.provider === 'anthropic') {
-    responseText = await callAnthropic(config.apiKey, config.model, SYSTEM_PROMPT, userMessage);
+    responseText = (await callAnthropic(config.apiKey, config.model, SYSTEM_PROMPT, userMessage)).text;
   } else if (config.provider === 'gemini') {
-    responseText = await callGemini(config.apiKey, config.model, SYSTEM_PROMPT, userMessage);
+    responseText = (await callGemini(config.apiKey, config.model, SYSTEM_PROMPT, userMessage)).text;
   } else {
     const baseUrl = providerConfig.baseUrl || 'https://openrouter.ai/api/v1';
-    responseText = await callOpenAICompatible(
+    responseText = (await callOpenAICompatible(
       baseUrl, config.apiKey, config.model, config.provider, SYSTEM_PROMPT, userMessage
-    );
+    )).text;
   }
 
   return parseVerdict(responseText);
+}
+
+// ---- Structured (multi-criteria) judge: one call, one verdict per criterion ----
+
+const STRUCTURED_SYSTEM_PROMPT = `You are a completion judge. You are given several numbered criteria and the current state of project files. For EACH criterion, decide whether the files actually satisfy it.
+
+Judge ONLY against what is actually recorded in the files — do not assume or invent. Respond with one line per criterion, EXACTLY in this format:
+<number>: PASS
+or
+<number>: FAIL - <short reason of what is missing>
+
+Output nothing else.`;
+
+function buildStructuredUserMessage(criteria: string[], context: JudgeContext): string {
+  const fileSummary = Object.entries(context.files)
+    .map(([path, content]) => `--- ${path} ---\n${content.substring(0, 2000)}`)
+    .join('\n\n') || '(no files)';
+  const criteriaList = criteria.map((c, i) => `${i + 1}. ${c}`).join('\n');
+
+  return `## Context
+${context.prompt}
+
+## Criteria to evaluate
+${criteriaList}
+
+## Project Files
+${fileSummary}
+
+Evaluate each numbered criterion against the files above.`;
+}
+
+/**
+ * Parses one PASS/FAIL verdict per criterion from the judge's response.
+ * Tolerates "1:", "1.", "1)", "ITEM 1:", and en/em-dash reason separators.
+ * Any criterion without a parseable verdict fails closed.
+ */
+export function parseStructuredVerdicts(response: string, count: number): JudgeResult[] {
+  const results: JudgeResult[] = [];
+  for (let i = 1; i <= count; i++) {
+    const re = new RegExp(`^\\s*(?:item\\s*|#)?${i}\\s*[:.)\\]]\\s*(PASS|FAIL)\\b\\s*[-–—:]?\\s*(.*)$`, 'im');
+    const m = re.exec(response);
+    if (m) {
+      results.push({ passed: m[1].toUpperCase() === 'PASS', reasoning: (m[2] || '').trim() });
+    } else {
+      results.push({ passed: false, reasoning: 'Could not verify this item.' });
+    }
+  }
+  return results;
+}
+
+/**
+ * Evaluates multiple criteria in a single judge call. Returns one verdict per
+ * criterion, in the same order as the input.
+ */
+export async function runStructuredJudge(
+  criteria: string[],
+  context: JudgeContext,
+  config: JudgeConfig
+): Promise<{ verdicts: JudgeResult[]; usage?: UsageInfo }> {
+  if (criteria.length === 0) return { verdicts: [] };
+  const providerConfig = getProvider(config.provider);
+  const userMessage = buildStructuredUserMessage(criteria, context);
+
+  let result: { text: string; usage?: UsageInfo };
+  if (config.provider === 'anthropic') {
+    result = await callAnthropic(config.apiKey, config.model, STRUCTURED_SYSTEM_PROMPT, userMessage);
+  } else if (config.provider === 'gemini') {
+    result = await callGemini(config.apiKey, config.model, STRUCTURED_SYSTEM_PROMPT, userMessage);
+  } else {
+    const baseUrl = providerConfig.baseUrl || 'https://openrouter.ai/api/v1';
+    result = await callOpenAICompatible(
+      baseUrl, config.apiKey, config.model, config.provider, STRUCTURED_SYSTEM_PROMPT, userMessage
+    );
+  }
+
+  return { verdicts: parseStructuredVerdicts(result.text, criteria.length), usage: result.usage };
 }

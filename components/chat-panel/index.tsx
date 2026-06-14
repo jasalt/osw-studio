@@ -1,17 +1,20 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback, DragEvent, ClipboardEvent } from 'react';
-import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, X, Brain, Image as ImageIcon, Type } from 'lucide-react';
+import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, Brain, Image as ImageIcon, Type } from 'lucide-react';
+import type { WorkspaceMode, ActiveInterview } from '@/lib/stores/slices/project';
+import { InterviewPicker } from './interview-picker';
+import { listInterviewTemplates } from '@/lib/interview/templates';
+import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { DebugEvent } from '@/lib/stores/types';
-import { EventProcessor, classifyBashCommand, type Turn, type TurnItem, type ToolCall } from './event-processor';
+import { EventProcessor, classifyBashCommand, type Turn, type ToolCall } from './event-processor';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { ChipsBlock } from './chips';
 import { PanelContainer, PanelHeader } from '@/components/ui/panel';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ModelSettingsPanel } from '@/components/settings/model-settings';
 import { FocusContextPayload } from '@/lib/preview/types';
 import { PendingImage } from '@/lib/llm/multi-agent-orchestrator';
@@ -75,8 +78,11 @@ interface ChatPanelProps {
   setFocusContext: (context: FocusTarget | null) => void;
   focusPreviewSnippet?: string;
   // Settings
-  chatMode: boolean;
-  setChatMode: (mode: boolean) => void;
+  mode: WorkspaceMode;
+  setMode: (mode: WorkspaceMode) => void;
+  activeInterview: ActiveInterview | null;
+  onStartInterview: (template: InterviewTemplate) => void;
+  onHandoff: (handoff: InterviewHandoff) => void;
   currentModel: string;
   setCurrentModel: (model: string) => void;
   getModelDisplayName: (modelId: string) => string;
@@ -139,8 +145,11 @@ export function ChatPanel({
   focusContext,
   setFocusContext,
   focusPreviewSnippet,
-  chatMode,
-  setChatMode,
+  mode,
+  setMode,
+  activeInterview,
+  onStartInterview,
+  onHandoff,
   currentModel,
   setCurrentModel,
   getModelDisplayName,
@@ -165,7 +174,14 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
+  const [showModeMenu, setShowModeMenu] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  const MODE_CONFIG: Record<WorkspaceMode, { label: string; Icon: typeof Code; accent: string; iconColor: string }> = {
+    code: { label: 'Code', Icon: Code, accent: 'bg-orange-500', iconColor: 'text-orange-500' },
+    chat: { label: 'Chat', Icon: MessageSquare, accent: 'bg-green-500', iconColor: 'text-green-500' },
+    interview: { label: 'Interview', Icon: ClipboardList, accent: 'bg-blue-500', iconColor: 'text-blue-500' },
+  };
   const isScrollingProgrammatically = useRef(false);
 
   // Prompt state — owned by ChatPanel, never leaves this component until submit
@@ -424,7 +440,14 @@ export function ChatPanel({
               <span className="text-xs md:hidden">Clear chat</span>
             </Button>
           )}
-        />
+        >
+          {activeInterview && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 text-blue-500 text-[11px] font-medium px-2 py-0.5">
+              <ClipboardList className="h-3 w-3 shrink-0" />
+              <span className="truncate max-w-[12rem]">{activeInterview.title}</span>
+            </span>
+          )}
+        </PanelHeader>
       )}
 
       {/* Messages */}
@@ -483,6 +506,7 @@ export function ChatPanel({
                   onCancel={onStop}
                   generating={generating}
                   onGenerate={onGenerate}
+                  onHandoff={onHandoff}
                   expandedItems={expandedItems}
                   onToggleExpanded={toggleExpanded}
                 />
@@ -549,6 +573,13 @@ export function ChatPanel({
             </div>
           )}
 
+          {mode === 'interview' && !activeInterview ? (
+            <InterviewPicker
+              templates={listInterviewTemplates()}
+              onStart={onStartInterview}
+              disabled={!providerReady}
+            />
+          ) : (
           <div className="relative flex bg-card rounded-lg transition-all">
               <Textarea
                 value={prompt}
@@ -589,6 +620,7 @@ export function ChatPanel({
                 </Button>
               </div>
             </div>
+          )}
 
           {/* Footer */}
           <div className="border-t border-border bg-muted/50 px-2 py-2">
@@ -617,25 +649,41 @@ export function ChatPanel({
                 </PopoverContent>
               </Popover>
 
-              {!hideHeader && (
-                <ToggleGroup
-                  type="single"
-                  value={chatMode ? 'chat' : 'code'}
-                  onValueChange={(value) => {
-                    if (value) setChatMode(value === 'chat');
-                  }}
-                  className="gap-1"
-                >
-                  <ToggleGroupItem value="chat" className="h-7 text-xs px-2">
-                    <MessageSquare className="h-3 w-3 mr-1" />
-                    Chat
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="code" className="h-7 text-xs px-2">
-                    <Code className="h-3 w-3 mr-1" />
-                    Code
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              )}
+              {!hideHeader && (() => {
+                const active = MODE_CONFIG[mode];
+                const ActiveIcon = active.Icon;
+                return (
+                  <Popover open={showModeMenu} onOpenChange={setShowModeMenu}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-7 p-0 gap-0 overflow-hidden text-xs">
+                        <span className={`flex items-center gap-1 h-full px-2 ${active.accent} text-white`}>
+                          <ActiveIcon className="h-3 w-3" />
+                          {active.label}
+                        </span>
+                        <span className="flex items-center h-full px-1.5 bg-zinc-800 text-white border-l border-white/20">
+                          {showModeMenu ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-40 p-1" align="end" side="top">
+                      {(['code', 'chat', 'interview'] as WorkspaceMode[]).map((m) => {
+                        const cfg = MODE_CONFIG[m];
+                        const Icon = cfg.Icon;
+                        return (
+                          <button
+                            key={m}
+                            onClick={() => { setMode(m); setShowModeMenu(false); }}
+                            className={`flex items-center gap-2 w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted ${m === mode ? 'font-semibold bg-muted/50' : ''}`}
+                          >
+                            <Icon className={`h-3 w-3 ${cfg.iconColor}`} />
+                            {cfg.label}
+                          </button>
+                        );
+                      })}
+                    </PopoverContent>
+                  </Popover>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -655,11 +703,12 @@ interface TurnDisplayProps {
   onCancel?: () => void;
   generating?: boolean;
   onGenerate?: (prompt: string, images?: PendingImage[]) => void;
+  onHandoff?: (handoff: InterviewHandoff) => void;
   expandedItems: Set<string>;
   onToggleExpanded: (itemId: string) => void;
 }
 
-function TurnDisplay({ turn, collatedUsage, collatedTaskStartTime, onRestore, onRetry, onContinue, onCancel, generating, onGenerate, expandedItems, onToggleExpanded }: TurnDisplayProps) {
+function TurnDisplay({ turn, collatedUsage, collatedTaskStartTime, onRestore, onRetry, onContinue, onCancel, generating, onGenerate, onHandoff, expandedItems, onToggleExpanded }: TurnDisplayProps) {
   return (
     <div className="space-y-2" {...(turn.checkpointId ? { 'data-checkpoint-id': turn.checkpointId } : {})}>
       {/* Render items in chronological order */}
@@ -873,6 +922,59 @@ function TurnDisplay({ turn, collatedUsage, collatedTaskStartTime, onRestore, on
                 </div>
               </div>
             );
+
+          case 'interview_gate': {
+            const gate = item.data as { complete: boolean; errored?: boolean; items?: { elicit: string; passed: boolean; reason?: string }[]; handoff?: InterviewHandoff };
+            if (gate.errored) {
+              return (
+                <div key={item.id} className="text-sm bg-muted/50 border border-border px-3 py-2 rounded">
+                  <div className="flex items-start gap-2">
+                    <ClipboardList className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                    <div className="text-xs text-muted-foreground">Couldn&apos;t verify the interview against its checklist — finished anyway.</div>
+                  </div>
+                </div>
+              );
+            }
+            if (gate.complete) {
+              return (
+                <div key={item.id} className="text-sm bg-green-500/10 border border-green-500/30 px-3 py-2 rounded">
+                  <div className="flex items-start gap-2">
+                    <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <div className="font-semibold text-green-700 dark:text-green-400 mb-0.5">Interview complete</div>
+                      <div className="text-xs text-muted-foreground">All required items are captured in the artifact.</div>
+                      {gate.handoff && (
+                        <button
+                          onClick={() => onHandoff?.(gate.handoff!)}
+                          className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white px-2.5 py-1 rounded"
+                        >
+                          <ChevronRight className="h-3 w-3" />
+                          {gate.handoff.label}
+                        </button>
+                      )}
+                      <div className="text-[11px] text-muted-foreground mt-1.5">Or clear the chat to start a new interview.</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            const unmet = (gate.items ?? []).filter(g => !g.passed);
+            return (
+              <div key={item.id} className="text-sm bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded">
+                <div className="flex items-start gap-2">
+                  <ClipboardList className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <div className="font-semibold text-amber-700 dark:text-amber-400 mb-1">Not complete yet</div>
+                    <ul className="text-xs text-muted-foreground space-y-0.5">
+                      {unmet.map((u, idx) => (
+                        <li key={idx}>• {u.elicit}{u.reason ? ` — ${u.reason}` : ''}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            );
+          }
 
           default:
             return null;

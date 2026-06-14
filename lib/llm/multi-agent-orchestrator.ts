@@ -29,6 +29,12 @@ import { logger } from '@/lib/utils';
 import { buildFileTree, ReasoningDetail } from './streaming-parser';
 import { drainRuntimeErrors, formatRuntimeErrors, resetRuntimeErrors } from '@/lib/preview/runtime-errors';
 import { buildSystemPrompt, buildProjectContext, buildCompactionPrompt } from './system-prompt';
+import { withInterviewAgenda } from '@/lib/interview/agenda';
+import { getInterviewTemplate } from '@/lib/interview/templates';
+import { buildCompletionFeedback, summarizeCompletion, type ItemCheckResult } from '@/lib/interview/completion';
+import type { InterviewTemplate } from '@/lib/interview/types';
+import { runStructuredJudge } from '@/lib/testing/judge';
+import { runAssertions } from '@/lib/testing/assertion-runner';
 import { evaluateRelevantSkills } from './skill-evaluator';
 import { skillsService } from '@/lib/vfs/skills';
 import { track } from '@/lib/telemetry';
@@ -122,6 +128,7 @@ export class MultiAgentOrchestrator {
   private chatMode: boolean;
   private model?: string;
   private serverContext: ServerOrchestratorContext | null;
+  private interviewTemplateId?: string;
 
   private stopped = false;
   private abortController = new AbortController();
@@ -145,13 +152,14 @@ export class MultiAgentOrchestrator {
     projectId: string,
     agentType: AgentType = 'orchestrator',
     onProgress?: (message: string, step?: unknown) => void,
-    options?: { chatMode?: boolean; model?: string; serverContext?: ServerOrchestratorContext }
+    options?: { chatMode?: boolean; model?: string; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string }
   ) {
     this.projectId = projectId;
     this.onProgress = onProgress;
     this.chatMode = options?.chatMode ?? false;
     this.model = options?.model;
     this.serverContext = options?.serverContext ?? null;
+    this.interviewTemplateId = options?.interviewTemplateId;
 
     const agent = agentRegistry.get(agentType);
     if (!agent) throw new Error(`Agent type "${agentType}" not found`);
@@ -225,7 +233,10 @@ export class MultiAgentOrchestrator {
 
       const serverCtxMeta = this.getVFS().getServerContextMetadata();
       const modelSupportsTools = this.checkModelSupportsTools();
-      const systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools);
+      let systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools);
+      if (this.rootAgent.type === 'interview') {
+        systemPrompt = withInterviewAgenda(systemPrompt, this.interviewTemplateId);
+      }
 
       const hasExistingSystemMessage = conversation.messages.some(m => m.role === 'system');
       if (!hasExistingSystemMessage) {
@@ -505,14 +516,7 @@ export class MultiAgentOrchestrator {
       maxDuplicateToolCalls: 3,
       agentType: this.rootAgent.type,
       isReadOnly: this.chatMode || this.rootAgent.isReadOnly,
-      completionGate: this.rootAgent.type === 'orchestrator' ? async () => {
-        await new Promise(resolve => setTimeout(resolve, 400));
-        const errors = this.drainErrors();
-        if (errors.length > 0) {
-          return formatRuntimeErrors(errors);
-        }
-        return null;
-      } : undefined,
+      completionGate: this.buildCompletionGate(),
       onPausableError: async (error: Error) => {
         this.apiErrorCount++;
         const isPausable = error instanceof PausableApiError;
@@ -607,6 +611,120 @@ export class MultiAgentOrchestrator {
       if (entry && entry.supportsFunctions === false) return false;
     }
     return true;
+  }
+
+  /** Selects the completion gate for the active agent (undefined = no gate). */
+  private buildCompletionGate(): (() => Promise<string | null>) | undefined {
+    if (this.rootAgent.type === 'orchestrator') {
+      return async () => {
+        await new Promise(resolve => setTimeout(resolve, 400));
+        const errors = this.drainErrors();
+        if (errors.length > 0) return formatRuntimeErrors(errors);
+        return null;
+      };
+    }
+    if (this.rootAgent.type === 'interview' && this.interviewTemplateId) {
+      const template = getInterviewTemplate(this.interviewTemplateId);
+      if (template) return () => this.runInterviewCompletionGate(template);
+    }
+    return undefined;
+  }
+
+  /**
+   * Verifies the template's required items are captured in the artifact before
+   * the interview can finish. Fails open on a judge error so an API hiccup
+   * cannot trap the interview.
+   */
+  private async runInterviewCompletionGate(template: InterviewTemplate): Promise<string | null> {
+    const required = template.items.filter(i => i.required !== false);
+    if (required.length === 0) return null;
+
+    const results: ItemCheckResult[] = [];
+
+    try {
+      // File-based assertions (judge assertions are skipped by runAssertions).
+      const conversation = Array.from(this.conversations.values());
+      for (const item of required) {
+        const fileAssertions = item.completion.filter(a => a.type !== 'judge');
+        if (fileAssertions.length === 0) continue;
+        const ars = await runAssertions(this.projectId, conversation, fileAssertions);
+        for (const ar of ars) {
+          results.push({ itemId: item.id, passed: ar.passed, reason: ar.passed ? undefined : (ar.actual || 'check failed') });
+        }
+      }
+
+      // Judge assertions — one combined call across all required items.
+      const judgeChecks: { itemId: string; criteria: string }[] = [];
+      for (const item of required) {
+        for (const a of item.completion) {
+          if (a.type === 'judge') judgeChecks.push({ itemId: item.id, criteria: a.criteria });
+        }
+      }
+      if (judgeChecks.length > 0) {
+        const files = await this.readArtifactFiles(template);
+        const { provider, apiKey, model } = this.getProviderConfig();
+        const judged = await runStructuredJudge(
+          judgeChecks.map(c => c.criteria),
+          {
+            prompt: `Interview: ${template.title} — ${template.description}`,
+            files,
+            summary: 'The interviewer reported the agenda complete.',
+          },
+          { provider: provider as ProviderId, apiKey, model },
+        );
+        if (judged.usage) this.recordSideCost(judged.usage);
+        judged.verdicts.forEach((v, i) => {
+          results.push({ itemId: judgeChecks[i].itemId, passed: v.passed, reason: v.passed ? undefined : v.reasoning });
+        });
+      }
+    } catch (err) {
+      // Best-effort gate: never block completion on an evaluation failure.
+      logger.warn('[Interview] completion gate evaluation failed, allowing completion', err);
+      this.onProgress?.('interview_gate', { complete: true, errored: true, items: [] });
+      return null;
+    }
+
+    const feedback = buildCompletionFeedback(template.items, results);
+    this.onProgress?.('interview_gate', {
+      complete: feedback === null,
+      items: summarizeCompletion(template.items, results),
+      ...(feedback === null && template.handoff ? { handoff: template.handoff } : {}),
+    });
+    return feedback;
+  }
+
+  /** Reads the template's declared artifact files from the VFS for judging. */
+  private async readArtifactFiles(template: InterviewTemplate): Promise<Record<string, string>> {
+    const files: Record<string, string> = {};
+    for (const artifact of template.artifacts) {
+      try {
+        const f = await this.getVFS().readFile(this.projectId, artifact.path);
+        const content = f && typeof f.content === 'string' ? f.content : '';
+        if (content) files[artifact.path] = content;
+      } catch { /* artifact not written yet */ }
+    }
+    return files;
+  }
+
+  /**
+   * Records a side LLM call's cost (e.g. the completion-gate judge) and emits a
+   * 'usage' event. Does not replace promptTokens — a side call's prompt is
+   * unrelated to the agent's context window.
+   */
+  private recordSideCost(usage: UsageInfo): void {
+    const provider = usage.provider || '';
+    const model = usage.model || this.model || '';
+    const cost = CostCalculator.calculateCost(usage, provider, model, true);
+    this.totalCost += cost;
+    this.taskCost += cost;
+    this.totalUsage.completionTokens += usage.completionTokens;
+    this.totalUsage.totalTokens += usage.totalTokens;
+    this.taskTokens += usage.totalTokens;
+    this.getConfig().updateSessionCost({ ...usage, cost }, cost);
+    this.onProgress?.('usage', {
+      usage, totalCost: this.totalCost, totalUsage: { ...this.totalUsage },
+      taskCost: this.taskCost, taskTokens: this.taskTokens,
+    });
   }
 
   private getProviderConfig(): { provider: string; apiKey: string; model: string } {

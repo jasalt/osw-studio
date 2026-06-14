@@ -35,6 +35,10 @@ function normalizePath(p?: string): string | undefined {
     const rest = p.slice('/workspace'.length);
     p = rest.length ? rest : '/';
   }
+  // The VFS is rooted at '/' with no working directory, so the current-dir
+  // forms ('.', './', './x') resolve relative to root.
+  if (p === '.' || p === './') return '/';
+  if (p.startsWith('./')) p = p.slice(2);
   if (!p.startsWith('/')) p = '/' + p;
   return p;
 }

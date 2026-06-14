@@ -406,6 +406,14 @@ export class AgentLoop {
           }
         }
 
+        // Interview: a content turn with no status is a question — pause for the
+        // user instead of nudging toward completion.
+        if (this.config.agentType === 'interview' && hasContent) {
+          exitReason = 'awaiting_user';
+          this.progress.onEvent('exit_reason', { reason: 'awaiting_user', iteration });
+          break;
+        }
+
         // After tool error + empty response: inject retry prompt
         if (this.lastIterationHadToolError && !hasContent) {
           this.lastIterationHadToolError = false;

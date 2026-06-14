@@ -76,6 +76,21 @@ describe('OswsToolExecutor status signal extraction', () => {
     expect(statusResult.remaining).toBe('add "About" page');
   });
 
+  it('extracts a complete status when status is chained after another command (build && status)', async () => {
+    // The shell ran both; the combined output carries the status lines. The
+    // completion signal must still be detected even though the command does
+    // not start with "status".
+    h.toolOutput = 'Build successful — 0 errors\nStatus recorded.\nRemaining: none\nComplete: yes';
+    const result = await makeExecutor().execute(
+      statusCall('build && status --task "impl" --done "all" --remaining "none" --complete'),
+      { agentType: 'orchestrator', isReadOnly: false },
+    );
+
+    expect(result.signals?.statusComplete).toBe(true);
+    const statusResult = result.signals?.statusResult as { complete: boolean };
+    expect(statusResult.complete).toBe(true);
+  });
+
   it('still extracts from the legacy full output format', async () => {
     h.toolOutput = 'Task: build site\nDone: all done\nRemaining: none\nComplete: yes';
     const result = await makeExecutor().execute(

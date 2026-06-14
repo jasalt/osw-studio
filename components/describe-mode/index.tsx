@@ -347,8 +347,11 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
           onContinue={() => orchestratorRef.current?.continue()}
           focusContext={null}
           setFocusContext={() => {}}
-          chatMode={false}
-          setChatMode={() => {}}
+          mode="code"
+          setMode={() => {}}
+          activeInterview={null}
+          onStartInterview={() => {}}
+          onHandoff={() => {}}
           currentModel={currentModel}
           setCurrentModel={setCurrentModel}
           getModelDisplayName={getModelDisplayName}

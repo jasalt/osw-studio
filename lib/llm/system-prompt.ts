@@ -1,6 +1,7 @@
 import { skillsService } from '@/lib/vfs/skills';
 import type { AgentType } from './agent';
 import { SETUP_SYSTEM_PROMPT } from '@/lib/describe/setup-prompt';
+import { INTERVIEW_SYSTEM_PROMPT } from '@/lib/interview/prompt';
 
 /**
  * Prompt appended as a user message when requesting conversation compaction.
@@ -58,6 +59,7 @@ export interface ServerContextMetadata {
 
 export async function buildSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true): Promise<string> {
   if (agentType === 'setup') return SETUP_SYSTEM_PROMPT;
+  if (agentType === 'interview') return INTERVIEW_SYSTEM_PROMPT;
   if (agentType === 'explore') return buildExplorePrompt(serverContext, projectId);
   if (agentType === 'plan') return buildPlanPrompt(serverContext, projectId);
   if (agentType === 'task') return buildTaskAgentPrompt(serverContext, projectId);

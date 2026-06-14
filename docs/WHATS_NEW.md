@@ -6,6 +6,24 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.77.0 - Interview Mode (2026-06-14)
+
+A new Interview mode joins Code and Chat. Instead of describing everything up front, you pick a template and an AI agent asks you about it one question at a time, glancing at your project as it goes and saving what it learns to a document. Four templates come built in, and when you're done you can hand straight off to building. Custom templates aren't supported yet, but they're planned. This release also fixes a few chat and shell bugs and takes another pass at desktop startup failures.
+
+### Interview Mode
+- **Guided interviews**: Pick a template and the AI works through it one question at a time, saving the answers to a document
+- **Four templates**: Understand a company, plan a website, plan a feature, or get ready to publish
+- **Hand off to build**: When the interview's done, one click switches to Code mode and builds from it
+
+### Fixes
+- **No more double messages**: Assistant replies no longer show up twice in the chat
+- **Reliable task completion**: The AI no longer looks like it "finishes" several times when it runs a build and a completion in one command
+
+### Desktop
+- **Startup fix**: Another fix for startup failures during workspace setup, and boot errors now show what actually went wrong — so anything still failing is easier to report
+
+---
+
 ## v1.76.1 - Desktop Recovery (2026-06-13)
 
 A follow-up to v1.76.0 for anyone upgrading from older desktop versions. The app now recovers automatically if its workspace records were lost during a past update, and rescues project data that older versions stored inside the installation directory when it's still there.
