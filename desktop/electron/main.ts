@@ -49,13 +49,13 @@ function logToFile(message: string): void {
 // Next.js standalone server
 // ---------------------------------------------------------------------------
 
-async function startNextServer(): Promise<number> {
+async function startNextServer(host: string = 'localhost'): Promise<number> {
   const { getPort } = await import('get-port-please');
   const port = await getPort({ portRange: [30011, 50000] });
 
   process.env.PORT = String(port);
-  process.env.HOSTNAME = 'localhost';
-  process.env.NEXT_PUBLIC_APP_URL = `http://localhost:${port}`;
+  process.env.HOSTNAME = host;
+  process.env.NEXT_PUBLIC_APP_URL = `http://${host}:${port}`;
   process.env.OSW_DESKTOP = 'true';
 
   // Platform-appropriate writable locations. The install dir is read-only on
@@ -142,8 +142,10 @@ async function runSelfTest(): Promise<void> {
   console.log(`[self-test] OSW Studio Desktop v${app.getVersion()} on ${process.platform}/${process.arch}`);
   console.log(`[self-test] electron=${process.versions.electron} node=${process.versions.node} abi(modules)=${process.versions.modules}`);
   try {
-    const port = await startNextServer();
-    const base = `http://localhost:${port}`;
+    // Bind + probe 127.0.0.1 explicitly: `localhost` can resolve to IPv6 in CI
+    // containers and miss the IPv4-bound server. The shipped app keeps localhost.
+    const port = await startNextServer('127.0.0.1');
+    const base = `http://127.0.0.1:${port}`;
 
     const ready = await waitForServer(base);
     if (!ready) {
