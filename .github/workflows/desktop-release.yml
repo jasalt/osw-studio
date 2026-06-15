@@ -139,6 +139,7 @@ jobs:
 
       - name: Rebuild bundled better-sqlite3 for Electron's ABI
         working-directory: desktop
+        shell: bash
         run: |
           # better-sqlite3 is bundled at the CI's Node ABI; force a from-source
           # rebuild for Electron's ABI (electron-builder doesn't rebuild app/).
