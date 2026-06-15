@@ -137,23 +137,35 @@ jobs:
           npx tsc --noEmit
           npx tsup
 
-      - name: Rebuild bundled better-sqlite3 for Electron's ABI
+      - name: Bundle better-sqlite3 for Electron's ABI
         working-directory: desktop
         shell: bash
         run: |
-          # Next's standalone bundles only better-sqlite3's runtime files (no
-          # source), so it can't be rebuilt in place. Rebuild the full root copy
-          # (which has the source) for Electron, then swap its binary into app/.
-          ELECTRON_VERSION=$(node -p 'require("electron/package.json").version')
-          npx electron-rebuild --version "$ELECTRON_VERSION" --module-dir .. --only better-sqlite3 --force --build-from-source
-          cp ../node_modules/better-sqlite3/build/Release/better_sqlite3.node \
-             app/node_modules/better-sqlite3/build/Release/better_sqlite3.node
-          # The bundled binary must no longer load under system Node.
-          if node -e 'require("./app/node_modules/better-sqlite3")' 2>/dev/null; then
-            echo "::error::bundled better-sqlite3 still loads under system Node — wrong ABI"
+          # The standalone's better-sqlite3 is built for the CI Node ABI, but the
+          # server runs in-process under Electron — swap in the official Electron
+          # prebuilt (electron-builder doesn't rebuild the bundled copy).
+          EV=$(node -p 'require("electron/package.json").version')
+          BS=../node_modules/better-sqlite3
+          DEST=app/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+          fetch() { # <arch> <dest> — download the Electron prebuilt and place it
+            ( cd "$BS" && rm -f build/Release/better_sqlite3.node \
+              && npx --yes prebuild-install --runtime=electron --target="$EV" --arch="$1" )
+            cp "$BS/build/Release/better_sqlite3.node" "$2"
+          }
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            # The dmg is universal — fetch both slices and lipo them into one .node.
+            fetch arm64 /tmp/bs-arm64.node
+            fetch x64   /tmp/bs-x64.node
+            lipo -create /tmp/bs-arm64.node /tmp/bs-x64.node -output "$DEST"
+          else
+            fetch "$(node -p process.arch)" "$DEST"
+          fi
+          # Correct iff it does NOT load under system Node (Electron ABI != Node ABI).
+          if node -e 'process.dlopen({exports:{}}, process.argv[1])' "$DEST" 2>/dev/null; then
+            echo "::error::bundled better-sqlite3 loads under system Node — wrong ABI for Electron"
             exit 1
           fi
-          echo "bundled better-sqlite3 rebuilt for Electron's ABI"
+          echo "bundled better-sqlite3 set to Electron $EV ABI"
 
       - name: Build installer (no publish)
         working-directory: desktop
