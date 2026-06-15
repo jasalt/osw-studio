@@ -137,12 +137,19 @@ jobs:
           npx tsc --noEmit
           npx tsup
 
-      - name: Rebuild bundled native modules for Electron's ABI
+      - name: Rebuild bundled better-sqlite3 for Electron's ABI
         working-directory: desktop
         run: |
-          # The bundled app/ ships better-sqlite3 built for the CI's Node ABI;
-          # Electron needs its own, and electron-builder only rebuilds desktop/.
-          npx electron-rebuild --version "$(node -p 'require("electron/package.json").version')" --module-dir app --only better-sqlite3
+          # better-sqlite3 is bundled at the CI's Node ABI; force a from-source
+          # rebuild for Electron's ABI (electron-builder doesn't rebuild app/).
+          ELECTRON_VERSION=$(node -p 'require("electron/package.json").version')
+          npx electron-rebuild --version "$ELECTRON_VERSION" --module-dir app --only better-sqlite3 --force --build-from-source
+          # Rebuilt for Electron's ABI, it must no longer load under system Node.
+          if node -e 'require("./app/node_modules/better-sqlite3")' 2>/dev/null; then
+            echo "::error::better-sqlite3 still loads under system Node — not rebuilt for Electron's ABI"
+            exit 1
+          fi
+          echo "better-sqlite3 rebuilt for Electron's ABI"
 
       - name: Build installer (no publish)
         working-directory: desktop
