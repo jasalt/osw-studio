@@ -349,6 +349,20 @@ const MIGRATIONS: Migration[] = [
         )
       `);
     }
+  },
+  {
+    id: 'add_custom_template_updated_at_v7',
+    up: (db) => {
+      // custom_templates predates template sync and never had an updated_at column,
+      // but listTemplateSummaries (used by the sync-status endpoint) selects
+      // COALESCE(updated_at, imported_at). Without the column that query throws
+      // "no such column: updated_at" on every existing database. Add it; the guard
+      // keeps the migration safe if a database already has the column.
+      const cols = db.prepare(`PRAGMA table_info(custom_templates)`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'updated_at')) {
+        db.exec(`ALTER TABLE custom_templates ADD COLUMN updated_at TEXT`);
+      }
+    }
   }
 ];
 
@@ -1172,7 +1186,7 @@ export class SQLiteAdapter implements StorageAdapter {
         UPDATE custom_templates SET
           name = ?, description = ?, version = ?,
           files = ?, directories = ?, assets = ?,
-          metadata = ?
+          metadata = ?, updated_at = ?
         WHERE id = ?
       `);
       stmt.run(
@@ -1183,14 +1197,16 @@ export class SQLiteAdapter implements StorageAdapter {
         JSON.stringify(template.directories ?? []),
         JSON.stringify(template.assets ?? []),
         JSON.stringify(template.metadata ?? {}),
+        new Date().toISOString(),
         template.id
       );
     } else {
+      const importedAt = toISOStringRequired(template.importedAt);
       const stmt = db.prepare(`
         INSERT INTO custom_templates (
           id, name, description, version,
-          files, directories, assets, metadata, imported_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          files, directories, assets, metadata, imported_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       stmt.run(
         template.id,
@@ -1201,7 +1217,8 @@ export class SQLiteAdapter implements StorageAdapter {
         JSON.stringify(template.directories ?? []),
         JSON.stringify(template.assets ?? []),
         JSON.stringify(template.metadata ?? {}),
-        toISOStringRequired(template.importedAt)
+        importedAt,
+        importedAt
       );
     }
   }
