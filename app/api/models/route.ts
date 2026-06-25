@@ -96,48 +96,53 @@ export async function POST(request: NextRequest) {
         case 'ollama':
           try {
             // Use Ollama's native API endpoint for model discovery
-            const ollamaResponse = await fetch(`http://localhost:11434/api/tags`);
+            // 127.0.0.1, not localhost: Node may resolve localhost to IPv6 (::1)
+            // while local servers bind IPv4 only — that yields ECONNREFUSED.
+            const ollamaResponse = await fetch(`http://127.0.0.1:11434/api/tags`);
             if (ollamaResponse.ok) {
               const ollamaData = await ollamaResponse.json();
               // Ollama returns models array directly in the response
               models = ollamaData.models?.map((m: any) => m.name) || [];
             }
           } catch (error) {
-            logger.error('Ollama models fetch error:', error);
+            logger.debug('Ollama models fetch failed (server not running?):', error);
           }
           break;
 
         case 'lmstudio':
           try {
             // LM Studio REST API returns capabilities (vision, tool_use)
-            const lmsRestUrl = providerConfig.baseUrl?.replace('/v1', '') || 'http://localhost:1234';
+            // Force IPv4 — localhost can resolve to ::1 where the server isn't bound.
+            const lmsRestUrl = (providerConfig.baseUrl?.replace('/v1', '') || 'http://localhost:1234').replace('localhost', '127.0.0.1');
             const lmsResponse = await fetch(`${lmsRestUrl}/api/v1/models`);
             if (lmsResponse.ok) {
               const lmsData = await lmsResponse.json();
-              const lmsModels = Array.isArray(lmsData) ? lmsData : lmsData.data || [];
+              // LM Studio's /api/v1/models returns { models: [{ key, type, capabilities }] };
+              // the OpenAI-compat shape (older builds / fallback) is { data: [{ id }] }.
+              const lmsModels = Array.isArray(lmsData) ? lmsData : (lmsData.models || lmsData.data || []);
               models = lmsModels
-                .filter((m: any) => m.type === 'llm' || !m.type)
+                .filter((m: any) => !String(m.type ?? '').startsWith('embed'))
                 .map((m: any) => {
                   const modalities: string[] = ['text'];
                   if (m.capabilities?.vision) modalities.push('image');
-                  return { id: m.id, inputModalities: modalities };
+                  return { id: m.key || m.id, inputModalities: modalities };
                 });
             }
           } catch (error) {
-            logger.error('LM Studio models fetch error:', error);
+            logger.debug('LM Studio models fetch failed (server not running?):', error);
           }
           break;
 
         case 'llamacpp':
         case 'meshllm':
           try {
-            const lmResponse = await fetch(`${providerConfig.baseUrl}/models`);
+            const lmResponse = await fetch(`${providerConfig.baseUrl?.replace('localhost', '127.0.0.1')}/models`);
             if (lmResponse.ok) {
               const lmData = await lmResponse.json();
               models = lmData.data?.map((m: any) => m.id) || [];
             }
           } catch (error) {
-            logger.error(`${provider} models fetch error:`, error);
+            logger.debug(`${provider} models fetch failed (server not running?):`, error);
           }
           break;
 

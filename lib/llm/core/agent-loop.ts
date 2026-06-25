@@ -157,6 +157,9 @@ const MALFORMED_TOOL_CALL_PERSISTENT_REMINDER = `
 EVERY time you want to use a tool, you MUST invoke it via function calling.
 DO NOT write bash{"command":...} as text - INVOKE the tools directly.`;
 
+const wrongToolNameError = (name: string) =>
+  `⛔ "${name}" is not a tool. The ONLY tool is \`bash\` — run every command through it: bash({ command: "${name} ..." }). Re-issue your last action as a single bash tool call.`;
+
 const NUDGE_MESSAGE = 'Before finishing, run the status command:\n  status --task "..." --done "..." --remaining "..." --complete';
 
 const TOOL_ERROR_RETRY_MESSAGE = 'Your previous command failed (likely a streaming issue). Continue your work — retry writing the file. If the file is large, split it into multiple smaller cat commands.';
@@ -299,6 +302,30 @@ export class AgentLoop {
       if (response.usage) {
         this.cost.record(response.usage, this.provider.getProvider(), this.provider.getModel());
         if (response.usage.promptTokens) this.lastPromptTokens = response.usage.promptTokens;
+      }
+
+      // Early-aborted mid-stream because the model called a tool that isn't
+      // 'bash' (the only tool). The arguments were never generated, so there's
+      // nothing to execute — nudge toward bash and retry.
+      if (response.invalidToolName) {
+        this.malformedToolCallRetries++;
+        this.totalMalformedToolCalls++;
+        if (this.malformedToolCallRetries <= MAX_MALFORMED_RETRIES) {
+          // Keep any reasoning so the retry doesn't re-derive it from scratch.
+          if (response.reasoningDetails?.length || (response.content && response.content.trim())) {
+            this.context.addAssistantTurn({ content: response.content, reasoningDetails: response.reasoningDetails });
+          }
+          this.context.addUserMessage(harnessMessage(wrongToolNameError(response.invalidToolName)));
+          this.progress.onEvent('malformed_tool_call', {
+            retry: this.malformedToolCallRetries,
+            maxRetries: MAX_MALFORMED_RETRIES,
+            totalFailures: this.totalMalformedToolCalls,
+            invalidToolName: response.invalidToolName,
+          });
+          continue;
+        }
+        // Over the retry limit — fall through; with no tool calls this is handled
+        // as a finish/nudge below.
       }
 
       // Filter harmony artifacts from tool calls

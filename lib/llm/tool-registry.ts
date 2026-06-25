@@ -65,6 +65,9 @@ export interface ToolExecutionContext {
   isReadOnly?: boolean;
   writeScope?: string; // If set, writes are restricted to this directory prefix
   onProgress?: (event: string, data?: any) => void;
+  /** Resolves the project's image-generation model + key and produces an image.
+   *  Absent when the project has no image model configured. */
+  generateImage?: (prompt: string, opts: { aspectRatio?: string; imageSize?: string }) => Promise<{ base64: string; mimeType: string }>;
 }
 
 interface RegisteredTool {
@@ -306,46 +309,9 @@ One command at a time as a single string.`,
     const tool = this.get(toolId as ToolId);
 
     if (!tool) {
-      // Auto-route known commands called as standalone tools
-      // LLMs sometimes call "cat", "curl", "grep" etc. as tool names instead of using bash
-      const knownCommands = ['ls', 'tree', 'cat', 'head', 'tail', 'grep', 'rg', 'find', 'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'sed', 'ss', 'wc', 'curl', 'sqlite3', 'python', 'python3', 'lua', 'preview', 'build', 'status', 'agent', 'delegate', 'runtime'];
-
-      // Map common aliases — including 'shell' itself for models trained on older prompts
-      const readAliases: Record<string, string> = {
-        'read': 'cat', 'read_file': 'cat', 'file_read': 'cat',
-        'view': 'cat', 'view_file': 'cat',
-      };
-
-      const resolvedCommand = readAliases[toolId] || toolId;
-
-      // Also accept 'shell' as an alias for 'bash' (backward compat for models)
-      if (toolId === 'shell') {
-        const bashTool = this.get('bash');
-        if (bashTool) {
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            const command = args.command ?? args.cmd ?? '';
-            return await bashTool.executor.execute(projectId, { command }, context);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            return `Error: ${msg}`;
-          }
-        }
-      }
-
-      if (knownCommands.includes(resolvedCommand)) {
-        const bashTool = this.get('bash');
-        if (bashTool) {
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            const command = reconstructBashCommand(resolvedCommand, args);
-            return await bashTool.executor.execute(projectId, { command }, context);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            return `Error: ${msg}`;
-          }
-        }
-      }
+      // 'bash' is the only registered tool, and tool-executor rejects any other
+      // tool name (via agent.hasTool) before reaching here — so this is just a
+      // defensive guard.
       return `Error: Unknown tool "${toolId}"`;
     }
 
@@ -576,7 +542,8 @@ async function executeShellSegment(
 
   // VFS shell fallthrough (handles pipes, redirects, etc.)
   const result = await vfsShell.execute(projectId, cmdArray, heredocStdin, {
-    onProgress: context.onProgress
+    onProgress: context.onProgress,
+    generateImage: context.generateImage,
   });
 
   // Refresh server context if shell command modified .server/ files
@@ -764,51 +731,6 @@ function isWriteOperation(cmd: string[]): boolean {
   // Check for redirection operators in any command
   // This catches cases like: cat file > output.txt
   return cmd.some(arg => arg === '>' || arg === '>>');
-}
-
-/**
- * Reconstruct a shell command string when the LLM calls a shell command as a standalone tool.
- * Handles various arg shapes: { cmd: "..." }, { url: "..." }, { file: "..." }, { path: "..." }, etc.
- */
-function reconstructBashCommand(command: string, args: any): string {
-  // If args already has a command/cmd string, prepend the command name if not already there
-  const existingCmd = args.command ?? args.cmd;
-  if (typeof existingCmd === 'string') {
-    const cmd = existingCmd.trim();
-    return cmd.startsWith(command) ? cmd : `${command} ${cmd}`;
-  }
-
-  // Collect meaningful string values from args
-  const parts: string[] = [command];
-
-  // Common arg names LLMs use, in priority order
-  const knownKeys = ['url', 'file', 'path', 'file_path', 'pattern', 'query', 'expression', 'text', 'content', 'args'];
-  const flags = args.flags || args.options;
-
-  // Add flags first if present
-  if (typeof flags === 'string') {
-    parts.push(flags);
-  } else if (Array.isArray(flags)) {
-    parts.push(...flags.filter((f: any) => typeof f === 'string'));
-  }
-
-  // Add known keys
-  for (const key of knownKeys) {
-    if (typeof args[key] === 'string' && args[key].trim()) {
-      parts.push(args[key].trim());
-    }
-  }
-
-  // If we only have the command name (no recognized args), try all string values
-  if (parts.length === 1) {
-    for (const [key, val] of Object.entries(args)) {
-      if (typeof val === 'string' && val.trim() && key !== 'description') {
-        parts.push(val.trim());
-      }
-    }
-  }
-
-  return parts.join(' ');
 }
 
 /**

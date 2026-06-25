@@ -33,7 +33,7 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
   ]);
   const [generating, setGenerating] = useState(false);
   const [briefState, setBriefState] = useState<BriefState>(createEmptyBriefState);
-  const [currentModel, setCurrentModel] = useState(() => configManager.getDefaultModel());
+  const [currentModel] = useState(() => configManager.getDefaultModel());
   const [creating, setCreating] = useState(false);
 
   // Pending creation confirmation — shown as composerOverlay
@@ -353,7 +353,6 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
           onStartInterview={() => {}}
           onHandoff={() => {}}
           currentModel={currentModel}
-          setCurrentModel={setCurrentModel}
           getModelDisplayName={getModelDisplayName}
           providerReady={providerReady}
           supportsVision={false}

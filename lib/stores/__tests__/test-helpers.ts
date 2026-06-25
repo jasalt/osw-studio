@@ -13,18 +13,28 @@ export function createTestStore() {
 }
 
 export function setupOrchestratorMocks() {
+  vi.mock('@/lib/llm/models/project-assignment', () => ({
+    getProjectAssignment: vi.fn().mockResolvedValue({
+      agent: { provider: 'openai', model: 'gpt-4' },
+      imageGen: null,
+      voiceInput: null,
+      autoCompact: false,
+      compactLimit: null,
+    }),
+  }));
   vi.mock('@/lib/config/storage', () => ({
     configManager: {
       getSelectedProvider: () => 'openai',
       getApiKey: () => 'sk-test',
       getDefaultModel: () => 'gpt-4',
       getProviderModel: () => 'gpt-4',
+      getProviderApiKey: () => 'sk-test',
       getCachedModels: () => null,
     },
     migrateBackendKey: () => false,
   }));
   vi.mock('@/lib/llm/providers/registry', () => ({
-    getProvider: () => ({ name: 'OpenAI', apiKeyRequired: true, isLocal: false }),
+    getProvider: () => ({ name: 'OpenAI', apiKeyRequired: true, isLocal: false, usesOAuth: false }),
     modelSupportsVision: () => false,
   }));
   vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));

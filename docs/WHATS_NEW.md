@@ -6,6 +6,28 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.78.0 - Per-Project Models, Voice & Images (2026-06-26)
+
+Models are now set per project instead of one global choice. Each project picks an agent model that does the work, and you can save a setup as a named template to reuse elsewhere. Your current provider and model carry over as a "Default" template, so projects you've already made keep working unchanged. Two new inputs arrive alongside it: you can record voice from the chat box, and the AI can generate images from a prompt while it builds. API keys are now managed as named connections, kept separate from model choices.
+
+### Providers & models
+- **Per-project models**: Each project chooses its own models. One required agent model handles all generation, replacing the separate Chat and Code model selections (the Chat/Code/Interview toggle stays as a mode, independent of the model)
+- **Templates**: Save a model setup as a named template and reuse it across projects, overriding any individual slot per project. Your existing setup becomes the "Default" template on first load. OpenRouter and HuggingFace also come with a read-only "Recommended" template to start from. In Server Mode, your custom templates sync across devices (keys stay on each device)
+- **Connections**: API keys and endpoints are managed as named connections, separate from models, with a menu to edit, revalidate, or disconnect each one
+- **Picker in the workspace**: The model button in the chat footer changes the current project's template and per-slot models without leaving the editor
+
+### Voice input
+- **Record from the chat box**: With a voice-input model set for a project, a mic button appears on the composer. Recording shows a live waveform, and the clip stays as context on the message until you send
+- **Three ways to handle a clip**: Reuse the agent model and the clip goes to it as audio; pick a transcription model and it's transcribed on send; or choose on-device and the browser transcribes it locally with no provider or key
+
+### Image generation
+- **Generate images while building**: Set an image model for a project (any image-capable model on OpenRouter) and the AI can generate images from a prompt as it works. They're saved under `/.generated/` and kept out of the published build unless you point them at a served path
+
+### Chat input
+- **Attachments**: A "+" button on the composer attaches an image or a text file. The image option is disabled when the model doesn't accept image input, and the modality indicators now reflect the project's agent model
+
+---
+
 ## v1.77.0 - Interview Mode (2026-06-14)
 
 A new Interview mode joins Code and Chat. Instead of describing everything up front, you pick a template and an AI agent asks you about it one question at a time, glancing at your project as it goes and saving what it learns to a document. Four templates come built in, and when you're done you can hand straight off to building. Custom templates aren't supported yet, but they're planned. This release also fixes a few chat and shell bugs and takes another pass at desktop startup failures.

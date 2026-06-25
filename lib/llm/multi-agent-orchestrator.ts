@@ -40,6 +40,9 @@ import { skillsService } from '@/lib/vfs/skills';
 import { track } from '@/lib/telemetry';
 import { extractToolAnalytics } from '@/lib/telemetry/tool-analytics';
 import type { ServerOrchestratorContext } from '@/lib/server-generate/types';
+import type { ResolvedAssignment, ModelRef } from '@/lib/llm/models/assignment';
+import { transcribeAudio } from '@/lib/llm/transcribe';
+import { generateImage } from '@/lib/llm/image-gen';
 
 import { AgentLoop } from './core/agent-loop';
 import { ContextManagerImpl } from './core/context-manager';
@@ -68,6 +71,7 @@ export interface AgentMessage {
     isCompactSummary?: boolean;
     focusContext?: { domPath: string; snippet: string };
     semanticBlocks?: Array<{ name: string; domPath: string; position: string; description: string }>;
+    attachedFiles?: Array<{ name: string }>;
   };
 }
 
@@ -76,6 +80,21 @@ export interface PendingImage {
   data: string;
   mediaType: string;
   preview: string;
+}
+
+export interface PendingAudio {
+  id: string;
+  data: string; // base64 WAV (no data: prefix); empty for browser-captured clips
+  format: 'wav';
+  durationMs: number;
+  transcript?: string; // pre-captured text (browser STT); model clips transcribe at send
+}
+
+export interface PendingFile {
+  id: string;
+  name: string;
+  content: string; // decoded text
+  size: number;    // bytes
 }
 
 export interface ConversationNode {
@@ -127,6 +146,7 @@ export class MultiAgentOrchestrator {
   private onProgress?: (message: string, step?: unknown) => void;
   private chatMode: boolean;
   private model?: string;
+  private assignment?: ResolvedAssignment;
   private serverContext: ServerOrchestratorContext | null;
   private interviewTemplateId?: string;
 
@@ -152,12 +172,13 @@ export class MultiAgentOrchestrator {
     projectId: string,
     agentType: AgentType = 'orchestrator',
     onProgress?: (message: string, step?: unknown) => void,
-    options?: { chatMode?: boolean; model?: string; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string }
+    options?: { chatMode?: boolean; model?: string; assignment?: ResolvedAssignment; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string }
   ) {
     this.projectId = projectId;
     this.onProgress = onProgress;
     this.chatMode = options?.chatMode ?? false;
     this.model = options?.model;
+    this.assignment = options?.assignment;
     this.serverContext = options?.serverContext ?? null;
     this.interviewTemplateId = options?.interviewTemplateId;
 
@@ -199,6 +220,9 @@ export class MultiAgentOrchestrator {
     userPrompt: string,
     options?: {
       images?: Array<{ data: string; mediaType: string }>;
+      audio?: Array<{ data: string; format: 'wav'; transcript?: string }>;
+      voiceInput?: ModelRef | 'agent' | 'browser' | null;
+      files?: Array<{ name: string; content: string }>;
       focusContext?: { domPath: string; snippet: string };
       semanticBlocks?: Array<{ name: string; domPath: string; position: string; description: string }>;
       displayPrompt?: string;
@@ -233,7 +257,7 @@ export class MultiAgentOrchestrator {
 
       const serverCtxMeta = this.getVFS().getServerContextMetadata();
       const modelSupportsTools = this.checkModelSupportsTools();
-      let systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools);
+      let systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools, this.isImageGenAvailable());
       if (this.rootAgent.type === 'interview') {
         systemPrompt = withInterviewAgenda(systemPrompt, this.interviewTemplateId);
       }
@@ -277,20 +301,79 @@ export class MultiAgentOrchestrator {
       // 3. Build user message
       const messagePrefix = (projectContext ? projectContext + '\n\n' : '') + skillHint;
       const cleanPrompt = options?.displayPrompt ?? userPrompt;
-      let userContent: string | ContentBlock[];
-      let displayContent: string | ContentBlock[];
 
-      if (options?.images && options.images.length > 0) {
-        const imageBlocks: ContentBlock[] = options.images.map(img => ({
-          type: 'image_url' as const,
-          image_url: { url: `data:${img.mediaType};base64,${img.data}` },
-        }));
-        userContent = [{ type: 'text' as const, text: messagePrefix + userPrompt }, ...imageBlocks];
-        displayContent = [{ type: 'text' as const, text: cleanPrompt }, ...imageBlocks];
-      } else {
-        userContent = messagePrefix + userPrompt;
-        displayContent = cleanPrompt;
+      // Attached text files are folded into the model-visible text. The display
+      // bubble keeps the user's prompt and shows files as compact chips
+      // (ui_metadata.attachedFiles), not the raw content.
+      let fileText = '';
+      if (options?.files?.length) {
+        for (const f of options.files) {
+          fileText += `\n\n--- Attached file: ${f.name} ---\n${f.content}`;
+        }
       }
+      // modelBlocks go to the model; displayBlocks go to the chat bubble. They
+      // diverge for transcribed voice: the model gets the text, the bubble still
+      // shows the clip (mirroring how images attach).
+      const modelBlocks: ContentBlock[] = [];
+      const displayBlocks: ContentBlock[] = [];
+      if (options?.images?.length) {
+        for (const img of options.images) {
+          const block: ContentBlock = {
+            type: 'image_url' as const,
+            image_url: { url: `data:${img.mediaType};base64,${img.data}` },
+          };
+          modelBlocks.push(block);
+          displayBlocks.push(block);
+        }
+      }
+
+      // Voice attachments resolve at send. "Reuse agent" (or a voice model equal
+      // to the agent) passes the clip through for the model to hear; otherwise it
+      // is transcribed (pre-captured browser text, or the voice model called now)
+      // and added as labeled context. The clip itself still shows in the bubble.
+      let voiceText = '';
+      let voiceFailed = false;
+      if (options?.audio?.length) {
+        const vi = options.voiceInput;
+        const agent = this.assignment?.agent;
+        const passToAgent = vi === 'agent'
+          || !!(vi && typeof vi === 'object' && agent && vi.provider === agent.provider && vi.model === agent.model);
+        for (const clip of options.audio) {
+          const block: ContentBlock = {
+            type: 'input_audio' as const,
+            input_audio: { data: clip.data, format: clip.format },
+          };
+          if (passToAgent) {
+            modelBlocks.push(block);
+            displayBlocks.push(block);
+            continue;
+          }
+          if (clip.data) displayBlocks.push(block); // real clip; browser clips carry no audio
+          let text = clip.transcript?.trim() ?? '';
+          if (!text && vi && typeof vi === 'object') {
+            try {
+              text = await transcribeAudio({ data: clip.data, format: clip.format }, vi);
+            } catch (e) {
+              logger.warn('[MultiAgentOrchestrator] voice transcription failed', e);
+              voiceFailed = true;
+            }
+          }
+          if (text) voiceText += `${text}\n\n`;
+        }
+      }
+
+      const userText = messagePrefix + voiceText + userPrompt + fileText;
+      // The failure note is display-only — never sent to the model.
+      const displayText = voiceText
+        + (voiceFailed ? '[Voice transcription failed — check the voice-input model for this project]\n\n' : '')
+        + cleanPrompt;
+
+      const userContent: string | ContentBlock[] = modelBlocks.length > 0
+        ? [{ type: 'text' as const, text: userText }, ...modelBlocks]
+        : userText;
+      const displayContent: string | ContentBlock[] = displayBlocks.length > 0
+        ? [{ type: 'text' as const, text: displayText }, ...displayBlocks]
+        : displayText;
 
       this.addMessage(this.currentConversationId, {
         role: 'user',
@@ -300,6 +383,7 @@ export class MultiAgentOrchestrator {
           ...(projectContext ? { projectContext } : {}),
           ...(options?.focusContext ? { focusContext: options.focusContext } : {}),
           ...(options?.semanticBlocks?.length ? { semanticBlocks: options.semanticBlocks } : {}),
+          ...(options?.files?.length ? { attachedFiles: options.files.map(f => ({ name: f.name })) } : {}),
         },
       });
 
@@ -354,9 +438,11 @@ export class MultiAgentOrchestrator {
     const compactionLimit = this.resolveCompactionLimit();
 
     // Build ContextManager from existing conversation
+    // When autoCompact is explicitly false, disable compaction by setting an unreachable threshold.
+    const compactionEnabled = this.assignment?.autoCompact !== false;
     const compactionConfig: CompactionConfig = {
       contextLength: compactionLimit,
-      threshold: Math.floor(compactionLimit * MultiAgentOrchestrator.COMPACTION_THRESHOLD),
+      threshold: compactionEnabled ? Math.floor(compactionLimit * MultiAgentOrchestrator.COMPACTION_THRESHOLD) : Infinity,
       recentKeepRatio: MultiAgentOrchestrator.RECENT_KEEP_RATIO,
       summaryTokenRatio: MultiAgentOrchestrator.SUMMARY_TOKEN_RATIO,
       buildCompactionPrompt,
@@ -370,7 +456,7 @@ export class MultiAgentOrchestrator {
         } catch { /* ignore */ }
         const serverCtxMeta = this.getVFS().getServerContextMetadata();
         const systemPrompt = await buildSystemPrompt(
-          this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, this.checkModelSupportsTools()
+          this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, this.checkModelSupportsTools(), this.isImageGenAvailable()
         );
         const projectContext = await buildProjectContext(fileTreeStr, serverCtxMeta);
         return { systemPrompt, projectContext };
@@ -463,7 +549,21 @@ export class MultiAgentOrchestrator {
       progress,
     });
 
-    // Build ToolExecutor
+    // Build ToolExecutor. Only wire the capability when an image-capable model is
+    // assigned — this stays in lockstep with the prompt gating so we never
+    // advertise `generate-image` without it working (or vice versa).
+    const imageGen = this.assignment?.imageGen;
+    const generateImageCapability = this.isImageGenAvailable()
+      ? async (prompt: string, opts: { aspectRatio?: string; imageSize?: string }) => {
+          const ref = imageGen === 'agent' ? this.assignment!.agent : imageGen as ModelRef;
+          const apiKey = this.getConfig().getProviderApiKey(ref.provider) || '';
+          // Request the model's declared output modalities so image-only models
+          // (e.g. FLUX, Grok Imagine) aren't sent an unsupported 'text' modality
+          // while multimodal models (e.g. Gemini) still get 'text' as they require.
+          const modalities = this.getModelOutputModalities(ref);
+          return generateImage({ provider: ref.provider, apiKey, model: ref.model, prompt, modalities, ...opts });
+        }
+      : undefined;
     const buildToolExecutor = (executorProgress: ProgressReporter) => {
       const executor = new OswsToolExecutor({
         projectId: this.projectId,
@@ -471,6 +571,7 @@ export class MultiAgentOrchestrator {
         getAgent: () => this.rootAgent,
         chatMode: this.chatMode,
         abortSignal: this.abortController.signal,
+        generateImage: generateImageCapability,
       });
       executor.onAfterExecute = async (toolCall, result) => {
         track('tool_call', extractToolAnalytics(toolCall.function.name, toolCall.function.arguments, result.success));
@@ -504,7 +605,7 @@ export class MultiAgentOrchestrator {
         const serverCtxMeta = this.getVFS().getServerContextMetadata();
         return buildSystemPrompt(
           this.chatMode || agentType === 'explore' || agentType === 'plan',
-          serverCtxMeta, this.projectId, agentType as AgentType, true
+          serverCtxMeta, this.projectId, agentType as AgentType, true, this.isImageGenAvailable()
         );
       },
     });
@@ -611,6 +712,28 @@ export class MultiAgentOrchestrator {
       if (entry && entry.supportsFunctions === false) return false;
     }
     return true;
+  }
+
+  /** A model's declared output modalities from the cached catalog, if known. */
+  private getModelOutputModalities(ref: ModelRef): string[] | undefined {
+    const entry = this.getConfig().getCachedModels(ref.provider)?.models
+      ?.find((m: { id: string; outputModalities?: string[] }) => m.id === ref.model);
+    return entry?.outputModalities?.length ? entry.outputModalities : undefined;
+  }
+
+  /**
+   * Whether image generation should be offered (prompt docs + wired capability).
+   * True when an image-capable model is assigned: an explicit image model (the
+   * picker only lists image-output models), or 'agent' reuse only when the agent
+   * model actually outputs images. Guards against a stale `imageGen: 'agent'`
+   * pointing at a text-only agent model — which would otherwise advertise a
+   * `generate-image` command that fails at runtime.
+   */
+  private isImageGenAvailable(): boolean {
+    const imageGen = this.assignment?.imageGen;
+    if (!imageGen) return false;
+    if (imageGen !== 'agent') return true;
+    return !!this.getModelOutputModalities(this.assignment!.agent)?.includes('image');
   }
 
   /** Selects the completion gate for the active agent (undefined = no gate). */
@@ -733,10 +856,11 @@ export class MultiAgentOrchestrator {
       const provider = cfg.getSelectedProvider();
       return { provider, apiKey: cfg.getProviderApiKey(provider) || '', model: cfg.getProviderModel(provider) || this.model || 'default-model' };
     }
-    const provider = configManager.getSelectedProvider();
+    const agent = this.assignment?.agent;
+    const provider = (agent?.provider ?? configManager.getSelectedProvider()) as ProviderId;
     const providerConfig = getProvider(provider);
     const apiKey = configManager.getProviderApiKey(provider);
-    const model = configManager.getProviderModel(provider) || this.model || undefined;
+    const model = agent?.model || configManager.getProviderModel(provider) || this.model || undefined;
     if (providerConfig.apiKeyRequired && !apiKey && !providerConfig.usesOAuth) {
       throw new Error(`API key not configured for provider: ${provider}`);
     }
@@ -745,7 +869,8 @@ export class MultiAgentOrchestrator {
 
   private resolveCompactionLimit(): number {
     const { provider, model } = this.getProviderConfig();
-    const userLimit = this.getConfig().getCompactionLimit(provider);
+    // Assignment-level limit takes precedence over per-provider config
+    const userLimit = this.assignment?.compactLimit ?? this.getConfig().getCompactionLimit(provider);
     if (userLimit) return userLimit;
     const registryLimit = getModelContextLength(provider as ProviderId, model);
     if (registryLimit) return registryLimit;

@@ -57,6 +57,12 @@ describe('writeTargets', () => {
     expect(writeTargets(['mv', '/src.md', '/dst.md'])).toEqual(['/dst.md']);
   });
 
+  it('returns the --out target for generate-image, else the default /.generated/', () => {
+    expect(writeTargets(['generate-image', 'a dragon', '--out', '/images/d.png'])).toEqual(['/images/d.png']);
+    expect(writeTargets(['generate-image', 'a dragon', '-o', '/images/d.png'])).toEqual(['/images/d.png']);
+    expect(writeTargets(['generate-image', 'a dragon'])).toEqual(['/.generated/']);
+  });
+
   it('normalizes a relative target to an absolute path', () => {
     expect(writeTargets(['cat', '>', 'feature.md'])).toEqual(['/feature.md']);
   });
@@ -100,5 +106,11 @@ describe('checkWriteScope', () => {
   it('denies fail-closed when a write target cannot be parsed', () => {
     const r = checkWriteScope(['ss'], '/.interviews/');
     expect(r.allowed).toBe(false);
+  });
+
+  it('denies generate-image writing outside the scope (incl. its default /.generated/)', () => {
+    expect(checkWriteScope(['generate-image', 'x', '--out', '/images/x.png'], '/.interviews/').allowed).toBe(false);
+    expect(checkWriteScope(['generate-image', 'x'], '/.interviews/').allowed).toBe(false);
+    expect(checkWriteScope(['generate-image', 'x', '--out', '/.interviews/x.png'], '/.interviews/').allowed).toBe(true);
   });
 });

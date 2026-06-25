@@ -16,6 +16,9 @@ export interface StreamResponse {
   usage?: UsageInfo;
   wasTruncated?: boolean;   // True if response was cut off due to max_tokens
   finishReason?: string;    // The actual finish reason from the API
+  /** Set when the stream was aborted early because the model called a tool
+   *  whose name isn't one of the advertised tools (only 'bash' exists). */
+  invalidToolName?: string;
   reasoningDetails?: ReasoningDetail[];  // Structured reasoning blocks (Gemini signatures, etc.) for multi-turn replay
   /** Midstream error surfaced via SSE chunk { choices: [], error: {...} }. */
   midstreamError?: { code?: number | string; message: string };
@@ -27,6 +30,9 @@ export interface StreamParserOptions {
   suppressAssistantDelta?: boolean;
   /** When true, emit stream_raw_chunk events for each SSE line (debug). */
   debugStream?: boolean;
+  /** Names the model is allowed to call. If a streamed tool name can't be a
+   *  prefix of any of these, the stream is cancelled early to save tokens. */
+  allowedToolNames?: ReadonlySet<string>;
   onProgress?: (event: string, data?: any) => void;
 }
 
@@ -53,6 +59,24 @@ export async function parseStreamingResponse(
   let currentToolCall: Partial<ToolCall> | null = null;
   let toolCallBuffer = '';
   let usageInfo: UsageInfo | undefined;
+
+  // Early-abort: if the model starts calling a tool whose name can't be one of
+  // the advertised tools, cancel the stream now rather than pay for the (often
+  // huge) arguments it would stream next. Prefix-safe so a char-streamed name
+  // like "ba…" isn't rejected before "bash" finishes.
+  const allowedToolNames = options.allowedToolNames;
+  let invalidToolName: string | undefined;
+  function shouldAbortOnToolName(name: string | undefined | null): boolean {
+    if (invalidToolName) return true;
+    if (!name || !allowedToolNames || allowedToolNames.size === 0) return false;
+    if (allowedToolNames.has(name)) return false;
+    for (const allowed of allowedToolNames) {
+      if (allowed.startsWith(name)) return false; // still streaming a valid prefix
+    }
+    invalidToolName = name;
+    reader?.cancel().catch(() => {});
+    return true;
+  }
   let wasTruncated = false;
   let lastFinishReason: string | undefined;
   const reasoningDetails: ReasoningDetail[] = [];  // Structured reasoning blocks captured for multi-turn replay
@@ -136,6 +160,7 @@ export async function parseStreamingResponse(
 
   try {
     while (true) {
+      if (invalidToolName) break; // early-aborted on an unexpected tool name
       const readResult = await Promise.race([
         reader.read(),
         new Promise<{ done: true; value: undefined }>(resolve => {
@@ -271,6 +296,9 @@ export async function parseStreamingResponse(
                 toolCallsById[json.content_block.id] = toolCall;
                 anthropicToolBuffers[json.content_block.id] = '';
                 contentBlockIndexToToolId[json.index] = json.content_block.id;
+
+                // Anthropic sends the full tool name here, before any arguments.
+                if (shouldAbortOnToolName(json.content_block.name)) break;
 
                 if (!suppressAssistantDelta) {
                   onProgress?.('toolCalls', { toolCalls: [toolCall] });
@@ -480,6 +508,8 @@ export async function parseStreamingResponse(
                     if (tc.function?.name) {
                       toolCallsById[key].function.name = tc.function.name;
 
+                      if (shouldAbortOnToolName(toolCallsById[key].function.name)) break;
+
                       if (isNewTool && !suppressAssistantDelta) {
                         onProgress?.('toolCalls', { toolCalls: [toolCallsById[key]] });
                       }
@@ -510,6 +540,8 @@ export async function parseStreamingResponse(
                       }
                     };
                     toolCallBuffer = tc.function?.arguments || '';
+
+                    if (shouldAbortOnToolName(currentToolCall.function?.name)) break;
 
                     if (!suppressAssistantDelta && currentToolCall.function?.name) {
                       onProgress?.('toolCalls', { toolCalls: [currentToolCall as ToolCall] });
@@ -639,7 +671,8 @@ export async function parseStreamingResponse(
     wasTruncated,
     finishReason: lastFinishReason,
     reasoningDetails: reasoningDetails.length > 0 ? reasoningDetails : undefined,
-    midstreamError
+    midstreamError,
+    invalidToolName,
   };
 }
 

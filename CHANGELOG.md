@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.78.0 - 2026-06-26
+
+### Providers & models
+
+- **Per-project model setup**: Each project now picks its own models instead of relying on one global provider and model. A required agent model handles all generation, replacing the previous separate Chat and Code model selections (the Chat/Code/Interview mode toggle stays, as a behaviour, independent of the model). An optional voice-input slot layers on top.
+- **Templates**: Save a model setup as a named template and reuse it across projects. A project selects a template and can override any individual slot; saving promotes those overrides back into the template. Your existing provider and model selection is migrated into a "Default" template on first load, so projects you have not configured keep working unchanged.
+- **Recommended templates**: Both of the most used providers, OpenRouter and HuggingFace each come with a built-in "Recommended" template as a starting point. Built-ins are read-only and are updated over time as better models appear.
+- **Connections**: API keys and endpoints are now managed as named connections, separately from models, with add and edit forms grouped by provider type. Each connection has a menu to edit, revalidate (re-fetch its model list), or disconnect.
+- **Providers & models settings view**: A reworked settings area with three sections: Models (agent model, modality slots, compaction, reasoning), Connections, and Templates.
+- **Per-project picker in the workspace**: The model button in the chat footer opens a picker to change the current project's template and per-slot models without leaving the editor. Changes apply to that project only.
+- **Template sync (Server Mode)**: Your custom model templates now sync between devices, alongside skills and project templates. API keys stay on each device and are never synced.
+
+### Voice input
+
+- **Record from the chat input**: When a project has a voice-input model set, a mic button appears on the composer. Recording shows a live waveform, and the clip is held as context on the message until you send.
+- **Three ways a clip is handled**: Reuse the agent model and the recording is sent to the agent as audio (for agent models that accept audio input). Choose a separate transcription model and the clip is transcribed when you send, with the text added to the message. Choose browser / on-device and it transcribes locally using the browser's own speech recognition, with no provider or key.
+- **Recordings as context**: A clip appears in the message's context area with a player, the same way images and other attachments do. A voice-only message opens that context expanded; a message that also has typed or transcribed text keeps it collapsed.
+
+### Image generation
+
+- **Generate images**: Set an image-generation model for a project (any image-capable model on OpenRouter), and the AI can generate images from a text prompt as it builds. Generated images are saved into the project under `/.generated/` by default, which is excluded from the published build; the AI can save to a served path instead, and control aspect ratio and resolution.
+
+### Chat input
+
+- **Attachment menu**: A "+" button on the composer attaches an image or a text file. Text files are sent as context on any model. The image option is disabled when the selected model does not accept image input, and the input's modality indicators now reflect the project's agent model rather than a global selection.
+
+### File explorer
+
+- **Hidden files shown by default**: The file tree now lists dot-prefixed files and folders (`.skills/`, `.server/`, `.generated/`, `.PROMPT.md`) by default. The toggle to hide them again is unchanged.
+
+### Fixes
+
+- **Internal reminders hidden from chat again**: Harness-injected reminders and retry nudges, sent to the model when it stops without acting or calls a tool incorrectly, were sometimes rendered in the transcript as user messages. They are now kept out of the conversation view.
+
 ## v1.77.0 - 2026-06-14
 
 ### Interview Mode

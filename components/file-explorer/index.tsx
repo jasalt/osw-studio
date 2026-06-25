@@ -59,7 +59,7 @@ export function FileExplorer({ projectId, onFileSelect, onClose, entryPoint, onS
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [draggedItem, setDraggedItem] = useState<FileTreeItem | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [showHidden, setShowHidden] = useState(false);
+  const [showHidden, setShowHidden] = useState(true);
   const [hiddenFileCount, setHiddenFileCount] = useState(0);
   const [hiddenFolderCount, setHiddenFolderCount] = useState(0);
   const [promptDismissed, setPromptDismissed] = useState(() => {

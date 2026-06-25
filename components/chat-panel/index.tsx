@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback, DragEvent, ClipboardEvent } from 'react';
-import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, Brain, Image as ImageIcon, Type } from 'lucide-react';
+import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, Brain, Image as ImageIcon, Type, Mic, Square, Plus, FileText } from 'lucide-react';
 import type { WorkspaceMode, ActiveInterview } from '@/lib/stores/slices/project';
 import { InterviewPicker } from './interview-picker';
 import { listInterviewTemplates } from '@/lib/interview/templates';
@@ -15,19 +15,28 @@ import { PanelContainer, PanelHeader } from '@/components/ui/panel';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ModelSettingsPanel } from '@/components/settings/model-settings';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { ProvidersModelsView } from '@/components/providers-models';
+import { createPortal } from 'react-dom';
+import { ProjectModelsPanel } from '@/components/providers-models/project-models-panel';
 import { FocusContextPayload } from '@/lib/preview/types';
-import { PendingImage } from '@/lib/llm/multi-agent-orchestrator';
+import { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-orchestrator';
+import { useAudioRecorder } from '@/lib/audio/use-audio-recorder';
+import { useSpeechRecognition } from '@/lib/audio/use-speech-recognition';
+import { AudioSpectrogram } from './audio-spectrogram';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ContentBlock } from '@/lib/llm/types';
 import type { PlacedBlock } from '@/lib/semantic-blocks/types';
 import { MessageContext } from '@/components/message-context';
 import { track } from '@/lib/telemetry';
+import { toast } from 'sonner';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
+import { resolveProjectAssignment } from '@/lib/llm/models/project-assignment';
 
 type FocusTarget = FocusContextPayload & { timestamp: number };
 
 // Helper to render user message content (string or ContentBlock[])
-function UserMessageContent({ content, hideImages }: { content: string | ContentBlock[]; hideImages?: boolean }) {
+function UserMessageContent({ content, hideImages, hideAudio }: { content: string | ContentBlock[]; hideImages?: boolean; hideAudio?: boolean }) {
   if (typeof content === 'string') {
     return <div className="whitespace-pre-wrap">{content}</div>;
   }
@@ -35,6 +44,7 @@ function UserMessageContent({ content, hideImages }: { content: string | Content
   // Separate text and image blocks
   const textBlocks = content.filter(b => b.type === 'text');
   const imageBlocks = hideImages ? [] : content.filter(b => b.type === 'image_url');
+  const audioBlocks = hideAudio ? [] : content.filter(b => b.type === 'input_audio');
 
   return (
     <div className="space-y-2">
@@ -60,6 +70,18 @@ function UserMessageContent({ content, hideImages }: { content: string | Content
           ))}
         </div>
       )}
+
+      {/* Render attached audio clips as inline players */}
+      {audioBlocks.map((block, index) => (
+        block.type === 'input_audio' && (
+          <audio
+            key={`aud-${index}`}
+            controls
+            src={`data:audio/${block.input_audio.format};base64,${block.input_audio.data}`}
+            className="h-9 w-full max-w-[280px]"
+          />
+        )
+      ))}
     </div>
   );
 }
@@ -70,7 +92,7 @@ interface ChatPanelProps {
   onRetry?: (checkpointId: string) => void;
   // Input functionality
   generating: boolean;
-  onGenerate: (prompt: string, images?: PendingImage[]) => void;
+  onGenerate: (prompt: string, images?: PendingImage[], audio?: PendingAudio[], files?: PendingFile[]) => void;
   onStop: () => void;
   onContinue?: () => void;
   // Focus context
@@ -84,7 +106,6 @@ interface ChatPanelProps {
   onStartInterview: (template: InterviewTemplate) => void;
   onHandoff: (handoff: InterviewHandoff) => void;
   currentModel: string;
-  setCurrentModel: (model: string) => void;
   getModelDisplayName: (modelId: string) => string;
   // Tour/lock state
   isTourLockingInput?: boolean;
@@ -151,7 +172,6 @@ export function ChatPanel({
   onStartInterview,
   onHandoff,
   currentModel,
-  setCurrentModel,
   getModelDisplayName,
   isTourLockingInput = false,
   onClearChat,
@@ -171,11 +191,36 @@ export function ChatPanel({
   systemNote,
 }: ChatPanelProps) {
   const workspaceReady = useWorkspaceStore(s => s.workspaceReady);
+  const projectId = useWorkspaceStore(s => s.projectId);
+  const projectModelConfig = useWorkspaceStore(s => s.projectModelConfig);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
+  const [showProvidersManage, setShowProvidersManage] = useState(false);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  // Mobile breakpoint — the per-project model picker becomes a full-screen dialog
+  // instead of an anchored popover (which can't fill a phone screen).
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  // Resolve the per-project assignment once — drives the trigger label and the
+  // voice-input (mic) gating below.
+  const resolvedAssignment = resolveProjectAssignment(projectModelConfig);
+  const effectiveAgentModel = resolvedAssignment?.agent.model ?? currentModel;
+  // The mic is gated on the project's dedicated voice-input slot (STT model /
+  // browser / off), not the agent model's input modalities.
+  const voiceInput = resolvedAssignment?.voiceInput ?? null;
+  const voiceInputEnabled = voiceInput != null;
+  // Browser slot records via the Web Speech API (live transcript); a model slot
+  // records a clip. Either way the result becomes a pending attachment, resolved
+  // to audio or transcribed text only when the message is sent.
+  const voiceIsBrowser = voiceInput === 'browser';
 
   const MODE_CONFIG: Record<WorkspaceMode, { label: string; Icon: typeof Code; accent: string; iconColor: string }> = {
     code: { label: 'Code', Icon: Code, accent: 'bg-orange-500', iconColor: 'text-orange-500' },
@@ -197,6 +242,17 @@ export function ChatPanel({
   // Image handling state
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Audio capture state — the mic shows when the project has a voice-input model.
+  const [pendingAudio, setPendingAudio] = useState<PendingAudio[]>([]);
+  const { isRecording, error: recError, analyser, start: startRecording, stop: stopRecording, cancel: cancelRecording } = useAudioRecorder();
+  // Browser on-device STT, used when the voice-input slot is set to 'browser'.
+  const speech = useSpeechRecognition();
+  // Pending text-file attachments (added via the + menu); content goes to the model.
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const supportsAudio = voiceInputEnabled;
 
   // Handle image drop
   const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
@@ -287,15 +343,103 @@ export function ChatPanel({
     setPendingImages(prev => prev.filter(img => img.id !== imageId));
   }, []);
 
-  // Handle send with images
-  const handleSend = useCallback(() => {
-    if (pendingImages.length > 0) {
-      onGenerate(prompt, pendingImages);
-      setPendingImages([]);
+  // Start recording. Browser STT listens live; a model-backed voice slot records
+  // a clip via MediaRecorder.
+  const handleStartRecording = useCallback(() => {
+    if (voiceIsBrowser) {
+      if (!speech.supported) {
+        toast.error('Speech recognition is not available in this browser');
+        return;
+      }
+      speech.start();
     } else {
-      onGenerate(prompt);
+      startRecording();
     }
-  }, [onGenerate, pendingImages, prompt]);
+  }, [voiceIsBrowser, speech, startRecording]);
+
+  // Stop recording and add the result as a pending attachment. Browser keeps the
+  // live transcript; a model clip is transcribed later, when the message is sent.
+  const handleStopRecording = useCallback(async () => {
+    if (voiceIsBrowser) {
+      const text = (await speech.stop()).trim();
+      if (text) {
+        setPendingAudio(prev => [...prev, {
+          id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+          data: '', format: 'wav', durationMs: 0, transcript: text,
+        }]);
+      }
+      return;
+    }
+    const clip = await stopRecording();
+    if (!clip) return;
+    setPendingAudio(prev => [...prev, {
+      id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+      ...clip,
+    }]);
+  }, [voiceIsBrowser, speech, stopRecording]);
+
+  // Cancel an in-progress recording (browser or media).
+  const handleCancelRecording = useCallback(() => {
+    if (voiceIsBrowser) speech.cancel();
+    else cancelRecording();
+  }, [voiceIsBrowser, speech, cancelRecording]);
+
+  const removeAudio = useCallback((id: string) => {
+    setPendingAudio(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  // --- Attachments added via the + menu ---
+  const addImageFiles = useCallback((fileList: FileList | null) => {
+    if (!fileList) return;
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    if (files.length) track('image_attached', { source: 'picker', count: files.length });
+    for (const file of files) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const [header, data] = dataUrl.split(',');
+        const mediaType = header.match(/data:([^;]+)/)?.[1] || 'image/png';
+        setPendingImages(prev => [...prev, {
+          id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+          data, mediaType, preview: dataUrl,
+        }]);
+      };
+      reader.readAsDataURL(file);
+    }
+  }, []);
+
+  const addTextFiles = useCallback((fileList: FileList | null) => {
+    if (!fileList) return;
+    for (const file of Array.from(fileList)) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPendingFiles(prev => [...prev, {
+          id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+          name: file.name,
+          content: (reader.result as string) ?? '',
+          size: file.size,
+        }]);
+      };
+      reader.readAsText(file);
+    }
+  }, []);
+
+  const removeFile = useCallback((id: string) => {
+    setPendingFiles(prev => prev.filter(f => f.id !== id));
+  }, []);
+
+  // Handle send with attachments (text + images + audio + files)
+  const handleSend = useCallback(() => {
+    onGenerate(
+      prompt,
+      pendingImages.length ? pendingImages : undefined,
+      pendingAudio.length ? pendingAudio : undefined,
+      pendingFiles.length ? pendingFiles : undefined,
+    );
+    setPendingImages([]);
+    setPendingAudio([]);
+    setPendingFiles([]);
+  }, [onGenerate, pendingImages, pendingAudio, pendingFiles, prompt]);
 
   // Listen for tour event to open provider settings
   useEffect(() => {
@@ -522,23 +666,50 @@ export function ChatPanel({
       ) : (
       <div className="p-3 space-y-2">
         {runtimeErrorHint}
-        {/* Unified context component — focus, blocks, images */}
+        {/* Hidden inputs driven by the + attach menu */}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => { addImageFiles(e.target.files); e.target.value = ''; }}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".txt,.md,.markdown,.json,.csv,.tsv,.js,.jsx,.ts,.tsx,.html,.css,.scss,.xml,.yml,.yaml,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.sh,.sql,.log,.env,text/*"
+          multiple
+          className="hidden"
+          onChange={(e) => { addTextFiles(e.target.files); e.target.value = ''; }}
+        />
+        {/* Unified context component — focus, blocks, images, files, voice */}
         <MessageContext
           focusContext={focusContextData}
           semanticBlocks={placedBlocks}
           images={pendingImages}
+          files={pendingFiles}
+          audioClips={pendingAudio}
           systemNote={systemNote}
           onClearFocus={() => setFocusContext(null)}
           onRemoveBlock={onRemovePlacedBlock}
           onClearBlocks={onClearPlacedBlocks}
           onRemoveImage={removeImage}
           onClearImages={() => setPendingImages([])}
+          onRemoveFile={removeFile}
+          onClearFiles={() => setPendingFiles([])}
+          onRemoveAudio={removeAudio}
+          onClearAudio={() => setPendingAudio([])}
         />
+        {recError && !isRecording && (
+          <p className="text-xs text-destructive">{recError}</p>
+        )}
         {/* Modality indicators */}
         <div className="flex !mb-0">
           {[
             { key: 'text', icon: Type, label: 'Text input', enabled: true },
             { key: 'image', icon: ImageIcon, label: inputModalities.includes('image') ? 'Image input — drop or paste images' : 'Image input — not supported by this model', enabled: inputModalities.includes('image') },
+            { key: 'audio', icon: Mic, label: voiceInputEnabled ? 'Voice input — click the mic to record' : 'Voice input — off (enable a voice model for this project)', enabled: voiceInputEnabled },
           ].map((mod, i, arr) => (
             <Tooltip key={mod.key}>
               <TooltipTrigger asChild>
@@ -579,6 +750,24 @@ export function ChatPanel({
               onStart={onStartInterview}
               disabled={!providerReady}
             />
+          ) : (isRecording || speech.isListening) ? (
+            <div className="flex items-center gap-3 px-3 py-3">
+              <span className="h-2.5 w-2.5 rounded-full bg-primary animate-pulse shrink-0" />
+              {voiceIsBrowser ? (
+                <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
+                  {speech.interim || 'Listening…'}
+                </span>
+              ) : (
+                <AudioSpectrogram analyser={analyser} className="flex-1 min-w-0" />
+              )}
+              <Button variant="ghost" size="sm" onClick={handleCancelRecording} className="shrink-0">
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleStopRecording} className="shrink-0 gap-1.5">
+                <Square className="h-3.5 w-3.5" />
+                Stop
+              </Button>
+            </div>
           ) : (
           <div className="relative flex bg-card rounded-lg transition-all">
               <Textarea
@@ -602,7 +791,7 @@ export function ChatPanel({
               <div className="flex flex-col p-2 gap-2">
                 <Button
                   onClick={generating ? onStop : handleSend}
-                  disabled={isTourLockingInput ? !generating : (!generating && (!prompt.trim() && pendingImages.length === 0 || !providerReady))}
+                  disabled={isTourLockingInput ? !generating : (!generating && (!prompt.trim() && pendingImages.length === 0 && pendingAudio.length === 0 && pendingFiles.length === 0 || !providerReady))}
                   size="sm"
                   className="flex items-center gap-2"
                 >
@@ -618,6 +807,49 @@ export function ChatPanel({
                     </>
                   )}
                 </Button>
+                {!generating && (
+                  <div className="flex items-center gap-1">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={isTourLockingInput || !providerReady}
+                          title="Add attachment"
+                          className="flex-1"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" side="top">
+                        <DropdownMenuItem
+                          disabled={!supportsVision}
+                          onSelect={() => setTimeout(() => imageInputRef.current?.click(), 0)}
+                        >
+                          <ImageIcon className="h-4 w-4" />
+                          Image
+                          {!supportsVision && <span className="ml-auto text-xs text-muted-foreground">unsupported</span>}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setTimeout(() => fileInputRef.current?.click(), 0)}>
+                          <FileText className="h-4 w-4" />
+                          Text file
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    {supportsAudio && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleStartRecording}
+                        disabled={isTourLockingInput || !providerReady}
+                        title="Record voice"
+                        className="flex-1"
+                      >
+                        <Mic className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -625,15 +857,25 @@ export function ChatPanel({
           {/* Footer */}
           <div className="border-t border-border bg-muted/50 px-2 py-2">
             <div className="flex items-center justify-between gap-2">
-              <Popover open={showMobileSettings} onOpenChange={setShowMobileSettings}>
+              {/* Blurred backdrop behind the per-project model popover (Radix Popover
+                  has no overlay of its own), matching the drawer/dialog treatment. */}
+              {!isMobile && showMobileSettings && typeof document !== 'undefined' && createPortal(
+                <div
+                  className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+                  aria-hidden="true"
+                  onClick={() => setShowMobileSettings(false)}
+                />,
+                document.body,
+              )}
+              <Popover open={!isMobile && showMobileSettings} onOpenChange={setShowMobileSettings}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
-                    className={`h-7 text-xs ${!providerReady ? 'ring-2 ring-primary/70 animate-ring-opacity border-primary' : ''}`}
+                    className={`h-7 text-xs ${!providerReady ? 'ring-2 ring-primary/70 animate-ring-opacity border-primary' : ''} ${!isMobile && showMobileSettings ? 'relative z-50' : ''}`}
                     data-tour-id="provider-settings-trigger"
                   >
-                    <span>{providerReady ? getModelDisplayName(currentModel) : 'Select provider'}</span>
+                    <span>{providerReady ? getModelDisplayName(effectiveAgentModel) : 'Select provider'}</span>
                     {showMobileSettings ? (
                       <ChevronDown className="h-3 w-3 ml-1" />
                     ) : (
@@ -641,13 +883,82 @@ export function ChatPanel({
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[460px] max-w-[calc(100vw-2rem)] max-h-[min(680px,calc(100vh-5rem))] overflow-hidden flex flex-col" align="start" data-tour-id="provider-settings-popup">
-                  <ModelSettingsPanel
-                    onClose={() => setShowMobileSettings(false)}
-                    onModelChange={(modelId) => setCurrentModel(modelId)}
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  sideOffset={6}
+                  className="p-0 w-[460px] max-w-[calc(100vw-2rem)] max-h-[min(680px,var(--radix-popover-content-available-height))] overflow-hidden flex flex-col"
+                  data-tour-id="provider-settings-popup"
+                  onInteractOutside={(e) => {
+                    // Don't dismiss while the shared model drawer (a separate fixed
+                    // layer) is in use — interacting with it isn't an outside click.
+                    const original = (e as unknown as { detail?: { originalEvent?: Event } }).detail?.originalEvent;
+                    const target = (original?.target ?? e.target) as Element | null;
+                    if (target?.closest?.('[data-models-drawer]')) e.preventDefault();
+                  }}
+                >
+                  <ProjectModelsPanel
+                    projectId={projectId}
+                    onManageSettings={() => {
+                      setShowMobileSettings(false);
+                      setShowProvidersManage(true);
+                    }}
                   />
                 </PopoverContent>
               </Popover>
+
+              {/* Mobile: the per-project picker as a full-screen dialog (the anchored
+                  popover can't fill a phone screen). */}
+              {isMobile && (
+                <Dialog open={showMobileSettings} onOpenChange={setShowMobileSettings}>
+                  <DialogContent showCloseButton={false} className="p-0 gap-0 w-[calc(100vw-1.5rem)] max-w-none h-[calc(100dvh-1.5rem)] max-h-none overflow-hidden flex flex-col">
+                    <DialogTitle className="sr-only">Models · this project</DialogTitle>
+                    <ProjectModelsPanel
+                      projectId={projectId}
+                      onManageSettings={() => {
+                        setShowMobileSettings(false);
+                        setShowProvidersManage(true);
+                      }}
+                      onDone={() => setShowMobileSettings(false)}
+                    />
+                  </DialogContent>
+                </Dialog>
+              )}
+
+              {/* Full "Providers & models" manager, opened in-workspace from the per-project panel.
+                  Non-modal so the body-portaled model picker / save-as drawer can scroll: Radix's
+                  modal scroll-lock (react-remove-scroll) only whitelists the dialog content, and
+                  cancels wheel events anywhere else — including the drawer. We render our own
+                  backdrop since non-modal dialogs don't get Radix's overlay. */}
+              {showProvidersManage && typeof document !== 'undefined' && createPortal(
+                <div
+                  className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+                  onClick={() => setShowProvidersManage(false)}
+                />,
+                document.body
+              )}
+              <Dialog open={showProvidersManage} onOpenChange={setShowProvidersManage} modal={false}>
+                <DialogContent
+                  className="gap-0 flex flex-col w-[min(1080px,calc(100vw-2rem))] max-w-none h-[min(840px,calc(100vh-3rem))] overflow-hidden"
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                  onFocusOutside={(e) => {
+                    // Non-modal dialog: the popover this opened from returns focus to its
+                    // trigger (outside the dialog) as it closes, which would otherwise
+                    // dismiss us instantly. Closing is handled by the backdrop and Escape.
+                    e.preventDefault();
+                  }}
+                  onInteractOutside={(e) => {
+                    // The model picker / save-as drawer is a separate fixed layer
+                    // portaled to <body>; interacting with it isn't an outside click.
+                    const original = (e as unknown as { detail?: { originalEvent?: Event } }).detail?.originalEvent;
+                    const target = (original?.target ?? e.target) as Element | null;
+                    if (target?.closest?.('[data-models-drawer]')) e.preventDefault();
+                  }}
+                >
+                  <DialogTitle className="sr-only">Providers &amp; models</DialogTitle>
+                  <ProvidersModelsView />
+                </DialogContent>
+              </Dialog>
 
               {!hideHeader && (() => {
                 const active = MODE_CONFIG[mode];
@@ -842,16 +1153,28 @@ function TurnDisplay({ turn, collatedUsage, collatedTaskStartTime, onRestore, on
             const userImageBlocks = Array.isArray(contentData)
               ? contentData.filter((b: ContentBlock) => b.type === 'image_url')
               : [];
-            const hasAnyContext = !!(item.focusContext || item.semanticBlocks || userImageBlocks.length > 0);
+            const userAudioBlocks = Array.isArray(contentData)
+              ? contentData.filter((b: ContentBlock) => b.type === 'input_audio')
+              : [];
+            const messageText = typeof contentData === 'string'
+              ? contentData
+              : Array.isArray(contentData)
+                ? contentData.filter((b: ContentBlock) => b.type === 'text').map((b) => (b.type === 'text' ? b.text : '')).join('')
+                : '';
+            const hasText = messageText.trim().length > 0;
+            const hasAnyContext = !!(item.focusContext || item.semanticBlocks || userImageBlocks.length > 0 || item.attachedFiles?.length || userAudioBlocks.length > 0);
             return (
               <div key={item.id} className="text-sm text-foreground bg-primary/10 px-3 py-2 rounded border border-primary/20">
                 <div className="font-semibold text-primary mb-1 text-xs">User</div>
-                <UserMessageContent content={contentData} hideImages={hasAnyContext} />
+                <UserMessageContent content={contentData} hideImages={hasAnyContext} hideAudio={hasAnyContext} />
                 {hasAnyContext && (
                   <MessageContext
                     focusContext={item.focusContext}
                     semanticBlocks={item.semanticBlocks}
                     imageBlocks={userImageBlocks.length > 0 ? userImageBlocks : undefined}
+                    fileNames={item.attachedFiles}
+                    audioBlocks={userAudioBlocks.length > 0 ? userAudioBlocks : undefined}
+                    defaultOpen={userAudioBlocks.length > 0 && !hasText}
                     readOnly
                   />
                 )}

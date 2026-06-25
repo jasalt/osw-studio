@@ -58,12 +58,14 @@ export async function GET(
     const projects = adapter.listProjectSummaries();
     const skills = adapter.listSkillSummaries();
     const templates = adapter.listTemplateSummaries();
+    const modelTemplates = adapter.listModelTemplateSummaries();
     const deploymentCount = adapter.countDeployments();
 
     const allTimestamps = [
       ...projects.map(p => p.updatedAt),
       ...skills.map(s => s.updatedAt),
       ...templates.map(t => t.updatedAt),
+      ...modelTemplates.map(t => t.updatedAt),
     ];
 
     let lastUpdated: string | null = null;
@@ -92,10 +94,12 @@ export async function GET(
       projects,
       skills,
       templates,
+      modelTemplates,
       summary: {
         projectCount: projects.length,
         skillCount: skills.length,
         templateCount: templates.length,
+        modelTemplateCount: modelTemplates.length,
         deploymentCount,
         lastUpdated,
         isUninitialized: projects.length === 0,

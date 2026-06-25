@@ -6,7 +6,8 @@ import { DetailedSyncStatus, SyncableItem } from '@/lib/vfs/sync-types';
 import { ProjectsTab } from './projects-tab';
 import { SkillsTab } from './skills-tab';
 import { TemplatesTab } from './templates-tab';
-import { FolderGit2, BookOpen, Layout } from 'lucide-react';
+import { ModelTemplatesTab } from './model-templates-tab';
+import { FolderGit2, BookOpen, Layout, Cpu } from 'lucide-react';
 
 export interface BulkActionState {
   selectableCount: number;
@@ -26,7 +27,7 @@ interface SyncTabsProps {
   onBulkActionStateChange?: (state: BulkActionState) => void;
 }
 
-type TabType = 'projects' | 'skills' | 'templates';
+type TabType = 'projects' | 'skills' | 'templates' | 'modelTemplates';
 
 export function SyncTabs({
   syncStatus,
@@ -40,11 +41,13 @@ export function SyncTabs({
   const [projectSelectedIds, setProjectSelectedIds] = useState<Set<string>>(new Set());
   const [skillSelectedIds, setSkillSelectedIds] = useState<Set<string>>(new Set());
   const [templateSelectedIds, setTemplateSelectedIds] = useState<Set<string>>(new Set());
+  const [modelTemplateSelectedIds, setModelTemplateSelectedIds] = useState<Set<string>>(new Set());
 
   // Syncing state per tab
   const [projectSyncingIds, setProjectSyncingIds] = useState<Set<string>>(new Set());
   const [skillSyncingIds, setSkillSyncingIds] = useState<Set<string>>(new Set());
   const [templateSyncingIds, setTemplateSyncingIds] = useState<Set<string>>(new Set());
+  const [modelTemplateSyncingIds, setModelTemplateSyncingIds] = useState<Set<string>>(new Set());
 
   // Push/pull handler refs (set by child tabs) - using refs to avoid re-render loops
   const pushSelectedHandlerRef = useRef<(() => Promise<void>) | null>(null);
@@ -53,6 +56,7 @@ export function SyncTabs({
   const projectCount = syncStatus.projects.items.length;
   const skillCount = syncStatus.skills.items.length;
   const templateCount = syncStatus.templates.items.length;
+  const modelTemplateCount = syncStatus.modelTemplates.items.length;
 
   // Helper functions for calculating item states
   const getSelectableItems = useCallback((items: SyncableItem[]) =>
@@ -88,8 +92,15 @@ export function SyncTabs({
           setSelectedIds: setTemplateSelectedIds,
           syncingIds: templateSyncingIds,
         };
+      case 'modelTemplates':
+        return {
+          items: syncStatus.modelTemplates.items,
+          selectedIds: modelTemplateSelectedIds,
+          setSelectedIds: setModelTemplateSelectedIds,
+          syncingIds: modelTemplateSyncingIds,
+        };
     }
-  }, [activeTab, syncStatus, projectSelectedIds, skillSelectedIds, templateSelectedIds, projectSyncingIds, skillSyncingIds, templateSyncingIds]);
+  }, [activeTab, syncStatus, projectSelectedIds, skillSelectedIds, templateSelectedIds, modelTemplateSelectedIds, projectSyncingIds, skillSyncingIds, templateSyncingIds, modelTemplateSyncingIds]);
 
   const handleSelectAll = useCallback(() => {
     const { items, selectedIds, setSelectedIds } = getCurrentTabData();
@@ -145,7 +156,7 @@ export function SyncTabs({
 
   return (
     <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabType)}>
-      <TabsList className="grid w-full grid-cols-3">
+      <TabsList className="grid w-full grid-cols-4">
         <TabsTrigger value="projects" className="flex items-center gap-1.5">
           <FolderGit2 className="h-3.5 w-3.5" />
           <span>Projects</span>
@@ -160,6 +171,11 @@ export function SyncTabs({
           <Layout className="h-3.5 w-3.5" />
           <span>Templates</span>
           <span className="text-xs text-muted-foreground">({templateCount})</span>
+        </TabsTrigger>
+        <TabsTrigger value="modelTemplates" className="flex items-center gap-1.5">
+          <Cpu className="h-3.5 w-3.5" />
+          <span>Models</span>
+          <span className="text-xs text-muted-foreground">({modelTemplateCount})</span>
         </TabsTrigger>
       </TabsList>
 
@@ -198,6 +214,20 @@ export function SyncTabs({
           syncingIds={templateSyncingIds}
           onSelectedIdsChange={setTemplateSelectedIds}
           onSyncingIdsChange={setTemplateSyncingIds}
+          onRefresh={onRefresh}
+          onSyncComplete={onSyncComplete}
+          onRegisterPushSelected={registerPushSelected}
+          onRegisterPullSelected={registerPullSelected}
+        />
+      </TabsContent>
+
+      <TabsContent value="modelTemplates" className="mt-4">
+        <ModelTemplatesTab
+          items={syncStatus.modelTemplates.items}
+          selectedIds={modelTemplateSelectedIds}
+          syncingIds={modelTemplateSyncingIds}
+          onSelectedIdsChange={setModelTemplateSelectedIds}
+          onSyncingIdsChange={setModelTemplateSyncingIds}
           onRefresh={onRefresh}
           onSyncComplete={onSyncComplete}
           onRegisterPushSelected={registerPushSelected}

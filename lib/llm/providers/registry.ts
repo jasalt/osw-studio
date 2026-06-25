@@ -1,4 +1,5 @@
 import { ProviderId, ProviderConfig, ProviderModel, InputModality } from './types';
+export type { OutputModality } from './types';
 
 const codexModels: ProviderModel[] = [
   {
@@ -383,6 +384,16 @@ export const providers: Record<ProviderId, ProviderConfig> = {
 
 export function getProvider(id: ProviderId): ProviderConfig {
   return providers[id];
+}
+
+export type ProviderArchetype = 'aggregator' | 'cloud' | 'subscription' | 'local' | 'custom';
+
+export function getProviderArchetype(id: ProviderId): ProviderArchetype {
+  if (id === 'openrouter') return 'aggregator';
+  const cfg = getProvider(id);
+  if (cfg?.isLocal) return 'local';
+  if (id === 'openai-codex') return 'subscription';
+  return 'cloud';
 }
 
 export function getAllProviders(): ProviderConfig[] {

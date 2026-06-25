@@ -19,6 +19,7 @@ import type { Database } from 'better-sqlite3';
 import { StorageAdapter } from './types';
 import { Project, VirtualFile, FileTreeNode, CustomTemplate, Deployment, EdgeFunction, ServerFunction, Secret, ScheduledFunction } from '../types';
 import { Skill } from '../skills/types';
+import type { ModelTemplate, ModelAssignment } from '@/lib/llm/models/assignment';
 import {
   getCoreDatabase,
   getDeploymentDatabase,
@@ -332,6 +333,21 @@ const MIGRATIONS: Migration[] = [
         )
       `);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_project_scheduled_functions_project_id ON project_scheduled_functions(project_id)`);
+    }
+  },
+  {
+    id: 'add_model_templates_v6',
+    up: (db) => {
+      // User model templates synced from the client (assignment stored as JSON).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS model_templates (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          assignment TEXT NOT NULL DEFAULT '{}',
+          updated_at TEXT NOT NULL
+        )
+      `);
     }
   }
 ];
@@ -1300,6 +1316,71 @@ export class SQLiteAdapter implements StorageAdapter {
       isBuiltIn: Boolean(row.is_built_in),
       createdAt: parseDate(row.created_at as string),
       updatedAt: parseDate(row.updated_at as string),
+    };
+  }
+
+  // ============================================
+  // Model templates (user model setups; stored in core database)
+  // ============================================
+
+  async createModelTemplate(t: ModelTemplate): Promise<void> {
+    const db = this.getDB();
+    db.prepare(`
+      INSERT INTO model_templates (id, name, description, assignment, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      t.id,
+      t.name,
+      t.description ?? null,
+      JSON.stringify(t.assignment ?? {}),
+      toISOStringRequired(t.updatedAt ?? new Date()),
+    );
+  }
+
+  async updateModelTemplate(t: ModelTemplate): Promise<void> {
+    const db = this.getDB();
+    db.prepare(`
+      UPDATE model_templates SET name = ?, description = ?, assignment = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      t.name,
+      t.description ?? null,
+      JSON.stringify(t.assignment ?? {}),
+      toISOStringRequired(t.updatedAt ?? new Date()),
+      t.id,
+    );
+  }
+
+  async getModelTemplate(id: string): Promise<ModelTemplate | null> {
+    const db = this.getDB();
+    const row = db.prepare('SELECT * FROM model_templates WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToModelTemplate(row) : null;
+  }
+
+  async getAllModelTemplates(): Promise<ModelTemplate[]> {
+    const db = this.getDB();
+    const rows = db.prepare('SELECT * FROM model_templates ORDER BY name').all() as Record<string, unknown>[];
+    return rows.map((row) => this.rowToModelTemplate(row));
+  }
+
+  async deleteModelTemplate(id: string): Promise<void> {
+    const db = this.getDB();
+    db.prepare('DELETE FROM model_templates WHERE id = ?').run(id);
+  }
+
+  listModelTemplateSummaries(): Array<{ id: string; name: string; updatedAt: string }> {
+    const db = this.getDB();
+    return db.prepare('SELECT id, name, updated_at as updatedAt FROM model_templates').all() as Array<{ id: string; name: string; updatedAt: string }>;
+  }
+
+  private rowToModelTemplate(row: Record<string, unknown>): ModelTemplate {
+    return {
+      id: row.id as string,
+      name: row.name as string,
+      description: (row.description as string) ?? undefined,
+      assignment: parseJSON(row.assignment as string, {} as ModelAssignment),
+      updatedAt: parseDate(row.updated_at as string),
+      builtin: false,
     };
   }
 

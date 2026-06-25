@@ -2,6 +2,9 @@
 import { ProviderId, ProviderModel, CodexAuthData, HFAuthData } from '@/lib/llm/providers/types';
 import { getDefaultModel } from '@/lib/llm/providers/registry';
 import { UsageInfo } from '@/lib/llm/types';
+import type { ModelTemplate } from '@/lib/llm/models/assignment';
+import { BUILT_IN_MODEL_TEMPLATES, isBuiltInTemplateId } from '@/lib/llm/models/registry';
+import { logger } from '@/lib/utils';
 
 export interface SessionCost {
   sessionId: string;
@@ -65,6 +68,29 @@ export interface AppSettings {
   telemetryOptIn?: boolean;
   /** When true, emit llm_request and stream_raw_chunk debug events (ephemeral, not persisted). */
   debugStreamEnabled?: boolean;
+  modelTemplates?: Record<string, ModelTemplate>;
+  defaultTemplateId?: string;
+}
+
+/**
+ * Rehydrate a stored model template: dates round-trip through JSON as strings,
+ * so convert them back to Date, and force builtin:false (only registry ids are
+ * read-only built-ins).
+ */
+function hydrateDate(value: Date | string | undefined): Date | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? undefined : d;
+}
+
+function hydrateModelTemplate(t: ModelTemplate): ModelTemplate {
+  return {
+    ...t,
+    builtin: false,
+    updatedAt: hydrateDate(t.updatedAt),
+    lastSyncedAt: hydrateDate(t.lastSyncedAt),
+    serverUpdatedAt: hydrateDate(t.serverUpdatedAt),
+  };
 }
 
 class ConfigManager {
@@ -501,6 +527,91 @@ class ConfigManager {
       }));
     }
   }
+
+  migrateModels(): void {
+    if (this.getSettings().modelTemplates) return; // idempotent
+    const provider = this.getSelectedProvider();
+    let model = this.getProviderModel(provider) || this.getDefaultModel();
+    if (typeof window !== 'undefined') {
+      if (localStorage.getItem(`osw-studio-use-separate-chat-model-${provider}`) === 'true') {
+        model = localStorage.getItem(`osw-studio-code-model-${provider}`) || model;
+      }
+      const stale: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && /^osw-studio-(use-separate-chat-model|chat-model|code-model)-/.test(k)) stale.push(k);
+      }
+      stale.forEach((k) => localStorage.removeItem(k));
+    }
+    const def: ModelTemplate = {
+      id: 'default', name: 'Default', builtin: false,
+      assignment: {
+        agent: { provider, model },
+        imageGen: null, voiceInput: null,
+        autoCompact: this.isCompactionEnabled(provider),
+        compactLimit: this.getCompactionLimit(provider) ?? null,
+      },
+    };
+    this.saveModelTemplate(def);
+    this.setDefaultTemplateId('default');
+  }
+
+  // Model template management.
+  // Built-in templates live in code (registry) and are merged in at read time —
+  // never persisted. Built-in ids win over stored ones and cannot be saved or
+  // deleted; "Save as" clones one into an editable (non-builtin) template.
+  getModelTemplates(): Record<string, ModelTemplate> {
+    const merged: Record<string, ModelTemplate> = {};
+    const stored = this.getSettings().modelTemplates || {};
+    for (const [id, t] of Object.entries(stored)) {
+      // Only registry templates are read-only built-ins. Anything in storage is a
+      // user template (incl. the migrated "Default") — force builtin:false so a
+      // stale flag from an older build doesn't make it appear uneditable.
+      if (!isBuiltInTemplateId(id)) merged[id] = hydrateModelTemplate(t);
+    }
+    for (const t of BUILT_IN_MODEL_TEMPLATES) merged[t.id] = t;
+    return merged;
+  }
+  getModelTemplate(id: string): ModelTemplate | null { return this.getModelTemplates()[id] || null; }
+  saveModelTemplate(t: ModelTemplate): void {
+    if (isBuiltInTemplateId(t.id)) return; // built-ins are read-only
+    const stored = this.getSettings().modelTemplates || {};
+    // A content edit — stamp updatedAt so sync can detect local changes.
+    const saved: ModelTemplate = { ...t, builtin: false, updatedAt: new Date() };
+    this.setSetting('modelTemplates', { ...stored, [t.id]: saved });
+    if (typeof window !== 'undefined') {
+      import('@/lib/vfs/auto-sync').then(({ autoSyncModelTemplate }) => autoSyncModelTemplate(saved)).catch((e) => logger.debug('[ConfigManager] model-template auto-sync trigger failed', e));
+    }
+  }
+  deleteModelTemplate(id: string): void {
+    if (isBuiltInTemplateId(id)) return; // built-ins cannot be deleted
+    const all = { ...(this.getSettings().modelTemplates || {}) };
+    delete all[id];
+    this.setSetting('modelTemplates', all);
+    if (typeof window !== 'undefined') {
+      import('@/lib/vfs/auto-sync').then(({ autoDeleteModelTemplate }) => autoDeleteModelTemplate(id)).catch((e) => logger.debug('[ConfigManager] model-template auto-delete trigger failed', e));
+    }
+  }
+  /** Store a template pulled from the server, preserving its server timestamp and marking it synced. */
+  importModelTemplateFromServer(t: ModelTemplate): void {
+    if (isBuiltInTemplateId(t.id)) return;
+    const stored = this.getSettings().modelTemplates || {};
+    const now = new Date();
+    const serverUpdated = t.updatedAt ? new Date(t.updatedAt) : now;
+    this.setSetting('modelTemplates', {
+      ...stored,
+      [t.id]: { ...t, builtin: false, updatedAt: serverUpdated, lastSyncedAt: now, serverUpdatedAt: serverUpdated },
+    });
+  }
+  /** Record sync metadata after a push, without bumping updatedAt (not a content edit). */
+  updateModelTemplateSyncMetadata(id: string, lastSyncedAt: Date, serverUpdatedAt: Date): void {
+    const stored = this.getSettings().modelTemplates || {};
+    const t = stored[id];
+    if (!t) return;
+    this.setSetting('modelTemplates', { ...stored, [id]: { ...t, lastSyncedAt, serverUpdatedAt } });
+  }
+  getDefaultTemplateId(): string { return this.getSettings().defaultTemplateId || 'default'; }
+  setDefaultTemplateId(id: string): void { this.setSetting('defaultTemplateId', id); }
 }
 
 export const configManager = new ConfigManager();

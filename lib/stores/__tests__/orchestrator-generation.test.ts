@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { createTestStore, setupOrchestratorMocks } from './test-helpers';
+import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
 import type { GenerationTask } from '../types';
 
 const mockExecute = vi.fn().mockResolvedValue({
@@ -73,8 +74,20 @@ describe('orchestrator slice — generation lifecycle', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
   });
 
+  it('startGeneration cleans up the task (no stuck "generating") if assignment resolution throws', async () => {
+    vi.mocked(getProjectAssignment).mockRejectedValueOnce(new Error('no model template available'));
+    await store.getState().startGeneration('build a todo app');
+    // The pre-created task must be removed and generating reset — not orphaned.
+    expect(store.getState().generating).toBe(false);
+    expect(store.getState().generationTasks.size).toBe(0);
+    expect(mockExecute).not.toHaveBeenCalled(); // never instantiated the orchestrator
+  });
+
   it('stopGeneration calls stop on orchestrator and sets generating=false', async () => {
+    // startGeneration now awaits getProjectAssignment before instantiating the orchestrator,
+    // so we must flush the microtask queue before stopGeneration can reach the instance.
     const promise = store.getState().startGeneration('task');
+    await Promise.resolve(); // flush: assignment resolves + orchestrator is stored
     store.getState().stopGeneration();
     expect(mockStop).toHaveBeenCalled();
     // After stop, the task transitions to result: 'failed', so generating becomes false
@@ -83,7 +96,9 @@ describe('orchestrator slice — generation lifecycle', () => {
   });
 
   it('continueGeneration calls continue on orchestrator', async () => {
+    // Same microtask-flush requirement as stopGeneration above.
     const promise = store.getState().startGeneration('task');
+    await Promise.resolve(); // flush: assignment resolves + orchestrator is stored
     store.getState().continueGeneration();
     expect(mockContinue).toHaveBeenCalled();
     await promise;

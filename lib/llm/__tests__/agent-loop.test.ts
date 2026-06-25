@@ -182,6 +182,64 @@ describe('AgentLoop', () => {
     expect(result.summary).toContain('nudge');
   });
 
+  it('nudges toward bash and retries when the model calls a non-bash tool (stream early-aborted)', async () => {
+    const statusTool: ToolCall = {
+      id: 'tc1',
+      type: 'function',
+      function: { name: 'bash', arguments: '{"command":"status --task \\"x\\" --done \\"y\\" --remaining \\"none\\" --complete"}' },
+    };
+    // 1) stream aborted on a 'cat' tool name, 2) retry uses bash correctly and completes
+    const provider = createMockProvider([
+      { invalidToolName: 'cat' },
+      { content: '', toolCalls: [statusTool] },
+      { content: 'done' },
+    ]);
+    const results = new Map([['tc1', {
+      tool_call_id: 'tc1',
+      content: 'Status recorded.',
+      success: true,
+      signals: { statusComplete: true, statusResult: { task: 'x', done: 'y', remaining: 'none', complete: true, hasExplicitFlag: true } },
+    } as ToolResult]]);
+    const context = createMockContext();
+    const progress = createMockProgress();
+
+    const loop = new AgentLoop({
+      config: defaultConfig(),
+      provider,
+      executor: createMockExecutor(results),
+      context,
+      progress,
+      cost: createMockCost(),
+    });
+
+    const result = await loop.run('do it');
+
+    expect(progress.onEvent).toHaveBeenCalledWith('malformed_tool_call', expect.objectContaining({ invalidToolName: 'cat' }));
+    const nudges = (context.addUserMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+    expect(nudges.some((m) => m.includes('cat') && m.includes('bash'))).toBe(true);
+    expect(result.success).toBe(true);
+  });
+
+  it('stops (does not loop forever) when the model keeps calling a non-bash tool', async () => {
+    const provider = createMockProvider(Array.from({ length: 8 }, () => ({ invalidToolName: 'cat' } as ParsedResponse)));
+    const progress = createMockProgress();
+
+    const loop = new AgentLoop({
+      config: defaultConfig({ maxNudges: 2 }),
+      provider,
+      executor: createMockExecutor(),
+      context: createMockContext(),
+      progress,
+      cost: createMockCost(),
+    });
+
+    const result = await loop.run('do it');
+    expect(result.success).toBe(false);
+    // The wrong-tool nudge fired (capped at MAX_MALFORMED_RETRIES) before falling through.
+    const malformed = (progress.onEvent as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === 'malformed_tool_call');
+    expect(malformed.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('interview agent pauses (awaiting_user) on a prose question instead of nudging', async () => {
     // A prose question is content with no tool call and no status — the
     // interview must hand control back to the user, not nudge toward completion.

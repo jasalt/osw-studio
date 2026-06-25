@@ -368,4 +368,31 @@ describe('MultiAgentOrchestrator result propagation and lifecycle', () => {
     expect(fresh.systemPrompt).toBe('SYS PROMPT');
     expect(fresh.projectContext).toBe('PROJECT CTX');
   });
+
+  it('resolves the agent call from the assignment, not the global provider', () => {
+    const o = new MultiAgentOrchestrator('p1', 'orchestrator', () => {}, {
+      assignment: { agent: { provider: 'openai', model: 'gpt-x' }, imageGen: null, voiceInput: null, autoCompact: false, compactLimit: null },
+    } as any);
+    // @ts-expect-error private — exercised via the seam other tests in this file use
+    expect(o.getProviderConfig()).toMatchObject({ provider: 'openai', model: 'gpt-x' });
+  });
+
+  it('resolveCompactionLimit prefers assignment.compactLimit over per-provider config', () => {
+    const o = new MultiAgentOrchestrator('p1', 'orchestrator', () => {}, {
+      assignment: { agent: { provider: 'openai', model: 'gpt-x' }, imageGen: null, voiceInput: null, autoCompact: true, compactLimit: 1234 },
+    } as any);
+    // @ts-expect-error private
+    expect(o.resolveCompactionLimit()).toBe(1234);
+  });
+
+  it('sets compactionConfig.threshold to Infinity when autoCompact is false', async () => {
+    const o = new MultiAgentOrchestrator('p1', 'orchestrator', () => {}, {
+      assignment: { agent: { provider: 'openai', model: 'gpt-x' }, imageGen: null, voiceInput: null, autoCompact: false, compactLimit: null },
+    } as any);
+    await o.execute('build');
+
+    expect(h.coordinatorConfigs.length).toBe(1);
+    const cfg = h.coordinatorConfigs[0];
+    expect(cfg.compactionConfig.threshold).toBe(Infinity);
+  });
 });

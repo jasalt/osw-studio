@@ -57,7 +57,17 @@ export interface ServerContextMetadata {
   scheduledFunctionCount: number;
 }
 
-export async function buildSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true): Promise<string> {
+/** Docs for the optional `generate-image` command (only when an image model is set). */
+function imageGenCommandDoc(modelSupportsTools: boolean): string {
+  const example = modelSupportsTools
+    ? `bash({ command: "generate-image 'sunset over mountains'" })`
+    : "```bash\ngenerate-image 'sunset over mountains'\n```";
+  return `Image command (generate an image with the project's image model):
+  ${example}
+Optional flags: --out <path> (default saves under /.generated/, which is excluded from the published build), --aspect <1:1|16:9|4:3|2:3>, --size <0.5K|1K|2K|4K>. Reports the saved path.`;
+}
+
+export async function buildSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true, imageGenAvailable = false): Promise<string> {
   if (agentType === 'setup') return SETUP_SYSTEM_PROMPT;
   if (agentType === 'interview') return INTERVIEW_SYSTEM_PROMPT;
   if (agentType === 'explore') return buildExplorePrompt(serverContext, projectId);
@@ -66,7 +76,7 @@ export async function buildSystemPrompt(chatMode?: boolean, serverContext?: Serv
   if (chatMode) {
     return buildChatModePrompt(serverContext, projectId);
   }
-  return await buildCodeModePrompt(serverContext, projectId, modelSupportsTools);
+  return await buildCodeModePrompt(serverContext, projectId, modelSupportsTools, imageGenAvailable);
 }
 
 /**
@@ -357,7 +367,7 @@ Focus on exploration, analysis, and planning.`;
   return prompt;
 }
 
-async function buildCodeModePrompt(serverContext?: ServerContextMetadata | null, projectId?: string, modelSupportsTools = true): Promise<string> {
+async function buildCodeModePrompt(serverContext?: ServerContextMetadata | null, projectId?: string, modelSupportsTools = true, imageGenAvailable = false): Promise<string> {
   let prompt = buildSharedPreamble(false, !!serverContext, modelSupportsTools);
 
   if (modelSupportsTools) {
@@ -386,7 +396,7 @@ Runtime command (change project runtime):
 Valid runtimes: static, handlebars, react, preact, svelte, vue, python, lua.
 Changes the project runtime and updates .PROMPT.md if it hasn't been customized.
 
-Status command (always run before finishing):
+${imageGenAvailable ? imageGenCommandDoc(modelSupportsTools) + '\n\n' : ''}Status command (always run before finishing):
   ${modelSupportsTools ? 'bash({ command: "status --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete" })' : '```bash\nstatus --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete\n```'}
 End with --complete when done, or --incomplete if more work remains.
 

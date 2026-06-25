@@ -2,7 +2,7 @@
 
 import React, { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { ModelSettingsPanel } from '@/components/settings/model-settings';
+import { ProvidersModelsView } from '@/components/providers-models';
 import { SettingsPanel } from '@/components/settings';
 
 interface SettingsViewProps {
@@ -17,8 +17,8 @@ function SettingsViewInner({ tab }: SettingsViewProps) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-auto p-6">
-        {activeTab === 'application' ? <SettingsPanel /> : <ModelSettingsPanel />}
+      <div className={`flex-1 overflow-auto${activeTab === 'application' ? ' p-6' : ''}`}>
+        {activeTab === 'application' ? <SettingsPanel /> : <ProvidersModelsView />}
       </div>
     </div>
   );

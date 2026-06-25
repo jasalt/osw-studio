@@ -571,3 +571,32 @@ export async function autoDeleteTemplate(templateId: string): Promise<void> {
     logger.error(`[AutoSync] Failed to delete template ${templateId} from server:`, error);
   }
 }
+
+/**
+ * Auto-sync a model template to the server (non-blocking)
+ */
+export async function autoSyncModelTemplate(template: import('@/lib/llm/models/assignment').ModelTemplate): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  if (template.builtin) return;
+  try {
+    const { getSyncManager } = await import('./sync-manager');
+    const syncManager = getSyncManager();
+    await syncManager.pushModelTemplate(template);
+    logger.debug(`[AutoSync] Model template ${template.id} synced`);
+  } catch (error) {
+    logger.error(`[AutoSync] Failed to sync model template ${template.id}:`, error);
+  }
+}
+
+/**
+ * Auto-delete a model template from the server (non-blocking)
+ */
+export async function autoDeleteModelTemplate(templateId: string): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  try {
+    await apiFetch(getAutoSyncApiUrl(`/sync/model-templates/${templateId}`), { method: 'DELETE' });
+    logger.debug(`[AutoSync] Model template ${templateId} deleted from server`);
+  } catch (error) {
+    logger.error(`[AutoSync] Failed to delete model template ${templateId} from server:`, error);
+  }
+}

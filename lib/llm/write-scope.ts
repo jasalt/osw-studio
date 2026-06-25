@@ -16,6 +16,7 @@ function hasRedirect(cmd: string[]): boolean {
 function isWriteCommand(cmd: string[]): boolean {
   const c = cmd[0];
   if (WRITE_COMMANDS.has(c)) return true;
+  if (c === 'generate-image') return true;
   if (c === 'sed' && cmd.includes('-i')) return true;
   if (c === 'curl' && (cmd.includes('-o') || cmd.includes('--output'))) return true;
   if (hasRedirect(cmd)) return true;
@@ -53,6 +54,16 @@ export function writeTargets(cmd: string[]): string[] | null {
     const i = cmd.findIndex(a => a === '-o' || a === '--output');
     const target = cmd[i + 1];
     return target ? [toAbsolute(target)] : null;
+  }
+
+  if (c === 'generate-image') {
+    // Writes the image to --out/-o when given, otherwise to /.generated/.
+    const i = cmd.findIndex(a => a === '--out' || a === '-o');
+    if (i >= 0) {
+      const target = cmd[i + 1];
+      return target ? [toAbsolute(target)] : null;
+    }
+    return ['/.generated/'];
   }
 
   if (c === 'sed') {

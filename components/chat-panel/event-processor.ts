@@ -25,6 +25,7 @@ export interface TurnItem {
   complete?: boolean;
   focusContext?: { domPath: string; snippet: string };
   semanticBlocks?: Array<{ name: string; domPath: string; position: string; description: string }>;
+  attachedFiles?: Array<{ name: string }>;
 }
 
 export interface Turn {
@@ -422,6 +423,10 @@ export class EventProcessor {
           if (event.version) this.lastEventVersions.set(event.id, event.version);
           const message = event.data?.message;
           if (message?.role === 'user') {
+            // Harness-injected reminders/nudges/retries are wrapped in
+            // <automated_reminder>; they steer the model but are not user input,
+            // so never render them as user messages.
+            if (message.content?.includes('<automated_reminder>')) break;
             if (message.content?.includes('Before finishing, run the status command')) break;
           // The interview gate's incomplete feedback is surfaced via the
           // interview_gate item — don't also render it as a user message.
@@ -451,7 +456,10 @@ export class EventProcessor {
                 data: projectContext,
               });
             }
-            const displayContent = message.ui_metadata?.displayContent || message.content || '';
+            // Use ?? so an intentionally-empty displayContent (e.g. an audio-only
+            // message) stays empty instead of falling back to the raw content,
+            // which carries the project-context prefix.
+            const displayContent = message.ui_metadata?.displayContent ?? message.content ?? '';
             state.currentTurn.items.push({
               id: `item-${state.itemIdCounter++}`,
               type: isSyntheticError ? 'synthetic_error' : 'user',
@@ -459,6 +467,7 @@ export class EventProcessor {
               data: displayContent,
               focusContext: message.ui_metadata?.focusContext,
               semanticBlocks: message.ui_metadata?.semanticBlocks,
+              attachedFiles: message.ui_metadata?.attachedFiles,
             });
           } else if (message?.role === 'assistant') {
             // Reconstruct reasoning and tool calls from buffered conversation_message

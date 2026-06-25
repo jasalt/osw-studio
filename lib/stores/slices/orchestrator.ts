@@ -1,7 +1,7 @@
 import { StateCreator } from 'zustand';
 import type { DebugEvent, GenerationTask } from '../types';
 import { MultiAgentOrchestrator } from '@/lib/llm/multi-agent-orchestrator';
-import type { PendingImage } from '@/lib/llm/multi-agent-orchestrator';
+import type { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-orchestrator';
 import { configManager } from '@/lib/config/storage';
 import { getProvider } from '@/lib/llm/providers/registry';
 import { toast } from 'sonner';
@@ -17,6 +17,7 @@ import { handleFilesChanged, cancelPendingFileSync } from '@/lib/server-generate
 import { handleBuildRequested } from '@/lib/server-generate/build-delegation-handler';
 import { playTaskCompleteSound, playTaskCompleteSoundSubtle } from '@/lib/utils/task-complete-sound';
 import { checkpointManager } from '@/lib/vfs/checkpoint';
+import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
 
 const MAX_DEBUG_EVENTS = 2000;
 let debugIdCounter = 0;
@@ -127,6 +128,8 @@ interface StartGenerationOptions {
   isTourLockingInput?: boolean;
   displayPrompt?: string;
   templateId?: string;
+  audio?: PendingAudio[];
+  files?: PendingFile[];
 }
 
 export interface OrchestratorSlice {
@@ -385,56 +388,22 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     drainRuntimeErrors();
 
     const trimmedPrompt = message.trim();
-    if (!trimmedPrompt && (!images || images.length === 0)) {
+    const hasAttachments = !!(images?.length || options?.audio?.length || options?.files?.length);
+    if (!trimmedPrompt && !hasAttachments) {
       toast.error('Please enter a prompt');
       return;
     }
 
-    const currentProvider = configManager.getSelectedProvider();
-    const providerConfig = getProvider(currentProvider);
-    const apiKey = configManager.getApiKey();
-
-    if (providerConfig.apiKeyRequired && !apiKey) {
-      toast.error(`Please set your ${providerConfig.name} API key in settings`);
-      return;
-    }
-
-    if (providerConfig.isLocal) {
-      const localModel = configManager.getProviderModel(currentProvider);
-      if (!localModel) {
-        toast.error(`No model selected for ${providerConfig.name}. Please select a model in settings.`);
-        return;
-      }
-    }
-
     const chatMode = options?.chatMode ?? false;
-    let modelToUse = configManager.getProviderModel(currentProvider) || configManager.getDefaultModel();
-    if (typeof window !== 'undefined') {
-      const useSeparateChatModel = localStorage.getItem(`osw-studio-use-separate-chat-model-${currentProvider}`) === 'true';
-      if (useSeparateChatModel) {
-        if (chatMode) {
-          const chatModel = localStorage.getItem(`osw-studio-chat-model-${currentProvider}`);
-          if (chatModel) modelToUse = chatModel;
-        } else {
-          const codeModel = localStorage.getItem(`osw-studio-code-model-${currentProvider}`);
-          if (codeModel) modelToUse = codeModel;
-        }
-      }
-    }
-
-    if (!modelToUse) {
-      toast.error(`No model selected for ${chatMode ? 'chat' : 'code'} mode. Please select a model in settings.`);
-      return;
-    }
-
     const projectName = get().projectName || 'Untitled';
 
-    // Create the GenerationTask entry
+    // Create the GenerationTask entry synchronously so `generating=true` is
+    // visible before any async work. Model is filled in after assignment resolves.
     const newTask: GenerationTask = {
       projectId,
       projectName,
       prompt: trimmedPrompt,
-      model: modelToUse,
+      model: '',
       startedAt: Date.now(),
       result: null,
       paused: false,
@@ -447,13 +416,74 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     newTasks.set(projectId, newTask);
     set({
       generationTasks: newTasks,
-      currentModel: modelToUse,
       ...deriveScalarFields(newTasks, get().projectId),
     });
 
     // Register persist target before any saves
     persistProjectIds.set(projectId, projectId);
 
+    // Resolve the assignment (async). The task is already in the map, so the
+    // synchronous isProjectGenerating() guard above prevents a double-start
+    // across this await. The generating=true event is emitted only after the
+    // guards pass (below): emitting it here would leave listeners stuck
+    // "generating" if a guard then fails (cleanup dispatches no false event).
+    let assignment;
+    try {
+      assignment = await getProjectAssignment(projectId);
+    } catch (err) {
+      // Resolution failed (e.g. no model template could be created) — clean up the
+      // pre-created task so it doesn't leave the project stuck "generating".
+      const cancelTasks = new Map(get().generationTasks);
+      cancelTasks.delete(projectId);
+      set({ generationTasks: cancelTasks, ...deriveScalarFields(cancelTasks, get().projectId) });
+      logger.error('[Orchestrator] Failed to resolve project model assignment:', err);
+      toast.error('Could not resolve this project\'s model configuration. Check your provider settings.');
+      return;
+    }
+    const currentProvider = assignment.agent.provider;
+    const providerConfig = getProvider(currentProvider);
+    const apiKey = configManager.getProviderApiKey(currentProvider);
+
+    if (providerConfig.apiKeyRequired && !apiKey && !providerConfig.usesOAuth) {
+      // Clean up the task we pre-created
+      const cancelTasks = new Map(get().generationTasks);
+      cancelTasks.delete(projectId);
+      set({ generationTasks: cancelTasks, ...deriveScalarFields(cancelTasks, get().projectId) });
+      toast.error(`Please set your ${providerConfig.name} API key in settings`);
+      return;
+    }
+
+    if (providerConfig.isLocal) {
+      if (!assignment.agent.model) {
+        const cancelTasks = new Map(get().generationTasks);
+        cancelTasks.delete(projectId);
+        set({ generationTasks: cancelTasks, ...deriveScalarFields(cancelTasks, get().projectId) });
+        toast.error(`No model selected for ${providerConfig.name}. Please select a model in settings.`);
+        return;
+      }
+    }
+
+    const modelToUse = assignment.agent.model;
+
+    if (!modelToUse) {
+      const cancelTasks = new Map(get().generationTasks);
+      cancelTasks.delete(projectId);
+      set({ generationTasks: cancelTasks, ...deriveScalarFields(cancelTasks, get().projectId) });
+      toast.error(`No model selected. Please select a model in settings.`);
+      return;
+    }
+
+    // Backfill model into the task now that we have it
+    const tasksWithModel = new Map(get().generationTasks);
+    const pendingTask = tasksWithModel.get(projectId);
+    if (pendingTask) {
+      tasksWithModel.set(projectId, { ...pendingTask, model: modelToUse });
+      set({ generationTasks: tasksWithModel, currentModel: modelToUse, ...deriveScalarFields(tasksWithModel, get().projectId) });
+    }
+
+    // Generation is committed (guards passed) — signal listeners (e.g. the
+    // console suppresses preview auto-run while generating). Failed guards above
+    // returned without emitting this, so listeners never get stuck "generating".
     if (typeof globalThis.dispatchEvent === 'function') {
       globalThis.dispatchEvent(new CustomEvent('generationStateChanged', { detail: { generating: true, projectId } }));
     }
@@ -502,7 +532,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           projectId,
           options?.mode === 'interview' ? 'interview' : 'orchestrator',
           progressCallback,
-          { chatMode, model: modelToUse, interviewTemplateId: options?.templateId },
+          { chatMode, model: modelToUse, assignment, interviewTemplateId: options?.templateId },
         );
 
         // Only bootstrap conversation if viewing this project.
@@ -543,6 +573,11 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       const imageData = images?.map(img => ({ data: img.data, mediaType: img.mediaType }));
       const executeOptions: Record<string, any> = {};
       if (imageData?.length) executeOptions.images = imageData;
+      if (options?.audio?.length) {
+        executeOptions.audio = options.audio.map(a => ({ data: a.data, format: a.format, transcript: a.transcript }));
+        executeOptions.voiceInput = assignment.voiceInput;
+      }
+      if (options?.files?.length) executeOptions.files = options.files.map(f => ({ name: f.name, content: f.content }));
 
       const result = await orchestrator.execute(
         trimmedPrompt,
@@ -984,6 +1019,8 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     const imageData = images?.map(img => ({ data: img.data, mediaType: img.mediaType }));
     const executeOptions: Record<string, any> = {};
     if (imageData?.length) executeOptions.images = imageData;
+    if (options?.audio?.length) executeOptions.audio = options.audio.map(a => ({ data: a.data, format: a.format }));
+    if (options?.files?.length) executeOptions.files = options.files.map(f => ({ name: f.name, content: f.content }));
     if (options?.focusContext) executeOptions.focusContext = { domPath: options.focusContext.domPath, snippet: options.focusContext.outerHTML };
     if (options?.placedBlocks?.length) executeOptions.semanticBlocks = options.placedBlocks.map((b: any) => ({ name: b.name, domPath: b.domPath, position: b.position, description: b.description }));
     if (options?.displayPrompt) executeOptions.displayPrompt = options.displayPrompt;

@@ -20,6 +20,8 @@ export type ProviderId =
 
 export type InputModality = 'text' | 'image' | 'audio' | 'file';
 
+export type OutputModality = 'text' | 'image' | 'audio';
+
 export interface ProviderModel {
   id: string;
   name: string;
@@ -30,6 +32,7 @@ export interface ProviderModel {
   supportsVision?: boolean;
   supportsReasoning?: boolean;
   inputModalities?: InputModality[];
+  outputModalities?: OutputModality[]; // default ['text'] when absent
   pricing?: {
     input: number;  // per 1M tokens
     output: number; // per 1M tokens

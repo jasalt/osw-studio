@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, X, Crosshair, LayoutGrid, Image as ImageIcon, Info } from 'lucide-react';
+import { ChevronDown, X, Crosshair, LayoutGrid, Image as ImageIcon, Info, FileText, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PlacedBlock } from '@/lib/semantic-blocks/types';
 import { getBlockById } from '@/lib/semantic-blocks/registry';
-import type { PendingImage } from '@/lib/llm/multi-agent-orchestrator';
+import type { PendingImage, PendingFile, PendingAudio } from '@/lib/llm/multi-agent-orchestrator';
 import type { ContentBlock } from '@/lib/llm/types';
 
 interface FocusContextData {
@@ -26,6 +26,12 @@ interface MessageContextProps {
   images?: PendingImage[];
   /** For readOnly mode: image content blocks from the stored message */
   imageBlocks?: ContentBlock[];
+  files?: PendingFile[];
+  /** For readOnly mode: attached file names from the stored message */
+  fileNames?: { name: string }[];
+  audioClips?: PendingAudio[];
+  /** For readOnly mode: input_audio content blocks from the stored message */
+  audioBlocks?: ContentBlock[];
   /** Non-dismissable system note (e.g. "user declined project creation") */
   systemNote?: string | null;
   onClearFocus?: () => void;
@@ -33,6 +39,12 @@ interface MessageContextProps {
   onClearBlocks?: () => void;
   onRemoveImage?: (imageId: string) => void;
   onClearImages?: () => void;
+  onRemoveFile?: (fileId: string) => void;
+  onClearFiles?: () => void;
+  onRemoveAudio?: (audioId: string) => void;
+  onClearAudio?: () => void;
+  /** readOnly: start the context expanded (e.g. an attachment-only message) */
+  defaultOpen?: boolean;
   readOnly?: boolean;
 }
 
@@ -128,21 +140,34 @@ export function MessageContext({
   semanticBlocks,
   images,
   imageBlocks,
+  files,
+  fileNames,
+  audioClips,
+  audioBlocks,
   systemNote,
   onClearFocus,
   onRemoveBlock,
   onClearBlocks,
   onRemoveImage,
   onClearImages,
+  onRemoveFile,
+  onClearFiles,
+  onRemoveAudio,
+  onClearAudio,
+  defaultOpen,
   readOnly = false,
 }: MessageContextProps) {
   const hasBlocks = semanticBlocks && semanticBlocks.length > 0;
   const hasImages = images && images.length > 0;
   const hasImageBlocks = imageBlocks && imageBlocks.some(b => b.type === 'image_url');
+  const hasFiles = files && files.length > 0;
+  const hasFileNames = fileNames && fileNames.length > 0;
+  const hasAudio = audioClips && audioClips.length > 0;
+  const hasAudioBlocks = audioBlocks && audioBlocks.some(b => b.type === 'input_audio');
   const hasFocus = !!focusContext;
   const hasNote = !!systemNote;
 
-  if (!hasFocus && !hasBlocks && !hasImages && !hasImageBlocks && !hasNote) return null;
+  if (!hasFocus && !hasBlocks && !hasImages && !hasImageBlocks && !hasFiles && !hasFileNames && !hasAudio && !hasAudioBlocks && !hasNote) return null;
 
   // Build summary for collapsed readOnly view
   const summaryParts: string[] = [];
@@ -154,13 +179,20 @@ export function MessageContext({
     const count = imageBlocks!.filter(b => b.type === 'image_url').length;
     summaryParts.push(`${count} image${count !== 1 ? 's' : ''}`);
   }
+  const fileCount = (files?.length ?? 0) || (fileNames?.length ?? 0);
+  if (fileCount > 0) summaryParts.push(`${fileCount} file${fileCount !== 1 ? 's' : ''}`);
+  const audioCount = (audioClips?.length ?? 0) || (audioBlocks?.filter(b => b.type === 'input_audio').length ?? 0);
+  if (audioCount > 0) summaryParts.push(`${audioCount} recording${audioCount !== 1 ? 's' : ''}`);
 
   if (readOnly) {
     return <ReadOnlyContext
       focusContext={focusContext}
       semanticBlocks={semanticBlocks}
       imageBlocks={imageBlocks}
+      fileNames={fileNames}
+      audioBlocks={audioBlocks}
       summary={summaryParts.join(', ')}
+      defaultOpen={defaultOpen}
     />;
   }
 
@@ -260,6 +292,70 @@ export function MessageContext({
           </div>
         </Section>
       )}
+      {hasFiles && (
+        <Section
+          icon={FileText}
+          label={`Files (${files!.length})`}
+          onClear={onClearFiles}
+          defaultOpen={true}
+          readOnly={readOnly}
+        >
+          <div className="flex flex-wrap gap-1.5">
+            {files!.map((f) => (
+              <div key={f.id} className="group flex items-center gap-1.5 px-2 py-1 rounded border border-border/50 bg-muted/40 text-[11px] max-w-full">
+                <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <span className="truncate text-foreground/90">{f.name}</span>
+                {!readOnly && onRemoveFile && (
+                  <button
+                    onClick={() => onRemoveFile(f.id)}
+                    className="shrink-0 text-muted-foreground/50 hover:text-foreground/70"
+                    title="Remove file"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+      {hasAudio && (
+        <Section
+          icon={Mic}
+          label={`Voice (${audioClips!.length})`}
+          onClear={onClearAudio}
+          defaultOpen={true}
+          readOnly={readOnly}
+        >
+          <div className="flex flex-col gap-1.5">
+            {audioClips!.map((clip) => (
+              <div key={clip.id} className="group flex items-center gap-2">
+                {clip.data ? (
+                  <audio
+                    controls
+                    src={`data:audio/${clip.format};base64,${clip.data}`}
+                    className="h-8 flex-1 min-w-0"
+                  />
+                ) : (
+                  <span className="flex-1 min-w-0 flex items-center gap-1.5 text-[11px] text-foreground/80">
+                    <Mic className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{clip.transcript || 'Voice note'}</span>
+                  </span>
+                )}
+                {!readOnly && onRemoveAudio && (
+                  <button
+                    onClick={() => onRemoveAudio(clip.id)}
+                    className="shrink-0 text-muted-foreground/50 hover:text-foreground/70"
+                    title="Remove recording"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
@@ -269,24 +365,33 @@ function ReadOnlyContext({
   focusContext,
   semanticBlocks,
   imageBlocks,
+  fileNames,
+  audioBlocks,
   summary,
+  defaultOpen,
 }: {
   focusContext?: FocusContextData | null;
   semanticBlocks?: (PlacedBlock[] | SemanticBlockData[]);
   imageBlocks?: ContentBlock[];
+  fileNames?: { name: string }[];
+  audioBlocks?: ContentBlock[];
   summary: string;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen ?? false);
   const hasBlocks = semanticBlocks && semanticBlocks.length > 0;
   const hasFocus = !!focusContext;
   const actualImageBlocks = imageBlocks?.filter(b => b.type === 'image_url') || [];
   const hasImages = actualImageBlocks.length > 0;
+  const hasFiles = fileNames && fileNames.length > 0;
+  const actualAudioBlocks = audioBlocks?.filter(b => b.type === 'input_audio') || [];
+  const hasAudio = actualAudioBlocks.length > 0;
 
   return (
     <div className="mt-2">
       <button
         type="button"
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors"
+        className="flex items-center gap-1.5 text-[11px] text-primary hover:text-primary/80 transition-colors"
         onClick={() => setOpen(prev => !prev)}
       >
         <ChevronDown className={cn("h-2.5 w-2.5 flex-shrink-0 transition-transform", !open && "-rotate-90")} />
@@ -342,6 +447,42 @@ function ReadOnlyContext({
                       src={block.image_url.url}
                       alt="Attached"
                       className="h-10 w-auto rounded border border-border/50 object-cover"
+                    />
+                  )
+                ))}
+              </div>
+            </div>
+          )}
+          {hasFiles && (
+            <div className="px-2.5 py-2 border-t border-border/30">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <FileText className="h-2.5 w-2.5 text-primary/60" />
+                <span className="font-medium text-foreground/80">Files ({fileNames!.length})</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {fileNames!.map((f, i) => (
+                  <span key={`file-${i}`} className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/50 bg-muted/40 text-foreground/80">
+                    <FileText className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate max-w-[160px]">{f.name}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {hasAudio && (
+            <div className="px-2.5 py-2 border-t border-border/30">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Mic className="h-2.5 w-2.5 text-primary/60" />
+                <span className="font-medium text-foreground/80">Voice ({actualAudioBlocks.length})</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {actualAudioBlocks.map((block, i) => (
+                  block.type === 'input_audio' && (
+                    <audio
+                      key={`aud-${i}`}
+                      controls
+                      src={`data:audio/${block.input_audio.format};base64,${block.input_audio.data}`}
+                      className="h-8 w-full max-w-[280px]"
                     />
                   )
                 ))}

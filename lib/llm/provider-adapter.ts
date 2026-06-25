@@ -149,7 +149,12 @@ export class OswsProviderAdapter implements ProviderAdapter {
       throw new PausableApiError(errorMessage, status, errorType, errorCategory, provider, model);
     }
 
-    const result = await this.parseAndTrack(response, provider, model, silent);
+    // Only 'bash' is ever advertised, but derive from the tools we actually sent
+    // so the parser can abort early if the model calls an unexpected tool name.
+    const allowedToolNames = modelSupportsTools && params.tools?.length
+      ? new Set(params.tools.map(t => t.name))
+      : undefined;
+    const result = await this.parseAndTrack(response, provider, model, silent, allowedToolNames);
 
     // Midstream error: provider sent error in SSE stream (HTTP 200 but upstream rejected)
     if (result.midstreamError && (!result.toolCalls || result.toolCalls.length === 0) && !result.content) {
@@ -168,6 +173,7 @@ export class OswsProviderAdapter implements ProviderAdapter {
       toolCalls: result.toolCalls,
       usage: result.usage,
       reasoningDetails: result.reasoningDetails,
+      invalidToolName: result.invalidToolName,
     };
   }
 
@@ -269,11 +275,13 @@ export class OswsProviderAdapter implements ProviderAdapter {
     provider: string,
     model: string,
     silent = false,
+    allowedToolNames?: ReadonlySet<string>,
   ): Promise<StreamResponse> {
     const result = await parseStreamingResponse(response, {
       provider,
       model,
       debugStream: !silent && this.config.getDebugStreamEnabled(),
+      allowedToolNames,
       onProgress: silent ? undefined : (event: string, data?: Record<string, unknown>) => {
         this.config.progress.onEvent(event, data);
       },

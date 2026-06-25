@@ -26,6 +26,7 @@ export interface OswsToolExecutorConfig {
   getAgent: () => Agent;
   chatMode: boolean;
   abortSignal: AbortSignal;
+  generateImage?: (prompt: string, opts: { aspectRatio?: string; imageSize?: string }) => Promise<{ base64: string; mimeType: string }>;
 }
 
 export class OswsToolExecutor implements ToolExecutor {
@@ -90,6 +91,7 @@ export class OswsToolExecutor implements ToolExecutor {
         if (event === 'project_ready') setupComplete = true;
         this.config.progress.onEvent(event, data);
       },
+      generateImage: this.config.generateImage,
     };
 
     try {
@@ -270,7 +272,7 @@ export class OswsToolExecutor implements ToolExecutor {
       'mkdir', 'touch', 'rm', 'mv', 'cp', 'echo', 'sed', 'ss', 'wc',
       'sort', 'uniq', 'tr', 'curl', 'sqlite3', 'python', 'python3',
       'lua', 'preview', 'build', 'status', 'agent', 'delegate', 'runtime',
-      'ask',
+      'ask', 'generate-image',
     ]);
     const setupOnlyCommands = new Set(['brief', 'spec', 'propose-create']);
     const isSetupCommand = setupOnlyCommands.has(toolId);

@@ -446,6 +446,15 @@ describe('EventProcessor', () => {
       expect(allItems.filter(i => i.type === 'user')).toHaveLength(0);
     });
 
+    it('skips harness-injected <automated_reminder> nudges (not user input)', () => {
+      const events = [
+        userMsg('<automated_reminder>\nYour previous response contained only reasoning — invoke a tool or reply with text.\n</automated_reminder>'),
+      ];
+      const turns = proc.process(events);
+      const allItems = turns.flatMap(t => t.items);
+      expect(allItems.filter(i => i.type === 'user')).toHaveLength(0);
+    });
+
     it('handles empty events after non-empty (conversation cleared)', () => {
       const events1 = [userMsg('hello'), evt('waiting')];
       proc.process(events1);

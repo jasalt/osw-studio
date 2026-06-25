@@ -10,13 +10,14 @@ import { MultipagePreview, MultipagePreviewHandle } from '@/components/preview/m
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, MessageSquare, FolderTree, Code2, Eye, Settings, Save, Bug, RotateCcw, History, Settings2, Terminal as TerminalIcon, Sparkles, ChevronDown, ChevronUp, EllipsisVertical } from 'lucide-react';
 import { AppHeader, HeaderAction } from '@/components/ui/app-header';
-import { PendingImage } from '@/lib/llm/multi-agent-orchestrator';
+import { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-orchestrator';
 import { configManager, migrateBackendKey } from '@/lib/config/storage';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
 import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
 import { PANEL_MAP } from '@/lib/stores/slices/layout';
 import { useCostSettings } from '@/lib/hooks/use-cost-settings';
 import { getProvider, getModelInputModalities } from '@/lib/llm/providers/registry';
+import { resolveProjectAssignment } from '@/lib/llm/models/project-assignment';
 import { toast } from 'sonner';
 import { debugEventsState } from '@/lib/llm/debug-events-state';
 import {
@@ -68,6 +69,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const generating = useWorkspaceStore(s => s.generating);
   const debugEvents = useWorkspaceStore(s => s.debugEvents);
   const currentModel = useWorkspaceStore(s => s.currentModel);
+  const projectModelConfig = useWorkspaceStore(s => s.projectModelConfig);
   const projectCost = useWorkspaceStore(s => s.projectCost);
   const addDebugEvent = useWorkspaceStore(s => s.addDebugEvent);
   const isDirty = useWorkspaceStore(s => s.isDirty);
@@ -89,8 +91,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const lastFocusSignatureRef = useRef<{ signature: string; timestamp: number } | null>(null);
   const previewRef = useRef<MultipagePreviewHandle>(null);
   const generatingRef = useRef(false);
-  const handleGenerateRef = useRef<((promptText?: string, images?: PendingImage[]) => Promise<void>) | null>(null);
-  const setCurrentModel = useWorkspaceStore(s => s.setCurrentModel);
+  const handleGenerateRef = useRef<((promptText?: string, images?: PendingImage[], audio?: PendingAudio[], files?: PendingFile[]) => Promise<void>) | null>(null);
   const storeSetMode = useWorkspaceStore(s => s.setMode);
   const storeSetActiveInterview = useWorkspaceStore(s => s.setActiveInterview);
   const storeFocusContext = useWorkspaceStore(s => s.setFocusContext);
@@ -151,10 +152,13 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   // Get cost settings for conditional display
   const { shouldShowCosts } = useCostSettings();
 
-  // Check if current model supports vision for image input
+  // Input modalities of the project's agent model (drives image/voice affordances).
+  // Resolve from the per-project assignment — post-overhaul the agent is per
+  // project, so keying off the global selectedProvider/currentModel misses.
   const inputModalities = useMemo(() => {
-    const currentProvider = configManager.getSelectedProvider();
-    const modelId = currentModel || configManager.getDefaultModel();
+    const agent = resolveProjectAssignment(projectModelConfig)?.agent;
+    const currentProvider = agent?.provider ?? configManager.getSelectedProvider();
+    const modelId = agent?.model || currentModel || configManager.getDefaultModel();
 
     // Check cached discovered models first (has accurate modality data from API)
     const cached = configManager.getCachedModels(currentProvider);
@@ -168,7 +172,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     }
 
     return getModelInputModalities(currentProvider, modelId);
-  }, [currentModel]);
+  }, [projectModelConfig, currentModel]);
 
   const supportsVision = inputModalities.includes('image');
 
@@ -1186,7 +1190,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
 
   const storeStartGeneration = useWorkspaceStore(s => s.startGeneration);
 
-  const handleGenerate = useCallback(async (promptText?: string, images?: PendingImage[]) => {
+  const handleGenerate = useCallback(async (promptText?: string, images?: PendingImage[], audio?: PendingAudio[], files?: PendingFile[]) => {
     // Clear runtime errors
     useWorkspaceStore.getState().setRuntimeErrors([]);
 
@@ -1207,6 +1211,8 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
       // Resuming an interview: keep the template's agenda available so it is
       // re-injected if the system message ever has to be rebuilt fresh.
       templateId: mode === 'interview' ? activeInterview?.templateId : undefined,
+      audio,
+      files,
     });
 
     // Post-generation UI cleanup
@@ -1753,7 +1759,6 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                   onStartInterview={handleStartInterview}
                   onHandoff={handleHandoff}
                   currentModel={currentModel}
-                  setCurrentModel={setCurrentModel}
                   getModelDisplayName={getModelDisplayName}
                   isTourLockingInput={isTourLockingInput}
                   onClearChat={clearDebugEvents}
@@ -1979,7 +1984,6 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                 onStartInterview={handleStartInterview}
                 onHandoff={handleHandoff}
                 currentModel={currentModel}
-                setCurrentModel={setCurrentModel}
                 getModelDisplayName={getModelDisplayName}
                 isTourLockingInput={isTourLockingInput}
                 onClearChat={clearDebugEvents}

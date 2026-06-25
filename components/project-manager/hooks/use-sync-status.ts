@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import { vfs } from '@/lib/vfs';
 import { skillsService } from '@/lib/vfs/skills/service';
+import { configManager } from '@/lib/config/storage';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 import {
   DetailedSyncStatus,
@@ -27,6 +28,7 @@ const INITIAL_STATUS: DetailedSyncStatus = {
   projects: EMPTY_CATEGORY,
   skills: EMPTY_CATEGORY,
   templates: EMPTY_CATEGORY,
+  modelTemplates: EMPTY_CATEGORY,
   loading: false,
   error: null,
 };
@@ -69,6 +71,9 @@ export function useSyncStatus() {
       );
       const serverTemplates = new Map(
         serverData.templates.map((t) => [t.id, { name: t.name, updatedAt: new Date(t.updatedAt) }])
+      );
+      const serverModelTemplates = new Map(
+        (serverData.modelTemplates ?? []).map((t) => [t.id, { name: t.name, updatedAt: new Date(t.updatedAt) }])
       );
 
       // Get local data
@@ -205,15 +210,56 @@ export function useSyncStatus() {
         }
       }
 
+      // Build model-template items
+      const localModelTemplates = Object.values(configManager.getModelTemplates()).filter((t) => !t.builtin);
+      const modelTemplateItems: SyncableItem[] = [];
+      const processedModelTemplateIds = new Set<string>();
+
+      for (const t of localModelTemplates) {
+        processedModelTemplateIds.add(t.id);
+        const serverInfo = serverModelTemplates.get(t.id);
+        const localUpdatedAt = t.updatedAt || null;
+        const status = calculateItemSyncStatus(
+          localUpdatedAt,
+          serverInfo?.updatedAt || null,
+          t.lastSyncedAt || null
+        );
+        modelTemplateItems.push({
+          id: t.id,
+          name: t.name,
+          type: 'modelTemplate',
+          localUpdatedAt,
+          serverUpdatedAt: serverInfo?.updatedAt || null,
+          lastSyncedAt: t.lastSyncedAt || null,
+          status,
+        });
+      }
+
+      for (const [id, info] of serverModelTemplates) {
+        if (!processedModelTemplateIds.has(id)) {
+          modelTemplateItems.push({
+            id,
+            name: info.name,
+            type: 'modelTemplate',
+            localUpdatedAt: null,
+            serverUpdatedAt: info.updatedAt,
+            lastSyncedAt: null,
+            status: 'server-only',
+          });
+        }
+      }
+
       // Calculate counts
       const projectCounts = calculateCategoryCounts(projectItems);
       const skillCounts = calculateCategoryCounts(skillItems);
       const templateCounts = calculateCategoryCounts(templateItems);
+      const modelTemplateCounts = calculateCategoryCounts(modelTemplateItems);
 
       setStatus({
         projects: { items: projectItems, ...projectCounts },
         skills: { items: skillItems, ...skillCounts },
         templates: { items: templateItems, ...templateCounts },
+        modelTemplates: { items: modelTemplateItems, ...modelTemplateCounts },
         loading: false,
         error: null,
       });

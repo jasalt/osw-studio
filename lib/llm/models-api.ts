@@ -44,7 +44,12 @@ export interface ModelsResponse {
 
 export async function fetchAvailableModels(): Promise<OpenRouterModel[]> {
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/models');
+    // Request both text and image output modalities. The default (no param)
+    // response omits image-only generation models (FLUX, Seedream, Grok Imagine,
+    // etc.) because they don't output text — only text+image multimodal models
+    // (Gemini, GPT Image) come back. Asking for 'text,image' includes both;
+    // per-slot filtering (matchesSlot) narrows to the right set downstream.
+    const response = await fetch('https://openrouter.ai/api/v1/models?output_modalities=text,image');
     
     if (!response.ok) {
       throw new Error(`Failed to fetch models: ${response.statusText}`);
@@ -52,8 +57,13 @@ export async function fetchAvailableModels(): Promise<OpenRouterModel[]> {
     
     const data: ModelsResponse = await response.json();
     
+    // Keep models that output text (agent/chat) OR image (image generation).
+    // Per-slot filtering downstream (matchesSlot) narrows to the right set;
+    // filtering on 'text' alone here would drop image-only models such as
+    // FLUX, Seedream, and Grok Imagine before the imageGen slot ever sees them.
     const filteredModels = data.data.filter(model =>
-      model.architecture.output_modalities.includes('text')
+      model.architecture.output_modalities.includes('text') ||
+      model.architecture.output_modalities.includes('image')
     );
     
     return filteredModels.sort((a, b) => {

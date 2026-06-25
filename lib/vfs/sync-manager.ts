@@ -7,6 +7,7 @@
 
 import { Project, VirtualFile, CustomTemplate } from './types';
 import { Skill } from './skills/types';
+import type { ModelTemplate } from '@/lib/llm/models/assignment';
 import { EnhancedSyncStatusResponse } from './sync-types';
 
 export interface SyncResult {
@@ -48,6 +49,17 @@ export interface TemplateSyncResult extends SyncResult {
 
 export interface TemplatesListSyncResult extends SyncResult {
   templates?: CustomTemplate[];
+  created?: number;
+  updated?: number;
+}
+
+export interface ModelTemplateSyncResult extends SyncResult {
+  modelTemplate?: ModelTemplate;
+  action?: 'created' | 'updated';
+}
+
+export interface ModelTemplatesListSyncResult extends SyncResult {
+  modelTemplates?: ModelTemplate[];
   created?: number;
   updated?: number;
 }
@@ -570,6 +582,92 @@ export class SyncManager {
         success: false,
         error: error instanceof Error ? error.message : 'Network error',
       };
+    }
+  }
+
+  // ============================================
+  // Model Template Sync Methods
+  // ============================================
+
+  /** Pull all model templates from server */
+  async pullModelTemplates(): Promise<ModelTemplatesListSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl('/sync/model-templates')}`, { method: 'GET' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, modelTemplates: data.modelTemplates || [] };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Push multiple model templates to server */
+  async pushModelTemplates(modelTemplates: ModelTemplate[]): Promise<ModelTemplatesListSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl('/sync/model-templates')}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelTemplates }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: data.success, created: data.created, updated: data.updated, error: data.errors?.join(', ') };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Pull a single model template from server */
+  async pullModelTemplate(id: string): Promise<ModelTemplateSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/model-templates/${encodeURIComponent(id)}`)}`, { method: 'GET' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, modelTemplate: data.modelTemplate };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Push a single model template to server */
+  async pushModelTemplate(modelTemplate: ModelTemplate): Promise<ModelTemplateSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/model-templates/${encodeURIComponent(modelTemplate.id)}`)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelTemplate }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, modelTemplate: data.modelTemplate, action: data.action };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Delete a model template from server */
+  async deleteModelTemplateFromServer(id: string): Promise<SyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/model-templates/${encodeURIComponent(id)}`)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }
   }
 

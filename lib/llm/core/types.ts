@@ -30,6 +30,8 @@ export interface ParsedResponse {
   toolCalls?: ToolCall[];
   usage?: UsageInfo;
   reasoningDetails?: ReasoningDetail[];
+  /** Set when the stream was aborted early on an unexpected tool name. */
+  invalidToolName?: string;
 }
 
 export interface ProviderCallParams {
