@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.78.1 - 2026-06-26
+
+### Fixes
+- **Server Mode: sync status no longer fails**: The sync-status endpoint returned a 500 (`no such column: updated_at`) because the `custom_templates` table predated template sync and never got the column. A migration adds it. This also clears the "Backend unreachable" banner that the failing request was triggering.
+- **Settings menu "Provider & Model" no longer 404s**: In Server Mode the menu item pointed at a route that didn't exist; it now opens the settings page on the correct tab.
+- **Legacy `/admin/*` redirects keep query parameters**: Redirecting an old `/admin/{view}` path to its `/w/{workspace}/{view}` equivalent dropped the query string, so deep links (like a specific settings tab) lost their target. The redirect now preserves it.
+- **Model picker no longer gets stuck on "Loading…"**: Opening the per-project picker before the model migration had run could leave it stuck — with no way to dismiss it on mobile. It now runs the migration on open, and the mobile dialog always has a close button.
+- **Model button opens Connections when no provider is set up**: With nothing connected the picker had nothing to show; it now opens the Connections tab directly so you can add a provider.
+- **Providers no longer appear connected without auth**: A cloud provider (e.g. HuggingFace) whose public model list had been cached could show as "connected" with no key. Connection status now requires an actual key or token for cloud providers; cached models only count for local providers.
+
 ## v1.78.0 - 2026-06-26
 
 ### Providers & models

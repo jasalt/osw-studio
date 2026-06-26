@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
 import { validateApiKey as checkApiKey } from '@/lib/llm/llm-client';
 import { getAllProviders, getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
+import { isProviderConnected } from '@/lib/llm/providers/connection-status';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ConnectionBadge } from '@/components/settings/connection-badge';
 import { loadProviderModels } from '@/lib/llm/models/model-catalog';
@@ -27,14 +28,6 @@ import { cn } from '@/lib/utils';
 /** Notify the rest of the app that a provider's key/connection state changed. */
 function emitApiKeyUpdate(provider: string, hasKey: boolean) {
   window.dispatchEvent(new CustomEvent('apiKeyUpdated', { detail: { provider, hasKey } }));
-}
-
-/** Returns true if a provider is currently connected. */
-function isProviderConnected(id: ProviderId): boolean {
-  // OAuth tokens are stored as the provider key, so getProviderApiKey covers them.
-  // Local providers count as connected only once reached (cached models), not just
-  // because they exist in the registry.
-  return !!configManager.getProviderApiKey(id) || !!configManager.getCachedModels(id);
 }
 
 /** Masked credential for display in connection rows. */

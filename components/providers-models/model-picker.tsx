@@ -3,8 +3,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Search, Loader2, Link, MonitorSpeaker } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { configManager } from '@/lib/config/storage';
-import { getAllProviders, getProvider } from '@/lib/llm/providers/registry';
+import { getProvider } from '@/lib/llm/providers/registry';
+import { getConnectedProviders } from '@/lib/llm/providers/connection-status';
 import { modelsForSlot, matchesSlot, loadProviderModels, SlotModelEntry, SlotKind } from '@/lib/llm/models/model-catalog';
 import { fmtCtx } from './format';
 import { formatModelPrice } from '@/lib/llm/models-api';
@@ -29,16 +29,6 @@ export interface ModelPickerProps {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Returns the provider IDs that are currently connected (have a key or are local). */
-function getConnectedProviders(): ProviderId[] {
-  // Connected = has a key/OAuth token, or has cached models (i.e. was actually
-  // reached). Don't treat every local provider as connected — that probes
-  // llamacpp/meshllm/etc. whose servers aren't running on every picker open.
-  return getAllProviders()
-    .filter((p) => !!configManager.getProviderApiKey(p.id) || !!configManager.getCachedModels(p.id))
-    .map((p) => p.id);
-}
 
 /** Format price per 1M tokens as concise string. */
 function fmtPrice(model: ProviderModel): string | null {

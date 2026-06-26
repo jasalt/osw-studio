@@ -34,8 +34,13 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
-export function ProvidersModelsView() {
-  const [activePane, setActivePane] = useState<ActivePane>('models');
+interface ProvidersModelsViewProps {
+  /** Which pane to open on first mount. Defaults to "models". */
+  initialTab?: ActivePane;
+}
+
+export function ProvidersModelsView({ initialTab = 'models' }: ProvidersModelsViewProps = {}) {
+  const [activePane, setActivePane] = useState<ActivePane>(initialTab);
 
   // Ensure the Default template exists before panes read config.
   useEffect(() => {

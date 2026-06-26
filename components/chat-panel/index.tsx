@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { ProvidersModelsView } from '@/components/providers-models';
 import { createPortal } from 'react-dom';
 import { ProjectModelsPanel } from '@/components/providers-models/project-models-panel';
+import { hasAnyConnectedProvider } from '@/lib/llm/providers/connection-status';
 import { FocusContextPayload } from '@/lib/preview/types';
 import { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-orchestrator';
 import { useAudioRecorder } from '@/lib/audio/use-audio-recorder';
@@ -197,6 +198,11 @@ export function ChatPanel({
   const [autoScroll, setAutoScroll] = useState(true);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
   const [showProvidersManage, setShowProvidersManage] = useState(false);
+  const [providersManageTab, setProvidersManageTab] = useState<'models' | 'connections' | 'templates'>('models');
+  const openProvidersManage = useCallback((tab: 'models' | 'connections' | 'templates' = 'models') => {
+    setProvidersManageTab(tab);
+    setShowProvidersManage(true);
+  }, []);
   const [showModeMenu, setShowModeMenu] = useState(false);
   // Mobile breakpoint — the per-project model picker becomes a full-screen dialog
   // instead of an anchored popover (which can't fill a phone screen).
@@ -867,7 +873,18 @@ export function ChatPanel({
                 />,
                 document.body,
               )}
-              <Popover open={!isMobile && showMobileSettings} onOpenChange={setShowMobileSettings}>
+              <Popover
+                open={!isMobile && showMobileSettings}
+                onOpenChange={(open) => {
+                  if (open && !hasAnyConnectedProvider()) {
+                    // No providers connected — the picker would be empty. Open the
+                    // Connections tab of the full manager instead.
+                    openProvidersManage('connections');
+                    return;
+                  }
+                  setShowMobileSettings(open);
+                }}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
@@ -901,7 +918,7 @@ export function ChatPanel({
                     projectId={projectId}
                     onManageSettings={() => {
                       setShowMobileSettings(false);
-                      setShowProvidersManage(true);
+                      openProvidersManage('models');
                     }}
                   />
                 </PopoverContent>
@@ -911,13 +928,13 @@ export function ChatPanel({
                   popover can't fill a phone screen). */}
               {isMobile && (
                 <Dialog open={showMobileSettings} onOpenChange={setShowMobileSettings}>
-                  <DialogContent showCloseButton={false} className="p-0 gap-0 w-[calc(100vw-1.5rem)] max-w-none h-[calc(100dvh-1.5rem)] max-h-none overflow-hidden flex flex-col">
+                  <DialogContent showCloseButton className="p-0 gap-0 w-[calc(100vw-1.5rem)] max-w-none h-[calc(100dvh-1.5rem)] max-h-none overflow-hidden flex flex-col">
                     <DialogTitle className="sr-only">Models · this project</DialogTitle>
                     <ProjectModelsPanel
                       projectId={projectId}
                       onManageSettings={() => {
                         setShowMobileSettings(false);
-                        setShowProvidersManage(true);
+                        openProvidersManage('models');
                       }}
                       onDone={() => setShowMobileSettings(false)}
                     />
@@ -956,7 +973,7 @@ export function ChatPanel({
                   }}
                 >
                   <DialogTitle className="sr-only">Providers &amp; models</DialogTitle>
-                  <ProvidersModelsView />
+                  <ProvidersModelsView initialTab={providersManageTab} />
                 </DialogContent>
               </Dialog>
 

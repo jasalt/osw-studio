@@ -55,7 +55,7 @@ export async function middleware(request: NextRequest) {
           const workspaceId = request.cookies.get('osw_workspace')?.value;
           if (workspaceId) {
             const newPath = pathname.replace(`/admin/${view}`, `/w/${workspaceId}/${view}`);
-            return NextResponse.redirect(new URL(newPath, request.url));
+            return NextResponse.redirect(new URL(newPath + request.nextUrl.search, request.url));
           }
           // No workspace cookie yet — redirect to root to trigger bootstrap
           return NextResponse.redirect(new URL('/', request.url));
@@ -198,7 +198,7 @@ export async function middleware(request: NextRequest) {
         const workspaceId = request.cookies.get('osw_workspace')?.value;
         if (workspaceId) {
           const newPath = pathname.replace(`/admin/${view}`, `/w/${workspaceId}/${view}`);
-          return NextResponse.redirect(new URL(newPath, request.url));
+          return NextResponse.redirect(new URL(newPath + request.nextUrl.search, request.url));
         }
         // No workspace cookie — redirect to login
         return loginRedirect(request);

@@ -243,6 +243,15 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
 
   const config = getConfig();
 
+  // First mount: ensure the migration that seeds the "Default" template has run.
+  // Without it the template lookups below stay null and the panel is stuck on
+  // "Loading…" — which on the mobile full-screen dialog has no way to dismiss.
+  const [, setMigrated] = useState(false);
+  useEffect(() => {
+    configManager.migrateModels();
+    setMigrated(true);
+  }, []);
+
   // ---- Resolve effective values synchronously ----
   const template =
     configManager.getModelTemplate(config.templateId) ??

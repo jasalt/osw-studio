@@ -535,9 +535,7 @@ function SidebarContent({
                     const isSubItemActive = subItem.file
                       ? currentDocId === subItem.id
                       : item.id === 'settings'
-                        ? (isServerMode
-                            ? (window.location.pathname === `${wsBase}/${item.id}/${subItem.id}` || window.location.pathname === `/admin/${item.id}/${subItem.id}`)
-                            : currentSettingsTab === subItem.id)
+                        ? currentSettingsTab === subItem.id
                         : (isServerMode && (window.location.pathname === `${wsBase}/${item.id}/${subItem.id}` || window.location.pathname === `/admin/${item.id}/${subItem.id}`));
 
                     return (
@@ -556,8 +554,9 @@ function SidebarContent({
                               // Docs sub-item
                               router.push(`${subBase}/docs?doc=${subItem.id}`);
                             } else {
-                              // Settings sub-item
-                              router.push(`${subBase}/${item.id}/${subItem.id}`);
+                              // Settings sub-item — the settings page reads the tab from
+                              // ?settings=, there is no /settings/<tab> route (that 404s).
+                              router.push(`${subBase}/${item.id}?settings=${subItem.id}`);
                             }
                           } else {
                             // Browser mode
