@@ -16,8 +16,8 @@ import { useWorkspaceStore } from '@/lib/stores/workspace';
 import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
 import { PANEL_MAP } from '@/lib/stores/slices/layout';
 import { useCostSettings } from '@/lib/hooks/use-cost-settings';
-import { getProvider, getModelInputModalities } from '@/lib/llm/providers/registry';
-import { resolveProjectAssignment } from '@/lib/llm/models/project-assignment';
+import { getModelInputModalities } from '@/lib/llm/providers/registry';
+import { resolveProjectAssignment, isProjectProviderReady } from '@/lib/llm/models/project-assignment';
 import { toast } from 'sonner';
 import { debugEventsState } from '@/lib/llm/debug-events-state';
 import {
@@ -176,14 +176,12 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
 
   const supportsVision = inputModalities.includes('image');
 
-  // Check if current provider has credentials configured
-  const providerReady = useMemo(() => {
-    const provider = configManager.getSelectedProvider();
-    const config = getProvider(provider);
-    if (config.isLocal) return true;
-    if (config.apiKeyRequired || config.usesOAuth) return !!configManager.getProviderApiKey(provider);
-    return true;
-  }, [currentModel]);
+  // Readiness keys off the project's agent provider (see isProjectProviderReady) —
+  // not the global selectedProvider, which misses for per-project models.
+  const providerReady = useMemo(
+    () => isProjectProviderReady(projectModelConfig),
+    [projectModelConfig],
+  );
   
   // Console panel — visible by default for terminal-mode runtimes (Python, Lua), togglable for all
 

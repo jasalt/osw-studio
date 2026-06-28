@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.78.2 - 2026-06-28
+
+### Fixes
+- **Chat no longer stuck on "Select provider" after configuring a model**: The chat readiness check looked at the old global provider selection instead of the project's agent model, so a fully configured project (e.g. an OpenRouter model with a valid key) could leave the input disabled and the "Select provider" button glowing — most visibly on the HuggingFace Space, whose global default is HuggingFace. It now checks the project's actual agent provider.
+
 ## v1.78.1 - 2026-06-26
 
 ### Fixes
