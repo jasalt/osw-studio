@@ -5,7 +5,7 @@ import { logger } from '@/lib/utils';
 
 export async function POST(request: NextRequest) {
   try {
-    const { apiKey, provider } = await request.json();
+    const { apiKey, provider, baseUrl: requestBaseUrl } = await request.json();
     
     if (!provider) {
       return NextResponse.json(
@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     const providerConfig = getProvider(provider as ProviderId);
+    const effectiveBaseUrl = requestBaseUrl || providerConfig.baseUrl;
     
     // If no API key but required (and not OAuth), return empty array
     if (providerConfig.apiKeyRequired && !apiKey && !providerConfig.usesOAuth) {
@@ -188,17 +189,33 @@ export async function POST(request: NextRequest) {
           break;
 
         default:
-          // For other OpenAI-compatible providers
-          if (providerConfig.baseUrl && apiKey) {
-            const defaultResponse = await fetch(`${providerConfig.baseUrl}/models`, {
-              headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-              }
-            });
+          // For other OpenAI-compatible providers (including custom ones)
+          if (effectiveBaseUrl) {
+            const headers: Record<string, string> = {};
+            if (apiKey) {
+              headers['Authorization'] = `Bearer ${apiKey}`;
+            }
+            const defaultResponse = await fetch(`${effectiveBaseUrl}/models`, { headers });
+            const responseText = await defaultResponse.text();
             if (defaultResponse.ok) {
-              const defaultData = await defaultResponse.json();
-              models = defaultData.data?.map((m: any) => m.id) || [];
+              try {
+                const defaultData = JSON.parse(responseText);
+                // OpenAI-compatible shape: { data: [...] }. Some providers use { models: [...] }
+                // or a plain array. Each entry may be a string id or an object with id/name/model.
+              const list = Array.isArray(defaultData)
+                ? defaultData
+                : (defaultData.data || defaultData.models || defaultData.list || []);
+              models = list
+                .map((m: any) => (typeof m === 'string' ? m : (m.id || m.model || m.name || m.model_id || m.slug)))
+                .filter(Boolean);
+                if (models.length === 0) {
+                  logger.warn(`[models] ${provider} /models parsed 0 models. Raw response (first 800 chars):`, responseText.slice(0, 800));
+                }
+              } catch {
+                logger.warn(`[models] ${provider} /models returned non-JSON. Raw response (first 800 chars):`, responseText.slice(0, 800));
+              }
+            } else {
+              logger.warn(`[models] ${provider} /models returned HTTP ${defaultResponse.status}. Raw response (first 800 chars):`, responseText.slice(0, 800));
             }
           }
           break;

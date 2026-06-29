@@ -12,6 +12,7 @@ import { validateApiKey as checkApiKey } from '@/lib/llm/llm-client';
 import { getAllProviders, getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
 import { isProviderConnected } from '@/lib/llm/providers/connection-status';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Switch } from '@/components/ui/switch';
 import { ConnectionBadge } from '@/components/settings/connection-badge';
 import { loadProviderModels } from '@/lib/llm/models/model-catalog';
 import { CodexAuthPanel } from '@/components/settings/codex-auth-panel';
@@ -33,7 +34,8 @@ function emitApiKeyUpdate(provider: string, hasKey: boolean) {
 /** Masked credential for display in connection rows. */
 function maskedCred(id: ProviderId): string {
   const cfg = getProvider(id);
-  if (cfg.isLocal) return cfg.baseUrl ?? '';
+  const archetype = getProviderArchetype(id);
+  if (archetype === 'local' || archetype === 'custom') return cfg.baseUrl ?? '';
   if (id === 'huggingface') {
     const auth = configManager.getHFAuth();
     if (auth?.username) return auth.username;
@@ -271,14 +273,178 @@ function ConnectConfigBody({ providerId, onConnected, onBack }: ConnectConfigBod
 }
 
 // ---------------------------------------------------------------------------
+// Connect-custom body (OpenAI-compatible endpoint)
+// ---------------------------------------------------------------------------
+
+interface ConnectCustomBodyProps {
+  onConnected: () => void;
+  onBack: () => void;
+}
+
+function ConnectCustomBody({ onConnected, onBack }: ConnectCustomBodyProps) {
+  const [name, setName] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [currentApiKey, setCurrentApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [requireApiKey, setRequireApiKey] = useState(true);
+  const [testing, setTesting] = useState(false);
+
+  const dispatchApiKeyEvent = useCallback((provider: string, hasKey: boolean) => {
+    emitApiKeyUpdate(provider, hasKey);
+  }, []);
+
+  const handleConnect = async () => {
+    const trimmedName = name.trim();
+    const trimmedUrl = baseUrl.trim();
+    if (!trimmedName) {
+      toast.error('Please enter a provider name');
+      return;
+    }
+    if (!trimmedUrl) {
+      toast.error('Please enter an API endpoint URL');
+      return;
+    }
+    if (requireApiKey && !currentApiKey.trim()) {
+      toast.error('Please enter an API token');
+      return;
+    }
+
+    const id = configManager.generateCustomProviderId(trimmedName);
+    const cfg = configManager.buildCustomProviderConfig(
+      id,
+      trimmedName,
+      trimmedUrl,
+      requireApiKey
+    );
+
+    configManager.saveCustomProvider(id, cfg);
+    if (currentApiKey.trim()) {
+      configManager.setProviderApiKey(id, currentApiKey.trim());
+    }
+    configManager.clearModelCache(id);
+
+    setTesting(true);
+    try {
+      const models = await loadProviderModels(id);
+      if (models.length > 0) {
+        toast.success(`Connected to ${cfg.name} · ${models.length} model${models.length === 1 ? '' : 's'}`);
+        dispatchApiKeyEvent(id, !!currentApiKey.trim());
+        onConnected();
+      } else {
+        // eslint-disable-next-line no-console
+        console.error(`[custom-provider] ${cfg.name} returned 0 models; check server logs for raw /models response`);
+        toast.error(`No models returned by ${cfg.name}. Check the server log for the raw response.`);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[custom-provider] ${cfg.name} connection error:`, err);
+      toast.error(`Couldn't reach ${cfg.name}. Check the endpoint and token.`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="px-[18px] py-4 space-y-4">
+      <div>
+        <Label htmlFor="custom-name">Provider name</Label>
+        <Input
+          id="custom-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g., Opencode Go"
+          className="mt-2"
+          disabled={testing}
+        />
+      </div>
+
+      <div>
+        <Label htmlFor="custom-url">API endpoint</Label>
+        <Input
+          id="custom-url"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="https://opencode.ai/zen/go/v1"
+          className="mt-2"
+          disabled={testing}
+        />
+        <p className="text-xs text-muted-foreground mt-2">
+          Base URL for an OpenAI-compatible API. The app will append{' '}
+          <code className="text-xs">/chat/completions</code> and{' '}
+          <code className="text-xs">/models</code>.
+        </p>
+      </div>
+
+      <div>
+        <Label htmlFor="custom-key">
+          API token
+          <span className="text-muted-foreground text-xs ml-1">({requireApiKey ? 'required' : 'optional'})</span>
+        </Label>
+        <div className="flex gap-2 mt-2">
+          <div className="relative flex-1">
+            <Input
+              id="custom-key"
+              type={showApiKey ? 'text' : 'password'}
+              value={currentApiKey}
+              onChange={(e) => setCurrentApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="pr-10"
+              disabled={testing}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="absolute right-1 top-1 h-7 w-7"
+              onClick={() => setShowApiKey(!showApiKey)}
+              disabled={testing}
+            >
+              {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <Label htmlFor="custom-require-key" className="text-sm font-normal cursor-pointer">
+          Require API token
+        </Label>
+        <Switch
+          id="custom-require-key"
+          checked={requireApiKey}
+          onCheckedChange={setRequireApiKey}
+          disabled={testing}
+        />
+      </div>
+
+      <div className="flex gap-2 justify-end pt-2">
+        <Button variant="ghost" size="sm" onClick={onBack} disabled={testing}>
+          Back
+        </Button>
+        <Button size="sm" onClick={handleConnect} disabled={testing || !name.trim() || !baseUrl.trim() || (requireApiKey && !currentApiKey.trim())}>
+          {testing ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              Testing…
+            </>
+          ) : (
+            'Test & connect'
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Connect-choose body
 // ---------------------------------------------------------------------------
 
 interface ConnectChooseBodyProps {
   onChoose: (id: ProviderId) => void;
+  onChooseCustom: () => void;
 }
 
-function ConnectChooseBody({ onChoose }: ConnectChooseBodyProps) {
+function ConnectChooseBody({ onChoose, onChooseCustom }: ConnectChooseBodyProps) {
   const [query, setQuery] = useState('');
 
   const allProviders = getAllProviders();
@@ -291,6 +457,35 @@ function ConnectChooseBody({ onChoose }: ConnectChooseBodyProps) {
           p.description.toLowerCase().includes(query.toLowerCase())
       )
     : unconnected;
+
+  const customCard = (
+    <button
+      key="__custom__"
+      type="button"
+      onClick={onChooseCustom}
+      className={cn(
+        'w-full flex items-start gap-3 px-3 py-3 rounded-lg text-left transition-colors',
+        'hover:bg-muted border border-transparent hover:border-border',
+        'cursor-pointer'
+      )}
+    >
+      <div className="w-[34px] h-[34px] rounded-sm bg-secondary border border-border flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
+        +
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-sm">Custom / OpenAI compatible</span>
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-sm bg-muted border border-border text-muted-foreground">
+            Custom endpoint
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground mt-0.5">
+          Add any OpenAI-compatible API endpoint.
+        </div>
+      </div>
+      <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+    </button>
+  );
 
   const archetypeLabel: Record<string, string> = {
     aggregator: 'API key',
@@ -316,6 +511,7 @@ function ConnectChooseBody({ onChoose }: ConnectChooseBodyProps) {
 
       {/* Provider list */}
       <div className="space-y-1 pt-1">
+        {!query.trim() && customCard}
         {filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground py-6 text-center">No providers match.</p>
         ) : (
@@ -435,7 +631,16 @@ interface EditConfigBodyProps {
 function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyProps) {
   const providerConfig = getProvider(providerId);
   const archetype = getProviderArchetype(providerId);
+  const isCustom = archetype === 'custom';
   const [disconnecting, setDisconnecting] = useState(false);
+
+  // Editable fields for custom providers
+  const [customName, setCustomName] = useState(isCustom ? providerConfig.name : '');
+  const [customUrl, setCustomUrl] = useState(isCustom ? providerConfig.baseUrl || '' : '');
+  const [customKey, setCustomKey] = useState(() => configManager.getProviderApiKey(providerId) || '');
+  const [showCustomKey, setShowCustomKey] = useState(false);
+  const [customRequireKey, setCustomRequireKey] = useState(isCustom ? providerConfig.apiKeyRequired : true);
+  const [savingCustom, setSavingCustom] = useState(false);
 
   const dispatchApiKeyEvent = useCallback((hasKey: boolean) => {
     emitApiKeyUpdate(providerId, hasKey);
@@ -455,6 +660,9 @@ function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyPr
         configManager.setProviderApiKey(providerId, '');
         configManager.clearModelCache(providerId);
       }
+      if (isCustom) {
+        configManager.removeCustomProvider(providerId);
+      }
       toast.success(`Disconnected from ${providerConfig.name}`);
       dispatchApiKeyEvent(false);
       onDisconnected();
@@ -462,6 +670,39 @@ function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyPr
       toast.error('Failed to disconnect. Please try again.');
     } finally {
       setDisconnecting(false);
+    }
+  };
+
+  const handleSaveCustom = async () => {
+    const name = customName.trim();
+    const url = customUrl.trim();
+    if (!name || !url) {
+      toast.error('Name and endpoint URL are required');
+      return;
+    }
+    setSavingCustom(true);
+    try {
+      const cfg = configManager.buildCustomProviderConfig(
+        providerId,
+        name,
+        url,
+        customRequireKey
+      );
+      configManager.saveCustomProvider(providerId, cfg);
+      configManager.setProviderApiKey(providerId, customKey.trim());
+      configManager.clearModelCache(providerId);
+      const models = await loadProviderModels(providerId);
+      toast.success(
+        models.length > 0
+          ? `Updated ${cfg.name} · ${models.length} model${models.length === 1 ? '' : 's'}`
+          : `Updated ${cfg.name}`
+      );
+      dispatchApiKeyEvent(!!customKey.trim());
+      onDone();
+    } catch {
+      toast.error('Failed to update custom provider');
+    } finally {
+      setSavingCustom(false);
     }
   };
 
@@ -495,6 +736,98 @@ function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyPr
         />
         <div className="flex justify-end pt-2">
           <Button size="sm" onClick={onDone}>Done</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // custom: editable name, endpoint, key, and disconnect/delete
+  if (isCustom) {
+    return (
+      <div className="px-[18px] py-4 space-y-4">
+        <div>
+          <Label htmlFor="edit-custom-name">Provider name</Label>
+          <Input
+            id="edit-custom-name"
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            className="mt-2"
+            disabled={savingCustom}
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="edit-custom-url">API endpoint</Label>
+          <Input
+            id="edit-custom-url"
+            value={customUrl}
+            onChange={(e) => setCustomUrl(e.target.value)}
+            className="mt-2"
+            disabled={savingCustom}
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="edit-custom-key">API token</Label>
+          <div className="flex gap-2 mt-2">
+            <div className="relative flex-1">
+              <Input
+                id="edit-custom-key"
+                type={showCustomKey ? 'text' : 'password'}
+                value={customKey}
+                onChange={(e) => setCustomKey(e.target.value)}
+                placeholder={customRequireKey ? 'Required' : 'Optional'}
+                className="pr-10"
+                disabled={savingCustom}
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="absolute right-1 top-1 h-7 w-7"
+                onClick={() => setShowCustomKey(!showCustomKey)}
+                disabled={savingCustom}
+              >
+                {showCustomKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <Label htmlFor="edit-custom-require-key" className="text-sm font-normal cursor-pointer">
+            Require API token
+          </Label>
+          <Switch
+            id="edit-custom-require-key"
+            checked={customRequireKey}
+            onCheckedChange={setCustomRequireKey}
+            disabled={savingCustom}
+          />
+        </div>
+
+        <div className="flex gap-2 justify-end pt-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDisconnect}
+            disabled={disconnecting || savingCustom}
+          >
+            {disconnecting ? 'Deleting…' : 'Delete'}
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSaveCustom}
+            disabled={savingCustom || !customName.trim() || !customUrl.trim()}
+          >
+            {savingCustom ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                Saving…
+              </>
+            ) : (
+              'Save'
+            )}
+          </Button>
         </div>
       </div>
     );
@@ -553,7 +886,7 @@ function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyPr
 // Drawer mode type
 // ---------------------------------------------------------------------------
 
-type ConnDrawerMode = 'connect-choose' | 'connect-config' | 'edit-config' | null;
+type ConnDrawerMode = 'connect-choose' | 'connect-config' | 'connect-custom' | 'edit-config' | null;
 
 // ---------------------------------------------------------------------------
 // Main ConnectionsPane
@@ -608,6 +941,7 @@ export function ConnectionsPane() {
 
   const handleDisconnect = async (id: ProviderId) => {
     const cfg = getProvider(id);
+    const isCustom = getProviderArchetype(id) === 'custom';
     try {
       if (id === 'openai-codex') {
         await disconnectCodex();
@@ -619,6 +953,9 @@ export function ConnectionsPane() {
       } else {
         configManager.setProviderApiKey(id, '');
         configManager.clearModelCache(id);
+      }
+      if (isCustom) {
+        configManager.removeCustomProvider(id);
       }
       toast.success(`Disconnected from ${cfg.name}`);
       emitApiKeyUpdate(id, false);
@@ -633,8 +970,9 @@ export function ConnectionsPane() {
 
   const cloudProviders = connectedProviders.filter((p) => {
     const arch = getProviderArchetype(p.id);
-    return arch !== 'local';
+    return arch !== 'local' && arch !== 'custom';
   });
+  const customProviders = connectedProviders.filter((p) => getProviderArchetype(p.id) === 'custom');
   const localProviders = connectedProviders.filter((p) => {
     const arch = getProviderArchetype(p.id);
     return arch === 'local';
@@ -648,7 +986,11 @@ export function ConnectionsPane() {
   if (drawerMode === 'connect-choose') {
     drawerLabel = 'Add a provider';
     drawerTitle = 'Choose a provider';
-    drawerScope = 'Cloud, subscription, or a local endpoint.';
+    drawerScope = 'Cloud, subscription, local, or a custom OpenAI-compatible endpoint.';
+  } else if (drawerMode === 'connect-custom') {
+    drawerLabel = '← Back';
+    drawerTitle = 'Custom provider';
+    drawerScope = 'Connect any OpenAI-compatible API endpoint.';
   } else if (drawerMode === 'connect-config' && selectedProviderId) {
     drawerLabel = '← Back';
     drawerTitle = getProvider(selectedProviderId).name;
@@ -682,6 +1024,26 @@ export function ConnectionsPane() {
           </div>
         )}
       </div>
+
+      {/* Custom section */}
+      {customProviders.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Custom
+          </p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {customProviders.map((p) => (
+              <ConnectionRow
+                key={p.id}
+                providerId={p.id}
+                onDisconnect={() => handleDisconnect(p.id)}
+                onEdit={() => openEditDrawer(p.id)}
+                onRevalidate={() => handleRevalidate(p.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Local section */}
       <div>
@@ -721,9 +1083,9 @@ export function ConnectionsPane() {
       {/* Drawer */}
       <Drawer
         open={drawerOpen}
-        mode={drawerMode as 'connect-choose' | 'connect-config' | null}
+        mode={drawerMode as 'connect-choose' | 'connect-config' | 'connect-custom' | null}
         label={drawerLabel}
-        onLabelClick={drawerMode === 'connect-config' ? () => {
+        onLabelClick={drawerMode === 'connect-config' || drawerMode === 'connect-custom' ? () => {
           setDrawerMode('connect-choose');
           setSelectedProviderId(null);
         } : undefined}
@@ -735,7 +1097,26 @@ export function ConnectionsPane() {
           <ConnectChooseBody
             onChoose={(id) => {
               setSelectedProviderId(id);
-              setDrawerMode('connect-config');
+              if (getProviderArchetype(id) === 'custom') {
+                setDrawerMode('edit-config');
+              } else {
+                setDrawerMode('connect-config');
+              }
+            }}
+            onChooseCustom={() => {
+              setDrawerMode('connect-custom');
+            }}
+          />
+        )}
+
+        {drawerMode === 'connect-custom' && (
+          <ConnectCustomBody
+            onConnected={() => {
+              refresh();
+              closeDrawer();
+            }}
+            onBack={() => {
+              setDrawerMode('connect-choose');
             }}
           />
         )}

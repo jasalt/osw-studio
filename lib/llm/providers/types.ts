@@ -2,7 +2,7 @@
  * Provider-specific types and interfaces
  */
 
-export type ProviderId =
+export type BuiltInProviderId =
   | 'openrouter'
   | 'openai'
   | 'openai-codex'
@@ -17,6 +17,9 @@ export type ProviderId =
   | 'minimax'
   | 'llamacpp'
   | 'meshllm';
+
+/** Provider ID type. Includes built-in providers and arbitrary custom IDs. */
+export type ProviderId = BuiltInProviderId | (string & {});
 
 export type InputModality = 'text' | 'image' | 'audio' | 'file';
 

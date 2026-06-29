@@ -32,7 +32,7 @@ export async function validateApiKey(apiKey: string, provider: ProviderId): Prom
 
 export type ModelEntry = string | { id: string; contextLength?: number; inputModalities?: string[] };
 
-export async function getAvailableModels(apiKey?: string, provider?: ProviderId): Promise<ModelEntry[]> {
+export async function getAvailableModels(apiKey?: string, provider?: ProviderId, baseUrl?: string): Promise<ModelEntry[]> {
   const currentProvider = provider || configManager.getSelectedProvider() || 'openrouter';
   const providerConfig = getProvider(currentProvider);
   const key = apiKey || configManager.getProviderApiKey(currentProvider);
@@ -42,15 +42,17 @@ export async function getAvailableModels(apiKey?: string, provider?: ProviderId)
   }
 
   try {
+    const body: Record<string, string | null> = {
+      apiKey: key,
+      provider: currentProvider
+    };
+    if (baseUrl) body.baseUrl = baseUrl;
     const response = await apiFetch('/api/models', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        apiKey: key,
-        provider: currentProvider
-      })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {

@@ -74,11 +74,13 @@ export async function POST(request: NextRequest) {
         break;
 
       default:
-        // For other OpenAI-compatible providers
+        // For other OpenAI-compatible providers (including custom ones)
         if (providerConfig.baseUrl) {
-          const defaultResp = await fetch(`${providerConfig.baseUrl}/models`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-          });
+          const headers: Record<string, string> = {};
+          if (apiKey) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+          }
+          const defaultResp = await fetch(`${providerConfig.baseUrl}/models`, { headers });
           isValid = defaultResp.ok;
         } else {
           isValid = false;

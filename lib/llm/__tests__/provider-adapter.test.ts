@@ -23,7 +23,7 @@ function makeSSEResponse(chunks: string[]): Response {
 
 function makeAdapter(): OswsProviderAdapter {
   const config: ProviderAdapterConfig = {
-    getProviderConfig: () => ({ provider: 'openai', apiKey: 'k', model: 'gpt-test' }),
+    getProviderConfig: () => ({ provider: 'openai', apiKey: 'k', model: 'gpt-test', baseUrl: undefined }),
     getApiUrl: () => 'http://localhost/api/generate',
     getReasoningEnabled: () => false,
     getDebugStreamEnabled: () => false,

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type DrawerMode = 'pick' | 'connect-choose' | 'connect-config' | 'save-template' | null;
+export type DrawerMode = 'pick' | 'connect-choose' | 'connect-config' | 'connect-custom' | 'save-template' | null;
 
 export interface DrawerProps {
   open: boolean;

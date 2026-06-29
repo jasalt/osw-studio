@@ -850,11 +850,11 @@ export class MultiAgentOrchestrator {
     });
   }
 
-  private getProviderConfig(): { provider: string; apiKey: string; model: string } {
+  private getProviderConfig(): { provider: string; apiKey: string; model: string; baseUrl: string } {
     if (this.serverContext) {
       const cfg = this.getConfig();
       const provider = cfg.getSelectedProvider();
-      return { provider, apiKey: cfg.getProviderApiKey(provider) || '', model: cfg.getProviderModel(provider) || this.model || 'default-model' };
+      return { provider, apiKey: cfg.getProviderApiKey(provider) || '', model: cfg.getProviderModel(provider) || this.model || 'default-model', baseUrl: '' };
     }
     const agent = this.assignment?.agent;
     const provider = (agent?.provider ?? configManager.getSelectedProvider()) as ProviderId;
@@ -864,7 +864,7 @@ export class MultiAgentOrchestrator {
     if (providerConfig.apiKeyRequired && !apiKey && !providerConfig.usesOAuth) {
       throw new Error(`API key not configured for provider: ${provider}`);
     }
-    return { provider, apiKey: apiKey || '', model: model || 'default-model' };
+    return { provider, apiKey: apiKey || '', model: model || 'default-model', baseUrl: providerConfig.baseUrl || '' };
   }
 
   private resolveCompactionLimit(): number {

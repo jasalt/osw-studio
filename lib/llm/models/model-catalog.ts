@@ -166,7 +166,7 @@ export async function loadProviderModels(provider: ProviderId): Promise<Provider
         registerPricingFromProviderModels('huggingface', loadedModels);
       }
     } else if (providerConfig.supportsModelDiscovery) {
-      const modelEntries = await getAvailableModels(apiKey || undefined, provider);
+      const modelEntries = await getAvailableModels(apiKey || undefined, provider, providerConfig.baseUrl);
       loadedModels = modelEntries.map((entry) => {
         const id = typeof entry === 'string' ? entry : entry.id;
         const contextLength =

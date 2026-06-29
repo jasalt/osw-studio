@@ -1,5 +1,6 @@
-import { ProviderId, ProviderConfig, ProviderModel, InputModality } from './types';
+import { ProviderId, BuiltInProviderId, ProviderConfig, ProviderModel, InputModality } from './types';
 export type { OutputModality } from './types';
+import { getCustomProviders } from './custom-providers';
 
 const codexModels: ProviderModel[] = [
   {
@@ -212,7 +213,7 @@ const minimaxModels: ProviderModel[] = [
   },
 ];
 
-export const providers: Record<ProviderId, ProviderConfig> = {
+export const providers: Record<BuiltInProviderId, ProviderConfig> = {
   openrouter: {
     id: 'openrouter',
     name: 'OpenRouter',
@@ -383,7 +384,23 @@ export const providers: Record<ProviderId, ProviderConfig> = {
 };
 
 export function getProvider(id: ProviderId): ProviderConfig {
-  return providers[id];
+  const builtIn = providers[id as BuiltInProviderId];
+  if (builtIn) return builtIn;
+
+  const custom = getCustomProviders()[id];
+  if (custom) return custom;
+
+  // Fallback for unknown provider IDs: treat as a generic OpenAI-compatible endpoint.
+  return {
+    id,
+    name: id,
+    description: '',
+    apiKeyRequired: true,
+    baseUrl: '',
+    supportsModelDiscovery: true,
+    supportsFunctions: true,
+    supportsStreaming: true,
+  };
 }
 
 export type ProviderArchetype = 'aggregator' | 'cloud' | 'subscription' | 'local' | 'custom';
@@ -391,16 +408,20 @@ export type ProviderArchetype = 'aggregator' | 'cloud' | 'subscription' | 'local
 export function getProviderArchetype(id: ProviderId): ProviderArchetype {
   if (id === 'openrouter') return 'aggregator';
   const cfg = getProvider(id);
-  if (cfg?.isLocal) return 'local';
+  if (getCustomProviders()[id]) return 'custom';
+  if (cfg.isLocal) return 'local';
   if (id === 'openai-codex') return 'subscription';
   return 'cloud';
 }
 
 export function getAllProviders(): ProviderConfig[] {
-  return Object.values(providers);
+  return [...Object.values(providers), ...Object.values(getCustomProviders())];
 }
 
 export function getDefaultModel(provider: ProviderId): string {
+  // Custom providers have no built-in default; the user must select a model.
+  if (getCustomProviders()[provider]) return '';
+
   switch (provider) {
     case 'openrouter':
       return 'minimax/minimax-m2.7';
@@ -460,7 +481,7 @@ export function modelSupportsVision(providerId: ProviderId, modelId: string): bo
  * Returns undefined if the model isn't in the registry (dynamically discovered).
  */
 export function getModelContextLength(providerId: ProviderId, modelId: string): number | undefined {
-  const provider = providers[providerId];
+  const provider = getProvider(providerId);
   if (!provider?.models) return undefined;
   const model = provider.models.find(m => m.id === modelId);
   return model?.contextLength;

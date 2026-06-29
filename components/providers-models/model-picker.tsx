@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Search, Loader2, Link, MonitorSpeaker } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getProvider } from '@/lib/llm/providers/registry';
+import { getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
 import { getConnectedProviders } from '@/lib/llm/providers/connection-status';
 import { modelsForSlot, matchesSlot, loadProviderModels, SlotModelEntry, SlotKind } from '@/lib/llm/models/model-catalog';
 import { fmtCtx } from './format';
@@ -65,7 +65,13 @@ function vendorLabel(provider: ProviderId, modelId: string): string {
     llamacpp: 'llama.cpp',
     meshllm: 'MeshLLM',
   };
-  return map[provider] ?? provider;
+  if (map[provider]) return map[provider] as string;
+  // Custom providers: use the configured name.
+  try {
+    return getProvider(provider).name;
+  } catch {
+    return provider;
+  }
 }
 
 /** Text colour for the vendor column (no badge background). */
@@ -93,6 +99,8 @@ function stripVendorPrefix(name: string, vendor: string): string {
  *  "anthropic/…" model on OpenRouter). Direct providers name their own vendor,
  *  so there's no separate developer to show. */
 function isDistinctVendor(provider: ProviderId, model: ProviderModel): boolean {
+  // Custom providers are their own vendor.
+  if (getProviderArchetype(provider) === 'custom') return false;
   return getProvider(provider).name.toLowerCase() !== vendorLabel(provider, model.id).toLowerCase();
 }
 

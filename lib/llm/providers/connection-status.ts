@@ -1,5 +1,5 @@
 import { configManager } from '@/lib/config/storage';
-import { getAllProviders, getProviderArchetype } from '@/lib/llm/providers/registry';
+import { getAllProviders, getProviderArchetype, getProvider } from '@/lib/llm/providers/registry';
 import type { ProviderId } from '@/lib/llm/providers/types';
 
 /**
@@ -13,7 +13,14 @@ import type { ProviderId } from '@/lib/llm/providers/types';
  */
 export function isProviderConnected(id: ProviderId): boolean {
   if (configManager.getProviderApiKey(id)) return true;
-  return getProviderArchetype(id) === 'local' && !!configManager.getCachedModels(id);
+  const archetype = getProviderArchetype(id);
+  if (archetype === 'local') return !!configManager.getCachedModels(id);
+  // Custom providers with optional keys are connected once models are cached.
+  if (archetype === 'custom') {
+    const cfg = getProvider(id);
+    return !cfg.apiKeyRequired && !!configManager.getCachedModels(id);
+  }
+  return false;
 }
 
 /** The provider IDs that are currently connected. */

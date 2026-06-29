@@ -6,6 +6,7 @@
 import { ProviderId } from './providers/types';
 import { UsageInfo } from './types';
 import { configManager, type ProviderPricingEntry } from '@/lib/config/storage';
+import { getCustomProviders } from './providers/custom-providers';
 import { logger } from '@/lib/utils';
 
 export const PROVIDER_PRICING: Record<string, { input: number; output: number; reasoning?: number }> = {
@@ -181,17 +182,23 @@ export class CostCalculator {
   }
 
   private static isKnownProvider(provider: string): provider is ProviderId {
-    return (
+    const builtIn =
       provider === 'openrouter' ||
       provider === 'openai' ||
+      provider === 'openai-codex' ||
       provider === 'anthropic' ||
       provider === 'groq' ||
       provider === 'gemini' ||
       provider === 'huggingface' ||
       provider === 'ollama' ||
       provider === 'lmstudio' ||
-      provider === 'sambanova'
-    );
+      provider === 'llamacpp' ||
+      provider === 'meshllm' ||
+      provider === 'sambanova' ||
+      provider === 'zhipu' ||
+      provider === 'minimax';
+    if (builtIn) return true;
+    return !!getCustomProviders()[provider];
   }
   
   /**

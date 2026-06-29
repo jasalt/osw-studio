@@ -156,7 +156,7 @@ function extractOllamaImages(messages: LLMMessage[]): { processedMessages: LLMMe
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, apiKey: clientApiKey, model, tools, context, messages, tool_choice, provider, max_tokens, reasoning, stream: requestStream } = await request.json();
+    const { prompt, apiKey: clientApiKey, model, tools, context, messages, tool_choice, provider, max_tokens, reasoning, stream: requestStream, baseUrl: requestBaseUrl } = await request.json();
 
     const selectedProvider: ProviderId = provider || 'openrouter';
     const providerConfig = getProvider(selectedProvider);
@@ -346,7 +346,7 @@ Habits:
     }
 
     const streamEnabled = requestStream !== false;
-    const apiEndpoint = getApiEndpoint(selectedProvider, providerConfig, model, { apiKey, stream: streamEnabled });
+    const apiEndpoint = getApiEndpoint(selectedProvider, providerConfig, model, { apiKey, stream: streamEnabled }, requestBaseUrl);
 
     // --- Gemini: build entirely different request body ---
     if (selectedProvider === 'gemini') {
@@ -826,8 +826,8 @@ You can make multiple tool calls in a single response. Always include the tool_c
   }
 }
 
-function getApiEndpoint(provider: ProviderId, config: ReturnType<typeof getProvider>, model?: string, options?: { apiKey?: string; stream?: boolean }): string {
-  const baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
+function getApiEndpoint(provider: ProviderId, config: ReturnType<typeof getProvider>, model?: string, options?: { apiKey?: string; stream?: boolean }, overrideBaseUrl?: string): string {
+  const baseUrl = overrideBaseUrl || config.baseUrl || 'https://openrouter.ai/api/v1';
 
   if (provider === 'anthropic') {
     return 'https://api.anthropic.com/v1/messages';

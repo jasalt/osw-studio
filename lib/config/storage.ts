@@ -1,6 +1,14 @@
 
-import { ProviderId, ProviderModel, CodexAuthData, HFAuthData } from '@/lib/llm/providers/types';
+import { ProviderId, ProviderConfig, ProviderModel, CodexAuthData, HFAuthData } from '@/lib/llm/providers/types';
 import { getDefaultModel } from '@/lib/llm/providers/registry';
+import {
+  getCustomProviders,
+  setCustomProviders,
+  saveCustomProvider as saveCustomProviderConfig,
+  removeCustomProvider as removeCustomProviderConfig,
+  generateCustomProviderId as generateCustomProviderIdHelper,
+  buildCustomProviderConfig as buildCustomProviderConfigHelper,
+} from '@/lib/llm/providers/custom-providers';
 import { UsageInfo } from '@/lib/llm/types';
 import type { ModelTemplate } from '@/lib/llm/models/assignment';
 import { BUILT_IN_MODEL_TEMPLATES, isBuiltInTemplateId } from '@/lib/llm/models/registry';
@@ -70,6 +78,8 @@ export interface AppSettings {
   debugStreamEnabled?: boolean;
   modelTemplates?: Record<string, ModelTemplate>;
   defaultTemplateId?: string;
+  /** User-defined OpenAI-compatible providers. Kept in sync with custom-providers storage. */
+  customProviders?: Record<string, ProviderConfig>;
 }
 
 /**
@@ -612,6 +622,39 @@ class ConfigManager {
   }
   getDefaultTemplateId(): string { return this.getSettings().defaultTemplateId || 'default'; }
   setDefaultTemplateId(id: string): void { this.setSetting('defaultTemplateId', id); }
+
+  // Custom provider management
+  getCustomProviders(): Record<string, ProviderConfig> {
+    return getCustomProviders();
+  }
+
+  setCustomProviders(providers: Record<string, ProviderConfig>): void {
+    setCustomProviders(providers);
+    this.setSetting('customProviders', providers);
+  }
+
+  saveCustomProvider(id: string, config: ProviderConfig): void {
+    saveCustomProviderConfig(id, config);
+    this.setSetting('customProviders', getCustomProviders());
+  }
+
+  removeCustomProvider(id: string): void {
+    removeCustomProviderConfig(id);
+    this.setSetting('customProviders', getCustomProviders());
+  }
+
+  generateCustomProviderId(base: string): string {
+    return generateCustomProviderIdHelper(base);
+  }
+
+  buildCustomProviderConfig(
+    id: string,
+    name: string,
+    baseUrl: string,
+    apiKeyRequired: boolean
+  ): ProviderConfig {
+    return buildCustomProviderConfigHelper(id, name, baseUrl, apiKeyRequired);
+  }
 }
 
 export const configManager = new ConfigManager();

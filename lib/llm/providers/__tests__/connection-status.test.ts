@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { configManager } from '@/lib/config/storage';
 import { isProviderConnected, getConnectedProviders, hasAnyConnectedProvider } from '@/lib/llm/providers/connection-status';
 import type { ProviderModel } from '@/lib/llm/providers/types';
+import { saveCustomProvider, removeCustomProvider } from '@/lib/llm/providers/custom-providers';
 
 function stubBrowserStorage() {
   const store = new Map<string, string>();
@@ -16,7 +17,9 @@ function stubBrowserStorage() {
   });
 }
 beforeEach(stubBrowserStorage);
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const MODELS: ProviderModel[] = [{ id: 'm/1', name: 'm1', contextLength: 1000 } as ProviderModel];
 
@@ -51,5 +54,39 @@ describe('getConnectedProviders / hasAnyConnectedProvider', () => {
     configManager.setProviderApiKey('anthropic', 'sk-test');
     expect(getConnectedProviders()).toContain('anthropic');
     expect(hasAnyConnectedProvider()).toBe(true);
+  });
+
+  it('treats a custom provider with a key as connected', () => {
+    saveCustomProvider('custom-keyed', {
+      id: 'custom-keyed',
+      name: 'Custom Keyed',
+      description: 'Test',
+      apiKeyRequired: true,
+      baseUrl: 'https://example.com/v1',
+      supportsModelDiscovery: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+    });
+    configManager.setProviderApiKey('custom-keyed', 'sk-test');
+    expect(isProviderConnected('custom-keyed')).toBe(true);
+    expect(getConnectedProviders()).toContain('custom-keyed');
+    removeCustomProvider('custom-keyed');
+  });
+
+  it('treats a custom provider with optional key as connected once models are cached', () => {
+    saveCustomProvider('custom-optional', {
+      id: 'custom-optional',
+      name: 'Custom Optional',
+      description: 'Test',
+      apiKeyRequired: false,
+      baseUrl: 'https://example.com/v1',
+      supportsModelDiscovery: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+    });
+    expect(isProviderConnected('custom-optional')).toBe(false);
+    configManager.setCachedModels('custom-optional', MODELS);
+    expect(isProviderConnected('custom-optional')).toBe(true);
+    removeCustomProvider('custom-optional');
   });
 });
