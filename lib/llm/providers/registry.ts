@@ -418,6 +418,19 @@ export function getAllProviders(): ProviderConfig[] {
   return [...Object.values(providers), ...Object.values(getCustomProviders())];
 }
 
+/**
+ * Providers a user can actually add/use in the current deployment.
+ * On managed/hosted instances, built-in local providers (Ollama/LM Studio/llama.cpp)
+ * aren't offered — the hosted instance has no local inference. Custom endpoints ARE
+ * offered everywhere (external-only; enforced by assertPublicHttpUrl plus network-level
+ * egress filtering on hosted instances). Standalone/desktop offer everything.
+ */
+export function getOfferableProviders(): ProviderConfig[] {
+  const managed = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
+  if (!managed) return getAllProviders();
+  return getAllProviders().filter((p) => !p.isLocal);
+}
+
 export function getDefaultModel(provider: ProviderId): string {
   // Custom providers have no built-in default; the user must select a model.
   if (getCustomProviders()[provider]) return '';

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
+import { assertPublicHttpUrl } from '@/lib/llm/providers/url-safety';
 import { logger } from '@/lib/utils';
 
 export async function POST(request: NextRequest) {
@@ -15,8 +16,14 @@ export async function POST(request: NextRequest) {
     }
 
     const providerConfig = getProvider(provider as ProviderId);
-    const effectiveBaseUrl = requestBaseUrl || providerConfig.baseUrl;
-    
+    const customBaseUrl = requestBaseUrl;
+    const effectiveBaseUrl = customBaseUrl || providerConfig.baseUrl;
+
+    // Custom endpoints are external-only: reject loopback/private/non-http URLs. Built-in
+    // local providers (Ollama/LM Studio/llama.cpp) legitimately point at localhost and are
+    // exempt. On hosted instances, network egress filtering blocks DNS-rebinding past this.
+    if (customBaseUrl && !providerConfig.isLocal) assertPublicHttpUrl(customBaseUrl);
+
     // If no API key but required (and not OAuth), return empty array
     if (providerConfig.apiKeyRequired && !apiKey && !providerConfig.usesOAuth) {
       return NextResponse.json({ models: [] });
@@ -202,20 +209,23 @@ export async function POST(request: NextRequest) {
                 const defaultData = JSON.parse(responseText);
                 // OpenAI-compatible shape: { data: [...] }. Some providers use { models: [...] }
                 // or a plain array. Each entry may be a string id or an object with id/name/model.
-              const list = Array.isArray(defaultData)
-                ? defaultData
-                : (defaultData.data || defaultData.models || defaultData.list || []);
-              models = list
-                .map((m: any) => (typeof m === 'string' ? m : (m.id || m.model || m.name || m.model_id || m.slug)))
-                .filter(Boolean);
+                const list = Array.isArray(defaultData)
+                  ? defaultData
+                  : (defaultData.data || defaultData.models || defaultData.list || []);
+                models = list
+                  .map((m: any) => (typeof m === 'string' ? m : (m.id || m.model || m.name || m.model_id || m.slug)))
+                  .filter(Boolean);
                 if (models.length === 0) {
-                  logger.warn(`[models] ${provider} /models parsed 0 models. Raw response (first 800 chars):`, responseText.slice(0, 800));
+                  logger.warn(`[models] ${provider} /models returned no recognizable models`);
+                  logger.debug(`[models] ${provider} raw response:`, responseText.slice(0, 300));
                 }
               } catch {
-                logger.warn(`[models] ${provider} /models returned non-JSON. Raw response (first 800 chars):`, responseText.slice(0, 800));
+                logger.warn(`[models] ${provider} /models returned non-JSON`);
+                logger.debug(`[models] ${provider} raw response:`, responseText.slice(0, 300));
               }
             } else {
-              logger.warn(`[models] ${provider} /models returned HTTP ${defaultResponse.status}. Raw response (first 800 chars):`, responseText.slice(0, 800));
+              logger.warn(`[models] ${provider} /models returned HTTP ${defaultResponse.status}`);
+              logger.debug(`[models] ${provider} raw response:`, responseText.slice(0, 300));
             }
           }
           break;

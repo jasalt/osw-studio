@@ -8,6 +8,7 @@
 import { Project, VirtualFile, CustomTemplate } from './types';
 import { Skill } from './skills/types';
 import type { ModelTemplate } from '@/lib/llm/models/assignment';
+import type { CustomConnection } from '@/lib/llm/providers/connection-record';
 import { EnhancedSyncStatusResponse } from './sync-types';
 
 export interface SyncResult {
@@ -62,6 +63,15 @@ export interface ModelTemplatesListSyncResult extends SyncResult {
   modelTemplates?: ModelTemplate[];
   created?: number;
   updated?: number;
+}
+
+export interface ConnectionSyncResult extends SyncResult {
+  connection?: CustomConnection;
+  action?: 'created' | 'updated';
+}
+
+export interface ConnectionsListSyncResult extends SyncResult {
+  connections?: CustomConnection[];
 }
 
 // Helper: Convert ArrayBuffer to base64 for JSON transport
@@ -661,6 +671,58 @@ export class SyncManager {
   async deleteModelTemplateFromServer(id: string): Promise<SyncResult> {
     try {
       const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/model-templates/${encodeURIComponent(id)}`)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  // ============================================
+  // Connection Sync Methods
+  // ============================================
+
+  /** Pull all custom connections from server */
+  async pullConnections(): Promise<ConnectionsListSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl('/sync/connections')}`, { method: 'GET' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, connections: data.connections || [] };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Push a single custom connection to server */
+  async pushConnection(connection: CustomConnection): Promise<ConnectionSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/connections/${encodeURIComponent(connection.id)}`)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, connection: data.connection, action: data.action };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Delete a custom connection from server */
+  async deleteConnectionFromServer(id: string): Promise<SyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/connections/${encodeURIComponent(id)}`)}`, { method: 'DELETE' });
       if (!response.ok) {
         const errorData = await response.json();
         return { success: false, error: errorData.error || `HTTP ${response.status}` };

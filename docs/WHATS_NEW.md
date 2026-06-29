@@ -6,6 +6,16 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.79.0 - Custom Providers (2026-06-30)
+
+You can now add any OpenAI-compatible API endpoint as a provider — give it a name, the base URL, and a token if it needs one, and its models show up like any other provider's. Only external endpoints are supported. In Server Mode, your provider connections also sync across devices now, the same way templates do: the connection details travel, but API keys stay on each device. Thanks to @jasalt, whose pull request got this started.
+
+### Providers & models
+- **Custom providers**: Add any OpenAI-compatible endpoint (external only) and use its models like any other provider's
+- **Connection sync**: In Server Mode, provider connections sync across devices; API keys stay on each device
+
+---
+
 ## v1.78.0 - Per-Project Models, Voice & Images (2026-06-26)
 
 Models are now set per project instead of one global choice. Each project picks an agent model that does the work, and you can save a setup as a named template to reuse elsewhere. Your current provider and model carry over as a "Default" template, so projects you've already made keep working unchanged. Two new inputs arrive alongside it: you can record voice from the chat box, and the AI can generate images from a prompt while it builds. API keys are now managed as named connections, kept separate from model choices.

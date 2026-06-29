@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.79.0 - 2026-06-30
+
+### Providers & models
+- **Custom providers**: Add any OpenAI-compatible API endpoint as a provider — give it a name, the base URL, and an optional API token, and its models are discovered like any other provider's. Only external (public) endpoints are supported; a local or private address is rejected when you add it. Thanks to [@jasalt](https://github.com/jasalt) for the initial implementation ([#7](https://github.com/o-stahl/osw-studio/pull/7)).
+- **Connection sync (Server Mode)**: Your provider connections now sync across devices, alongside skills, templates, and model templates. Only the connection definition — its name and endpoint — syncs; API keys stay on each device and are never sent to the server.
+- **Hosted instances**: On managed/hosted instances, local providers (Ollama, LM Studio, llama.cpp) aren't offered, since a hosted instance has no local inference.
+
 ## v1.78.2 - 2026-06-28
 
 ### Fixes

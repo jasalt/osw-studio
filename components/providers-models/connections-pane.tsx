@@ -9,8 +9,9 @@ import { Eye, EyeOff, Loader2, ExternalLink, MoreVertical, Pencil, RefreshCw, Un
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
 import { validateApiKey as checkApiKey } from '@/lib/llm/llm-client';
-import { getAllProviders, getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
+import { getAllProviders, getOfferableProviders, getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
 import { isProviderConnected } from '@/lib/llm/providers/connection-status';
+import { assertPublicHttpUrl } from '@/lib/llm/providers/url-safety';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { ConnectionBadge } from '@/components/settings/connection-badge';
@@ -20,7 +21,7 @@ import { HFAuthPanel } from '@/components/settings/hf-auth-panel';
 import { Drawer } from './drawer';
 import type { ProviderId } from '@/lib/llm/providers/types';
 import { disconnectCodex } from '@/lib/auth/codex-auth';
-import { cn } from '@/lib/utils';
+import { cn, logger } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -308,6 +309,14 @@ function ConnectCustomBody({ onConnected, onBack }: ConnectCustomBodyProps) {
       toast.error('Please enter an API token');
       return;
     }
+    // External-only: custom endpoints must be public. Reject loopback/private/non-http
+    // before persisting anything.
+    try {
+      assertPublicHttpUrl(trimmedUrl);
+    } catch {
+      toast.error('Only external (public) endpoints are supported. Local or private addresses aren’t allowed for custom providers.');
+      return;
+    }
 
     const id = configManager.generateCustomProviderId(trimmedName);
     const cfg = configManager.buildCustomProviderConfig(
@@ -317,30 +326,27 @@ function ConnectCustomBody({ onConnected, onBack }: ConnectCustomBodyProps) {
       requireApiKey
     );
 
-    configManager.saveCustomProvider(id, cfg);
-    if (currentApiKey.trim()) {
-      configManager.setProviderApiKey(id, currentApiKey.trim());
-    }
-    configManager.clearModelCache(id);
-
+    const key = currentApiKey.trim();
     setTesting(true);
+    // Persist the connection regardless of model discovery — some valid OpenAI-compatible
+    // endpoints don't expose /models. We probe afterwards and surface the outcome.
+    configManager.saveCustomProvider(id, cfg);
+    if (key) configManager.setProviderApiKey(id, key);
+    configManager.clearModelCache(id);
     try {
       const models = await loadProviderModels(id);
       if (models.length > 0) {
         toast.success(`Connected to ${cfg.name} · ${models.length} model${models.length === 1 ? '' : 's'}`);
-        dispatchApiKeyEvent(id, !!currentApiKey.trim());
-        onConnected();
       } else {
-        // eslint-disable-next-line no-console
-        console.error(`[custom-provider] ${cfg.name} returned 0 models; check server logs for raw /models response`);
-        toast.error(`No models returned by ${cfg.name}. Check the server log for the raw response.`);
+        toast.warning(`Added ${cfg.name}, but no models were listed. The endpoint may not expose /models — check the URL and token, or pick a model manually.`);
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`[custom-provider] ${cfg.name} connection error:`, err);
-      toast.error(`Couldn't reach ${cfg.name}. Check the endpoint and token.`);
+      logger.error(`[custom-provider] ${trimmedName} model discovery failed:`, err);
+      toast.warning(`Added ${cfg.name}, but couldn't reach its model list. Check the endpoint URL and token.`);
     } finally {
       setTesting(false);
+      dispatchApiKeyEvent(id, !!key);
+      onConnected();
     }
   };
 
@@ -352,7 +358,7 @@ function ConnectCustomBody({ onConnected, onBack }: ConnectCustomBodyProps) {
           id="custom-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g., Opencode Go"
+          placeholder="e.g., My provider"
           className="mt-2"
           disabled={testing}
         />
@@ -364,14 +370,15 @@ function ConnectCustomBody({ onConnected, onBack }: ConnectCustomBodyProps) {
           id="custom-url"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://opencode.ai/zen/go/v1"
+          placeholder="https://api.example.com/v1"
           className="mt-2"
           disabled={testing}
         />
         <p className="text-xs text-muted-foreground mt-2">
           Base URL for an OpenAI-compatible API. The app will append{' '}
           <code className="text-xs">/chat/completions</code> and{' '}
-          <code className="text-xs">/models</code>.
+          <code className="text-xs">/models</code>. Only external (public) endpoints
+          are supported — local addresses aren’t allowed.
         </p>
       </div>
 
@@ -447,7 +454,7 @@ interface ConnectChooseBodyProps {
 function ConnectChooseBody({ onChoose, onChooseCustom }: ConnectChooseBodyProps) {
   const [query, setQuery] = useState('');
 
-  const allProviders = getAllProviders();
+  const allProviders = getOfferableProviders();
   const unconnected = allProviders.filter((p) => !isProviderConnected(p.id));
 
   const filtered = query.trim()
@@ -678,6 +685,12 @@ function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyPr
     const url = customUrl.trim();
     if (!name || !url) {
       toast.error('Name and endpoint URL are required');
+      return;
+    }
+    try {
+      assertPublicHttpUrl(url);
+    } catch {
+      toast.error('Only external (public) endpoints are supported. Local or private addresses aren’t allowed for custom providers.');
       return;
     }
     setSavingCustom(true);
@@ -965,6 +978,7 @@ export function ConnectionsPane() {
     }
   };
 
+  const isManagedMode = !!process.env.NEXT_PUBLIC_GATEWAY_URL;
   const allProviders = getAllProviders();
   const connectedProviders = allProviders.filter((p) => isProviderConnected(p.id));
 
@@ -1045,27 +1059,29 @@ export function ConnectionsPane() {
         </div>
       )}
 
-      {/* Local section */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-          Local
-        </p>
-        {localProviders.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-1 pl-1">None yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {localProviders.map((p) => (
-              <ConnectionRow
-                key={p.id}
-                providerId={p.id}
-                onDisconnect={() => handleDisconnect(p.id)}
-                onEdit={() => openEditDrawer(p.id)}
-                onRevalidate={() => handleRevalidate(p.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Local section — hidden on the managed gateway (no local inference there) */}
+      {!isManagedMode && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Local
+          </p>
+          {localProviders.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-1 pl-1">None yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {localProviders.map((p) => (
+                <ConnectionRow
+                  key={p.id}
+                  providerId={p.id}
+                  onDisconnect={() => handleDisconnect(p.id)}
+                  onEdit={() => openEditDrawer(p.id)}
+                  onRevalidate={() => handleRevalidate(p.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add provider button */}
       <div>

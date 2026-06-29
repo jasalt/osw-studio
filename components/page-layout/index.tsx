@@ -8,7 +8,7 @@ import { X } from 'lucide-react';
 import { SyncDialog } from '@/components/project-manager/sync-dialog';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
-import { setAutoSyncWorkspaceId, fetchSyncStatus } from '@/lib/vfs/auto-sync';
+import { setAutoSyncWorkspaceId, fetchSyncStatus, pullConnectionsIntoCache } from '@/lib/vfs/auto-sync';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 
 interface PageLayoutProps {
@@ -50,6 +50,7 @@ export function PageLayout({
     if (workspaceId) {
       setAutoSyncWorkspaceId(workspaceId);
       getSyncManager(workspaceId);
+      void pullConnectionsIntoCache();
     }
 
     if (!isServerMode || !showSidebar || !workspaceId) return;

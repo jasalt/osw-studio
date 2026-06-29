@@ -78,8 +78,6 @@ export interface AppSettings {
   debugStreamEnabled?: boolean;
   modelTemplates?: Record<string, ModelTemplate>;
   defaultTemplateId?: string;
-  /** User-defined OpenAI-compatible providers. Kept in sync with custom-providers storage. */
-  customProviders?: Record<string, ProviderConfig>;
 }
 
 /**
@@ -630,17 +628,20 @@ class ConfigManager {
 
   setCustomProviders(providers: Record<string, ProviderConfig>): void {
     setCustomProviders(providers);
-    this.setSetting('customProviders', providers);
   }
 
   saveCustomProvider(id: string, config: ProviderConfig): void {
     saveCustomProviderConfig(id, config);
-    this.setSetting('customProviders', getCustomProviders());
+    if (typeof window !== 'undefined') {
+      import('@/lib/vfs/auto-sync').then(({ autoSyncConnection }) => autoSyncConnection(config)).catch((e) => logger.debug('[ConfigManager] connection auto-sync trigger failed', e));
+    }
   }
 
   removeCustomProvider(id: string): void {
     removeCustomProviderConfig(id);
-    this.setSetting('customProviders', getCustomProviders());
+    if (typeof window !== 'undefined') {
+      import('@/lib/vfs/auto-sync').then(({ autoDeleteConnection }) => autoDeleteConnection(id)).catch((e) => logger.debug('[ConfigManager] connection auto-delete trigger failed', e));
+    }
   }
 
   generateCustomProviderId(base: string): string {

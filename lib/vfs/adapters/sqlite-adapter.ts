@@ -20,6 +20,7 @@ import { StorageAdapter } from './types';
 import { Project, VirtualFile, FileTreeNode, CustomTemplate, Deployment, EdgeFunction, ServerFunction, Secret, ScheduledFunction } from '../types';
 import { Skill } from '../skills/types';
 import type { ModelTemplate, ModelAssignment } from '@/lib/llm/models/assignment';
+import type { CustomConnection } from '@/lib/llm/providers/connection-record';
 import {
   getCoreDatabase,
   getDeploymentDatabase,
@@ -363,7 +364,24 @@ const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE custom_templates ADD COLUMN updated_at TEXT`);
       }
     }
-  }
+  },
+  {
+    id: 'add_connections_v8',
+    up: (db) => {
+      // User-defined custom provider definitions synced from the client.
+      // Never stores API keys — those remain client-side only.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS connections (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          base_url TEXT NOT NULL,
+          format TEXT NOT NULL DEFAULT 'openai',
+          api_key_required INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL
+        )
+      `);
+    }
+  },
 ];
 
 /**
@@ -1398,6 +1416,68 @@ export class SQLiteAdapter implements StorageAdapter {
       assignment: parseJSON(row.assignment as string, {} as ModelAssignment),
       updatedAt: parseDate(row.updated_at as string),
       builtin: false,
+    };
+  }
+
+  // ============================================
+  // Connections (user-defined custom providers; stored in core database)
+  // ============================================
+
+  async createConnection(c: CustomConnection): Promise<void> {
+    const db = this.getDB();
+    db.prepare(`
+      INSERT INTO connections (id, name, base_url, format, api_key_required, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      c.id,
+      c.name,
+      c.baseUrl,
+      c.format,
+      c.apiKeyRequired ? 1 : 0,
+      toISOStringRequired(c.updatedAt ?? new Date()),
+    );
+  }
+
+  async updateConnection(c: CustomConnection): Promise<void> {
+    const db = this.getDB();
+    db.prepare(`
+      UPDATE connections SET name = ?, base_url = ?, format = ?, api_key_required = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      c.name,
+      c.baseUrl,
+      c.format,
+      c.apiKeyRequired ? 1 : 0,
+      toISOStringRequired(c.updatedAt ?? new Date()),
+      c.id,
+    );
+  }
+
+  async getConnection(id: string): Promise<CustomConnection | null> {
+    const db = this.getDB();
+    const row = db.prepare('SELECT * FROM connections WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToConnection(row) : null;
+  }
+
+  async getAllConnections(): Promise<CustomConnection[]> {
+    const db = this.getDB();
+    const rows = db.prepare('SELECT * FROM connections ORDER BY name').all() as Record<string, unknown>[];
+    return rows.map((row) => this.rowToConnection(row));
+  }
+
+  async deleteConnection(id: string): Promise<void> {
+    const db = this.getDB();
+    db.prepare('DELETE FROM connections WHERE id = ?').run(id);
+  }
+
+  private rowToConnection(row: Record<string, unknown>): CustomConnection {
+    return {
+      id: row.id as string,
+      name: row.name as string,
+      baseUrl: row.base_url as string,
+      format: (row.format as 'openai') ?? 'openai',
+      apiKeyRequired: row.api_key_required === 1,
+      updatedAt: row.updated_at as string,
     };
   }
 

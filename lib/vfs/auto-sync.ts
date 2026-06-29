@@ -600,3 +600,55 @@ export async function autoDeleteModelTemplate(templateId: string): Promise<void>
     logger.error(`[AutoSync] Failed to delete model template ${templateId} from server:`, error);
   }
 }
+
+/**
+ * Auto-sync a custom provider connection to the server (non-blocking, key-less)
+ */
+export async function autoSyncConnection(cfg: import('@/lib/llm/providers/types').ProviderConfig): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  try {
+    const { toConnectionRecord } = await import('@/lib/llm/providers/connection-record');
+    const { getSyncManager } = await import('./sync-manager');
+    await getSyncManager().pushConnection(toConnectionRecord(cfg));
+    logger.debug(`[AutoSync] Connection ${cfg.id} synced`);
+  } catch (error) {
+    logger.error(`[AutoSync] Failed to sync connection ${cfg.id}:`, error);
+  }
+}
+
+/**
+ * Pull custom provider connections from the server into the local cache (server mode only).
+ * Keys are never pulled — only definitions. Uses the low-level cache writer so it does NOT
+ * re-trigger auto-sync (which would cause a pull->push loop).
+ */
+export async function pullConnectionsIntoCache(): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  try {
+    const { getSyncManager } = await import('./sync-manager');
+    const result = await getSyncManager().pullConnections();
+    if (!result.success || !result.connections?.length) return;
+    const { getCustomProviders, setCustomProviders } = await import('@/lib/llm/providers/custom-providers');
+    const { fromConnectionRecord } = await import('@/lib/llm/providers/connection-record');
+    const merged = { ...getCustomProviders() };
+    for (const rec of result.connections) {
+      merged[rec.id] = fromConnectionRecord(rec);
+    }
+    setCustomProviders(merged);
+    logger.debug(`[AutoSync] Pulled ${result.connections.length} connection(s) into cache`);
+  } catch (error) {
+    logger.error('[AutoSync] Failed to pull connections into cache:', error);
+  }
+}
+
+/**
+ * Auto-delete a custom provider connection from the server (non-blocking)
+ */
+export async function autoDeleteConnection(id: string): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  try {
+    await apiFetch(getAutoSyncApiUrl(`/sync/connections/${id}`), { method: 'DELETE' });
+    logger.debug(`[AutoSync] Connection ${id} deleted from server`);
+  } catch (error) {
+    logger.error(`[AutoSync] Failed to delete connection ${id} from server:`, error);
+  }
+}

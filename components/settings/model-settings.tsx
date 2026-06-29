@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ProviderId } from '@/lib/llm/providers/types';
-import { getAllProviders, getProvider } from '@/lib/llm/providers/registry';
+import { getOfferableProviders, getProvider } from '@/lib/llm/providers/registry';
 import { CodexAuthPanel } from '@/components/settings/codex-auth-panel';
 import { HFAuthPanel } from '@/components/settings/hf-auth-panel';
 import { ConnectionBadge } from '@/components/settings/connection-badge';
@@ -207,7 +207,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
             </SelectValue>
           </SelectTrigger>
           <SelectContent className="max-h-[400px]">
-            {getAllProviders()
+            {getOfferableProviders()
               .filter(p => codexAvailable || p.id !== 'openai-codex')
               .map(provider => (
               <SelectItem key={provider.id} value={provider.id} className="py-2.5">

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider, getDefaultModel } from '@/lib/llm/providers/registry';
+import { assertPublicHttpUrl } from '@/lib/llm/providers/url-safety';
 import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock } from '@/lib/llm/types';
 import { applyReasoningReplayPolicy } from '@/lib/llm/reasoning-replay';
 import { consolidateSystemMessages } from '@/lib/llm/consolidate-system-messages';
@@ -162,6 +163,13 @@ export async function POST(request: NextRequest) {
     const providerConfig = getProvider(selectedProvider);
 
     const apiKey = clientApiKey;
+
+    const customBaseUrl = requestBaseUrl;
+
+    // Custom endpoints are external-only: reject loopback/private/non-http URLs. Built-in
+    // local providers (Ollama/LM Studio/llama.cpp) legitimately point at localhost and are
+    // exempt. On hosted instances, network egress filtering blocks DNS-rebinding past this.
+    if (customBaseUrl && !providerConfig.isLocal) assertPublicHttpUrl(customBaseUrl);
 
     if (!prompt && !messages) {
       return NextResponse.json(
@@ -346,7 +354,7 @@ Habits:
     }
 
     const streamEnabled = requestStream !== false;
-    const apiEndpoint = getApiEndpoint(selectedProvider, providerConfig, model, { apiKey, stream: streamEnabled }, requestBaseUrl);
+    const apiEndpoint = getApiEndpoint(selectedProvider, providerConfig, model, { apiKey, stream: streamEnabled }, customBaseUrl);
 
     // --- Gemini: build entirely different request body ---
     if (selectedProvider === 'gemini') {
