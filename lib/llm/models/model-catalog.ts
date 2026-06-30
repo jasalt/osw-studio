@@ -170,7 +170,7 @@ export async function loadProviderModels(provider: ProviderId): Promise<Provider
       loadedModels = modelEntries.map((entry) => {
         const id = typeof entry === 'string' ? entry : entry.id;
         const contextLength =
-          typeof entry === 'object' && entry.contextLength ? entry.contextLength : 32000;
+          typeof entry === 'object' && entry.contextLength ? entry.contextLength : 128000;
         const inputModalities =
           typeof entry === 'object' && entry.inputModalities
             ? (entry.inputModalities as InputModality[])
