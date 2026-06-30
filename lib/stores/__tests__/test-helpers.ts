@@ -30,6 +30,10 @@ export function setupOrchestratorMocks() {
       getProviderModel: () => 'gpt-4',
       getProviderApiKey: () => 'sk-test',
       getCachedModels: () => null,
+      getReasoningEnabled: () => false,
+      isCompactionEnabled: () => false,
+      getCompactionLimit: () => null,
+      getDebugStreamEnabled: () => false,
     },
     migrateBackendKey: () => false,
   }));

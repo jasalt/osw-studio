@@ -952,13 +952,31 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
   },
 
   startServerGeneration: async (projectId: string, prompt: string, chatMode: boolean, images?: PendingImage[], options?: StartGenerationOptions) => {
-    const provider = configManager.getSelectedProvider();
+    // Resolve the agent model from the project's per-project config, mirroring
+    // the browser-mode path.
+    let assignment;
+    try {
+      assignment = await getProjectAssignment(projectId);
+    } catch (err) {
+      logger.error('[ServerGen] Failed to resolve project model assignment:', err);
+      toast.error('Could not resolve this project\'s model configuration. Check your provider settings.');
+      return;
+    }
+    const provider = assignment.agent.provider;
+    const providerConfig = getProvider(provider);
     const apiKey = configManager.getProviderApiKey(provider);
-    const model = configManager.getProviderModel(provider) || '';
+    const model = assignment.agent.model;
     const projectName = get().projectName || 'Untitled';
 
+    if (!model) {
+      toast.error(`No model selected for ${providerConfig.name}. Please select a model in settings.`);
+      return;
+    }
+
+    // Server-mode generation always requires an API key in the request body
+    // (the backend has no server-side auth resolution for the user's provider).
     if (!apiKey) {
-      toast.error('API key required');
+      toast.error(`Please set your ${providerConfig.name} API key in settings`);
       return;
     }
 

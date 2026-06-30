@@ -58,8 +58,12 @@ Use consistent navigation across pages:
 </nav>
 
 REUSABLE CONTENT:
-Since there is no template engine, duplicate shared elements (nav, footer) across pages,
-or use JavaScript to load them dynamically:
+Since there is no template engine, the simplest reliable approach is to duplicate shared
+elements (nav, footer) directly in each page's HTML. This keeps them visible without
+JavaScript and works wherever the site is hosted.
+
+You can also load them at runtime, but the fetch path is root-relative, so it only works
+when the site is served from the domain root (it breaks under a subpath):
 
 // Load shared nav into all pages
 fetch('/components/nav.html')

@@ -1114,6 +1114,17 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
       processedHtml += injectedScripts;
     }
 
+    // Expose the complete blob-URL map to the iframe so the runtime fetch/XHR
+    // interceptor can resolve any VFS path (e.g. fetch('/components/nav.html')),
+    // not just the partial map baked into the page during compilation.
+    const vfsMapJson = JSON.stringify(Object.fromEntries(projectToUse.blobUrls)).replace(/</g, '\\u003c');
+    const vfsMapScript = `<script>window.__oswVfsBlobUrls = ${vfsMapJson};</script>`;
+    if (processedHtml.includes('<head>')) {
+      processedHtml = processedHtml.replace('<head>', '<head>' + vfsMapScript);
+    } else {
+      processedHtml = vfsMapScript + processedHtml;
+    }
+
     // Clear stale runtime errors before loading new content —
     // only errors from this compilation should be in the buffer.
     clearRuntimeErrors();

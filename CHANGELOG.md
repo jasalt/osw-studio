@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.80.1 - 2026-07-01
+
+### Fixes
+- **Server Mode: generation no longer fails for per-project model setups**: When a project's agent model was set through the per-project picker (rather than a global default), server-mode generation sent an empty model to the backend and failed with "Missing required fields: ... model". It hit newer providers hardest — opencode-go has no global default model to fall back on, so it failed every time. Server-mode generation now resolves the model from the project's own configuration, matching browser mode.
+- **Preview: dynamically fetched files no longer 404**: In static projects, loading a shared partial at runtime (e.g. `fetch('/components/nav.html')` to inject a nav or footer) returned a 404 in the preview, even though the file existed. The preview only resolved its asset map for files referenced as attributes (`<img>`, `<link>`, `<a>`), so a path fetched from JavaScript escaped to the real host and missed. The preview now resolves any project path the same way, so these fetches work. The static project guidance also leads with duplicating shared elements as the simplest reliable approach, and notes that the fetch approach is root-relative — it works when the site is served from the domain root but not under a subpath. ([#10](https://github.com/o-stahl/osw-studio/issues/10))
+
 ## v1.80.0 - 2026-06-30
 
 ### Providers & models
