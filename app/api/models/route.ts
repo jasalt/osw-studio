@@ -195,6 +195,22 @@ export async function POST(request: NextRequest) {
           }
           break;
 
+        case 'opencode-go': {
+          const mdResp = await fetch('https://models.dev/api.json');
+          if (mdResp.ok) {
+            const mdData = await mdResp.json();
+            const ocg = (mdData['opencode-go']?.models ?? {}) as Record<string, any>;
+            models = Object.values(ocg)
+              .filter((m: any) => m.status !== 'deprecated')
+              .map((m: any) => ({
+                id: m.id,
+                contextLength: m.limit?.context,
+                inputModalities: m.modalities?.input,
+              }));
+          }
+          break;
+        }
+
         default:
           // For other OpenAI-compatible providers (including custom ones)
           if (effectiveBaseUrl) {

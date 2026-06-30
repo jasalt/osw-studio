@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.80.0 - 2026-06-30
+
+### Providers & models
+- **Opencode Go provider**: Added Opencode Go as a built-in provider — a subscription service with a range of open-weight models (GLM, Kimi, DeepSeek, MiMo, MiniMax, Qwen). Add your token under Connections and its models appear like any other provider's, with their context lengths and input types fetched from models.dev. Some of its models use the OpenAI API format and others the Anthropic format; the correct one is used per model automatically. ([#8](https://github.com/o-stahl/osw-studio/issues/8))
+
 ## v1.79.0 - 2026-06-30
 
 ### Providers & models

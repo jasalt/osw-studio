@@ -6,6 +6,15 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.80.0 - Opencode Go (2026-06-30)
+
+Added Opencode Go as a provider — a subscription service with a range of open-weight models (GLM, Kimi, DeepSeek, MiMo, MiniMax, Qwen). Add your token under Connections and its models show up like any other provider's, with context lengths and input types pulled from models.dev.
+
+### Providers & models
+- **Opencode Go**: A new built-in provider for the subscription. Its models span two different API formats (some OpenAI-style, some Anthropic-style), and the right one is used per model automatically
+
+---
+
 ## v1.79.0 - Custom Providers (2026-06-30)
 
 You can now add any OpenAI-compatible API endpoint as a provider — give it a name, the base URL, and a token if it needs one, and its models show up like any other provider's. Only external endpoints are supported. In Server Mode, your provider connections also sync across devices now, the same way templates do: the connection details travel, but API keys stay on each device. Thanks to @jasalt, whose pull request got this started.

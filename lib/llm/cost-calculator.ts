@@ -196,7 +196,8 @@ export class CostCalculator {
       provider === 'meshllm' ||
       provider === 'sambanova' ||
       provider === 'zhipu' ||
-      provider === 'minimax';
+      provider === 'minimax' ||
+      provider === 'opencode-go';
     if (builtIn) return true;
     return !!getCustomProviders()[provider];
   }

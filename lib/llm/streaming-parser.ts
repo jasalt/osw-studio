@@ -3,8 +3,10 @@
  */
 
 import { ToolCall, UsageInfo, ReasoningDetail } from './types';
+import { ProviderId } from './providers/types';
 import { logger } from '../utils';
 import { VirtualFile } from '@/lib/vfs';
+import { resolveWireFormat } from './providers/wire-format';
 
 // Re-export for consumers that import from streaming-parser
 export type { ReasoningDetail };
@@ -48,6 +50,7 @@ export async function parseStreamingResponse(
   options: StreamParserOptions
 ): Promise<StreamResponse> {
   const { provider, suppressAssistantDelta = false, onProgress } = options;
+  const isAnthropic = resolveWireFormat(provider as ProviderId, options.model) === 'anthropic';
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response stream');
 
@@ -219,7 +222,7 @@ export async function parseStreamingResponse(
               continue;
             }
 
-            if (provider === 'anthropic') {
+            if (isAnthropic) {
               // Handle Anthropic streaming format
               // Anthropic usage: input_tokens in message_start, output_tokens in message_delta
               if (json.type === 'message_start' && json.message?.usage) {
@@ -582,7 +585,7 @@ export async function parseStreamingResponse(
             }
 
             // Parse usage info (OpenAI-compatible format; Anthropic handled above)
-            if (json.usage && provider !== 'anthropic') {
+            if (json.usage && !isAnthropic) {
               const reportedCost = typeof json.usage.cost === 'number' && json.usage.cost > 0
                 ? json.usage.cost : undefined;
               usageInfo = {

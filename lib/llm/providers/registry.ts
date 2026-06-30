@@ -381,6 +381,17 @@ export const providers: Record<BuiltInProviderId, ProviderConfig> = {
     supportsFunctions: true,
     supportsStreaming: true
   },
+  'opencode-go': {
+    id: 'opencode-go',
+    name: 'Opencode Go',
+    description: 'Opencode Go subscription. Models and their capabilities are fetched from models.dev.',
+    apiKeyRequired: true,
+    apiKeyPlaceholder: 'sk-...',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    supportsModelDiscovery: true,
+    supportsFunctions: true,
+    supportsStreaming: true,
+  },
 };
 
 export function getProvider(id: ProviderId): ProviderConfig {
@@ -462,6 +473,8 @@ export function getDefaultModel(provider: ProviderId): string {
       return 'glm-5';
     case 'minimax':
       return 'MiniMax-M2.7';
+    case 'opencode-go':
+      return '';
     default:
       return 'minimax/minimax-m2.7';
   }

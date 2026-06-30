@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider, getDefaultModel } from '@/lib/llm/providers/registry';
+import { getApiEndpoint, buildHeaders, resolveTemperature } from '@/lib/llm/request-builder';
 import { assertPublicHttpUrl } from '@/lib/llm/providers/url-safety';
+import { resolveWireFormat, WireFormat } from '@/lib/llm/providers/wire-format';
 import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock } from '@/lib/llm/types';
 import { applyReasoningReplayPolicy } from '@/lib/llm/reasoning-replay';
 import { consolidateSystemMessages } from '@/lib/llm/consolidate-system-messages';
@@ -161,6 +163,7 @@ export async function POST(request: NextRequest) {
 
     const selectedProvider: ProviderId = provider || 'openrouter';
     const providerConfig = getProvider(selectedProvider);
+    const wireFormat = resolveWireFormat(selectedProvider, model || '');
 
     const apiKey = clientApiKey;
 
@@ -251,12 +254,12 @@ Habits:
       });
     }
 
-    const headers = buildHeaders(selectedProvider, apiKey, request, providerConfig);
+    const headers = buildHeaders(selectedProvider, apiKey, request.headers.get('referer'), providerConfig, wireFormat);
     
     let processedMessages = chatMessages;
     let anthropicSystemPrompt = '';
     
-    if (selectedProvider === 'anthropic') {
+    if (wireFormat === 'anthropic') {
       const systemMessage = chatMessages.find((msg: LLMMessage) => msg.role === 'system');
       if (systemMessage) {
         anthropicSystemPrompt = getTextContent(systemMessage.content);
@@ -354,7 +357,7 @@ Habits:
     }
 
     const streamEnabled = requestStream !== false;
-    const apiEndpoint = getApiEndpoint(selectedProvider, providerConfig, model, { apiKey, stream: streamEnabled }, customBaseUrl);
+    const apiEndpoint = getApiEndpoint(selectedProvider, providerConfig, model, { apiKey, stream: streamEnabled }, customBaseUrl, wireFormat);
 
     // --- Gemini: build entirely different request body ---
     if (selectedProvider === 'gemini') {
@@ -419,7 +422,7 @@ Habits:
     // reasoning back as reasoning_content (their APIs require it); other models
     // (e.g. Qwen — whose template forbids replayed thinking) get reasoning-only
     // turns promoted to plain assistant content instead. See lib/llm/reasoning-replay.ts.
-    if (selectedProvider !== 'anthropic') {
+    if (wireFormat !== 'anthropic') {
       applyReasoningReplayPolicy(processedMessages, model || '');
     }
 
@@ -450,7 +453,7 @@ Habits:
 
     // Request usage stats in streaming responses (needed for compaction threshold).
     // Most OpenAI-compatible providers support this; skip for local servers that may reject it.
-    if (streamEnabled && selectedProvider !== 'ollama' && selectedProvider !== 'lmstudio' && selectedProvider !== 'anthropic') {
+    if (streamEnabled && selectedProvider !== 'ollama' && selectedProvider !== 'lmstudio' && wireFormat !== 'anthropic') {
       requestBody.stream_options = { include_usage: true };
     }
 
@@ -459,7 +462,7 @@ Habits:
       requestBody.images = ollamaImages;
     }
 
-    if (selectedProvider === 'anthropic' && anthropicSystemPrompt) {
+    if (wireFormat === 'anthropic' && anthropicSystemPrompt) {
       requestBody.system = anthropicSystemPrompt;
     }
 
@@ -486,7 +489,7 @@ Habits:
         );
       }
 
-      if (selectedProvider === 'anthropic') {
+      if (wireFormat === 'anthropic') {
         requestBody.tools = validTools.map((tool: { name: string; description: string; parameters: unknown }) => ({
           name: tool.name,
           description: tool.description,
@@ -514,21 +517,10 @@ Habits:
 
     if (selectedProvider === 'openai') {
       requestBody.max_completion_tokens = max_tokens || 4096;
-
-      const modelName = model || getDefaultModel(selectedProvider);
-      if (modelName.includes('gpt-5-nano')) {
-        // gpt-5-nano requires temperature=1; other values cause API errors
-        requestBody.temperature = 1;
-      } else {
-        requestBody.temperature = 0.7;
-      }
-    } else if (selectedProvider === 'anthropic') {
-      requestBody.max_tokens = max_tokens || 4096;
-      requestBody.temperature = 0.7;
     } else {
       requestBody.max_tokens = max_tokens || 4096;
-      requestBody.temperature = 0.7;
     }
+    requestBody.temperature = resolveTemperature(selectedProvider, model || '');
 
     // Enable reasoning for models that support it
     const modelName = model || '';
@@ -832,51 +824,4 @@ You can make multiple tool calls in a single response. Always include the tool_c
       { status: isNetwork ? 503 : 500 }
     );
   }
-}
-
-function getApiEndpoint(provider: ProviderId, config: ReturnType<typeof getProvider>, model?: string, options?: { apiKey?: string; stream?: boolean }, overrideBaseUrl?: string): string {
-  const baseUrl = overrideBaseUrl || config.baseUrl || 'https://openrouter.ai/api/v1';
-
-  if (provider === 'anthropic') {
-    return 'https://api.anthropic.com/v1/messages';
-  } else if (provider === 'gemini') {
-    const geminiModel = model || 'gemini-2.5-flash';
-    const action = options?.stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
-    const key = options?.apiKey ? `${options.stream ? '&' : '?'}key=${options.apiKey}` : '';
-    return `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:${action}${key}`;
-  } else {
-    return `${baseUrl}/chat/completions`;
-  }
-}
-
-function buildHeaders(
-  provider: ProviderId, 
-  apiKey: string | undefined,
-  request: NextRequest,
-  config: ReturnType<typeof getProvider>
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-  
-  if (provider === 'anthropic') {
-    headers['x-api-key'] = apiKey || '';
-    headers['anthropic-version'] = '2023-06-01';
-    if (config.supportsFunctions) {
-      headers['anthropic-beta'] = 'tools-2024-04-04';
-    }
-  } else if (provider === 'gemini') {
-    // Gemini uses query-param key auth; no auth headers needed
-  } else {
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-    
-    if (provider === 'openrouter') {
-      headers['HTTP-Referer'] = request.headers.get('referer') || 'http://localhost:3000';
-      headers['X-Title'] = 'OSW-Studio';
-    }
-  }
-  
-  return headers;
 }

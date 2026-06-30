@@ -16,7 +16,8 @@ export type BuiltInProviderId =
   | 'zhipu'
   | 'minimax'
   | 'llamacpp'
-  | 'meshllm';
+  | 'meshllm'
+  | 'opencode-go';
 
 /** Provider ID type. Includes built-in providers and arbitrary custom IDs. */
 export type ProviderId = BuiltInProviderId | (string & {});

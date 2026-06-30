@@ -22,6 +22,15 @@ describe('CostCalculator.calculateCost', () => {
     expect(cost).toBeCloseTo(expected);
   });
 
+  it('treats opencode-go as zero cost (flat subscription, no per-token pricing)', () => {
+    const cost = CostCalculator.calculateCost(
+      { promptTokens: 1_000_000, completionTokens: 1_000_000 },
+      'opencode-go',
+      'minimax-m2.7',
+    );
+    expect(cost).toBe(0);
+  });
+
   it('uses reported cost when not provisional', () => {
     const cost = CostCalculator.calculateCost(
       { promptTokens: 1000, completionTokens: 500, cost: 0.05, isEstimated: false },
