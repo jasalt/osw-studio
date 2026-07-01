@@ -38,6 +38,21 @@ export async function POST(
       }
     }
 
+    // Resolve the deployment's slug BEFORE building. The static builder uses the
+    // slug to decide asset path style: a deployment with a slug is served at its
+    // subdomain root and needs root-relative asset paths, while one without is
+    // served under /deployments/{id}/ and needs that prefix. Generating the slug
+    // after the build (as it was) meant the first publish always emitted prefixed
+    // paths that then 404'd once the subdomain (serving at root) was created.
+    const previousRoute = getDeploymentRoute(id);
+    const oldSlug = previousRoute?.slug || null;
+    const preBuildDeployment = await adapter.getDeployment?.(id);
+    const slug = oldSlug || preBuildDeployment?.slug || generateUniqueSlug(s => !!getDeploymentBySlug(s));
+    if (preBuildDeployment && adapter.updateDeployment && preBuildDeployment.slug !== slug) {
+      preBuildDeployment.slug = slug;
+      await adapter.updateDeployment(preBuildDeployment);
+    }
+
     // Build the deployment using workspace adapter
     const result = await buildStaticDeployment(id, workspaceId);
 
@@ -64,21 +79,7 @@ export async function POST(
       await adapter.updateDeployment(deployment);
     }
 
-    // Register deployment route for subdomain routing
-    const previousRoute = getDeploymentRoute(id);
-    const oldDomain = previousRoute?.custom_domain || null;
-    const oldSlug = previousRoute?.slug || null;
-    const newDomain = deployment?.customDomain || null;
-
-    // Auto-generate a slug on first publish if none exists
-    const slug = oldSlug || deployment?.slug || generateUniqueSlug(s => !!getDeploymentBySlug(s));
-
-    // Save slug to deployment record so UI can display it
-    if (deployment && adapter.updateDeployment && deployment.slug !== slug) {
-      deployment.slug = slug;
-      await adapter.updateDeployment(deployment);
-    }
-
+    // Register deployment route for subdomain routing (slug resolved pre-build)
     registerDeploymentRoute(id, workspaceId, slug, deployment?.customDomain);
 
     // Regenerate Caddy config on every publish (no-op without STATIC_PROXY)

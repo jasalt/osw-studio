@@ -65,7 +65,12 @@ export function generateCaddyfile(config: CaddyConfig): string {
     lines.push('');
   }
 
-  // Wildcard subdomain fallback (catches slugs not yet in config, proxies to Node.js)
+  // Wildcard subdomain block: terminates TLS for any *.domain host without an
+  // explicit block above and proxies it to Node. This does NOT serve a
+  // deployment — Node serves deployments by /deployments/{id}/ path only, not by
+  // host — so an unmatched subdomain reaches the main app, not its site. Its
+  // purpose is a valid wildcard cert instead of a TLS error; a deployment's
+  // subdomain only serves its site once its explicit block above exists.
   if (slugRoutes.length > 0) {
     lines.push(`*.${domain} {`);
     lines.push('  tls {');

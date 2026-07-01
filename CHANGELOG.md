@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.80.2 - 2026-07-02
+
+### Fixes
+- **Zip export is now self-contained**: Exported HTML and CSS referenced assets through `blob:` URLs pointing back at the OSW Studio instance that produced the export, so images and other assets failed to load when the zip was deployed elsewhere, even though the files were included in the zip. The export now restores the original root-relative asset paths and strips the preview-only instrumentation scripts, so the output loads correctly when served from a web server root. ([#12](https://github.com/o-stahl/osw-studio/issues/12))
+- **JSON export no longer drops images or resets the runtime**: Exporting a project to JSON serialized binary files (images, fonts, etc.) as empty objects, so they were missing after import, and neither JSON import nor project duplication carried over the project's settings, so the copy fell back to the legacy Handlebars runtime instead of keeping its own (e.g. static). JSON export now encodes binary content as base64 and restores it on import, and both import and duplication preserve the project's settings. Chat history is still not included in JSON export. ([#11](https://github.com/o-stahl/osw-studio/issues/11))
+- **Server Mode: imported and duplicated projects can now be deployed**: An imported or duplicated project lived only in local storage until the next manual save, so it never reached the server and was missing from the New Deployment project picker. Importing or duplicating now pushes the project to the server, so it's immediately available to deploy. ([#13](https://github.com/o-stahl/osw-studio/issues/13))
+- **Server Mode: published deployments no longer 404 their assets on first publish**: A newly published deployment's stylesheets, scripts, and other assets were built with the wrong URL paths, so everything except the main page failed to load. The first publish now writes correct asset paths. Deployments published before this fix load correctly after publishing once more. ([#14](https://github.com/o-stahl/osw-studio/issues/14))
+
 ## v1.80.1 - 2026-07-01
 
 ### Fixes

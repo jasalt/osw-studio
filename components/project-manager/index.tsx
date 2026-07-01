@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { pushProjectToServer } from '@/lib/vfs/push-project-to-server';
 import { provisionBackendFeatures } from '@/lib/vfs/provision-backend-features';
 import {
   BAREBONES_PROJECT_TEMPLATE,
@@ -498,6 +499,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
   const duplicateProject = useCallback(async (project: Project) => {
     try {
       const newProject = await vfs.duplicateProject(project.id);
+      await pushProjectToServer(newProject.id, workspaceId);
       toast.success('Project duplicated successfully');
       await reloadProjects();
       onProjectSelect(newProject);
@@ -505,7 +507,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       logger.error('Failed to duplicate project:', error);
       toast.error('Failed to duplicate project');
     }
-  }, [reloadProjects, onProjectSelect]);
+  }, [reloadProjects, onProjectSelect, workspaceId]);
 
   const exportProject = useCallback(async (project: Project) => {
     try {
@@ -567,6 +569,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
         }
         
         const imported = await vfs.importProject(data);
+        await pushProjectToServer(imported.id, workspaceId);
         toast.success('Project imported successfully');
         await reloadProjects();
         onProjectSelect(imported);

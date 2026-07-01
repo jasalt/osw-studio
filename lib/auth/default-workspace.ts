@@ -22,7 +22,9 @@ import {
   getUserById,
   updateWorkspace,
   getWorkspaceById,
+  getDeploymentBySlug,
 } from './system-database';
+import { generateUniqueSlug } from '@/lib/publishing/slug-generator';
 import { logger } from '@/lib/utils';
 
 function openReadonlyDb(dbPath: string): Database.Database {
@@ -287,7 +289,7 @@ export function repairWorkspace(workspaceId: string): RepairResult {
       const db = openReadonlyDb(workspaceDbPath);
       const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='deployments'").get();
       if (tableExists) {
-        const deployments = db.prepare('SELECT id FROM deployments').all() as { id: string }[];
+        const deployments = db.prepare('SELECT id, slug FROM deployments').all() as { id: string; slug: string | null }[];
         db.close();
 
         const sysDb = getSystemDatabase();
@@ -295,10 +297,14 @@ export function repairWorkspace(workspaceId: string): RepairResult {
           const existing = sysDb.prepare('SELECT deployment_id FROM deployment_routing WHERE deployment_id = ?')
             .get(deployment.id);
           if (!existing) {
+            // Assign a slug so the deployment gets a subdomain route — Caddy
+            // generation skips routing rows without one. Prefer the deployment's
+            // own slug; generate a unique one only if it lacks it.
+            const slug = deployment.slug || generateUniqueSlug(s => !!getDeploymentBySlug(s));
             sysDb.prepare(`
-              INSERT OR IGNORE INTO deployment_routing (deployment_id, workspace_id)
-              VALUES (?, ?)
-            `).run(deployment.id, workspaceId);
+              INSERT OR IGNORE INTO deployment_routing (deployment_id, workspace_id, slug)
+              VALUES (?, ?, ?)
+            `).run(deployment.id, workspaceId, slug);
             result.deploymentRoutesCreated++;
           }
         }

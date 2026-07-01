@@ -15,6 +15,7 @@ import { processHtml } from '@/lib/publishing/html-processor';
 import { stripPreviewScripts } from '@/lib/preview/strip-preview-scripts';
 import { generateSitemap, generateRobotsTxt } from '@/lib/publishing/seo-generator';
 import { extractBackendFeatures } from './backend-feature-extractor';
+import { resolveDeploymentServing, replaceAssetPathsWithDeploymentPrefix } from './deployment-paths';
 
 export interface BuildResult {
   success: boolean;
@@ -180,14 +181,12 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
       blobUrlToPath.set(blobUrl, filePath);
     }
 
-    // Determine base URL for published deployment
+    // Decide how the deployment is served — controls asset path style and SEO URLs.
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const instanceDomain = appUrl.replace(/^https?:\/\//, '');
-    const baseUrl = deployment.customDomain
-      ? `https://${deployment.customDomain}`
-      : deployment.slug
-      ? `https://${deployment.slug}.${instanceDomain}`
-      : `${appUrl}/deployments/${deploymentId}`;
+    const { servedAtRoot, baseUrl } = resolveDeploymentServing(deployment, deploymentId, {
+      staticProxyEnabled: process.env.STATIC_PROXY === 'true',
+      appUrl,
+    });
 
     // Post-process files to replace asset references with absolute paths
     // and apply deployment settings (scripts, CDN, SEO, etc.)
@@ -195,7 +194,6 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
     for (const file of compiledProject.files) {
       if (typeof file.content === 'string') {
         // Replace both blob URLs and file path references with absolute paths
-        const servedAtRoot = !!(deployment.customDomain || deployment.slug);
         file.content = replaceAssetPathsWithDeploymentPrefix(
           file.content,
           blobUrlToPath,
@@ -412,103 +410,6 @@ function shouldExcludeFromExport(filePath: string): boolean {
   }
 
   return false;
-}
-
-/**
- * Replace both blob URLs and file path references with deployment-prefixed absolute paths
- */
-function replaceAssetPathsWithDeploymentPrefix(
-  content: string,
-  blobUrlToPath: Map<string, string>,
-  allFiles: VirtualFile[],
-  deploymentId: string,
-  servedAtRoot?: boolean
-): string {
-  let result = content;
-
-  // If served at domain root (custom domain or subdomain slug), use root-relative paths.
-  // Otherwise use deployment-prefixed paths for direct /deployments/{id}/ access.
-  const pathPrefix = servedAtRoot ? '' : `/deployments/${deploymentId}`;
-
-  // First, replace all blob URLs with appropriate paths
-  for (const [blobUrl, filePath] of blobUrlToPath) {
-    const absolutePath = `${pathPrefix}${filePath}`;
-    result = result.replace(new RegExp(escapeRegex(blobUrl), 'g'), absolutePath);
-  }
-
-  // Helper to check if path is already prefixed with deployment path
-  const isAlreadyPrefixed = (path: string) =>
-    pathPrefix && path.startsWith(pathPrefix);
-
-  // Rewrite all internal absolute paths for HTML files
-  // Pattern matches: href="/anything.html" or href="/anything.htm"
-  result = result.replace(
-    /href=(["'])(\/[^"']*\.html?)\1/g,
-    (match, quote, filePath) => {
-      if (isAlreadyPrefixed(filePath)) {
-        return match;
-      }
-      return `href=${quote}${pathPrefix}${filePath}${quote}`;
-    }
-  );
-
-  // Rewrite asset directory paths (styles, scripts, assets, images, fonts, js, css)
-  const assetDirPattern = /(?:href|src)=(["'])(\/(?:styles|scripts|assets|images|fonts|js|css)\/[^"']+)\1/g;
-  result = result.replace(assetDirPattern, (match, quote, filePath) => {
-    if (isAlreadyPrefixed(filePath)) {
-      return match;
-    }
-    return match.replace(filePath, `${pathPrefix}${filePath}`);
-  });
-
-  // Rewrite root-level asset references (e.g., /bundle.js, /bundle.css, /favicon.ico)
-  const rootAssetPattern = /(?:href|src)=(["'])(\/[^"'\/]+\.(?:js|css|json|xml|ico|png|jpg|jpeg|gif|svg|webp|woff|woff2|ttf|eot))\1/g;
-  result = result.replace(rootAssetPattern, (match, quote, filePath) => {
-    if (isAlreadyPrefixed(filePath)) {
-      return match;
-    }
-    return match.replace(filePath, `${pathPrefix}${filePath}`);
-  });
-
-  // Rewrite CSS url() references for asset directories
-  result = result.replace(
-    /url\(['"]?(\/(?:styles|scripts|assets|images|fonts|js|css)\/[^'")]+)['"]?\)/g,
-    (match, filePath) => {
-      if (isAlreadyPrefixed(filePath)) {
-        return match;
-      }
-      return match.replace(filePath, `${pathPrefix}${filePath}`);
-    }
-  );
-
-  // Handle relative HTML paths (e.g., href="about.html") - convert to absolute with prefix
-  result = result.replace(
-    /href=(["'])([^"':/][^"']*\.html?)\1/g,
-    (match, quote, filePath) => {
-      // Skip if it looks like an already-processed path or external
-      if (filePath.startsWith('/') || filePath.includes('://')) {
-        return match;
-      }
-      return `href=${quote}${pathPrefix}/${filePath}${quote}`;
-    }
-  );
-
-  // Handle root path href="/" - rewrite to deployment prefix
-  if (pathPrefix) {
-    result = result.replace(
-      /href=(["'])\/\1/g,
-      (match, quote) => `href=${quote}${pathPrefix}/${quote}`
-    );
-  }
-
-  return result;
-}
-
-/**
- * Escape special regex characters
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
