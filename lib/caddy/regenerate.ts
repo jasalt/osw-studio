@@ -114,10 +114,20 @@ export async function regenerateInstanceCaddy(): Promise<void> {
       customDomainRoutes: getAllDomainRoutes(),
     });
 
-    // Write to disk so Caddy restarts pick up the config
+    // Persist to disk so a cold Caddy restart (which loads from the file, not the
+    // admin API) picks up the current config. Best-effort — the admin reload below
+    // is the primary path — but don't swallow the error: a silent failure leaves a
+    // stale file that a restart would load, dropping every route not in it.
     const caddyfilePath = process.env.CADDYFILE_PATH || '/etc/caddy/Caddyfile';
-    const { promises: fs } = await import('fs');
-    await fs.writeFile(caddyfilePath, config, 'utf-8').catch(() => {});
+    try {
+      const { promises: fs } = await import('fs');
+      await fs.writeFile(caddyfilePath, config, 'utf-8');
+    } catch (err) {
+      console.error(
+        `[Caddy] Failed to persist config to ${caddyfilePath} — a Caddy restart will load a stale config until the next successful write:`,
+        err instanceof Error ? err.message : err
+      );
+    }
 
     // Reload via admin API for immediate effect
     const res = await fetch(`${CADDY_ADMIN_API}/load`, {
