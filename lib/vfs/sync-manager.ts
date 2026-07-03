@@ -65,6 +65,16 @@ export interface ModelTemplatesListSyncResult extends SyncResult {
   updated?: number;
 }
 
+export interface InterviewTemplateSyncResult extends SyncResult {
+  interviewTemplate?: import('@/lib/interview/types').InterviewTemplate;
+  action?: 'created' | 'updated';
+}
+export interface InterviewTemplatesListSyncResult extends SyncResult {
+  interviewTemplates?: import('@/lib/interview/types').InterviewTemplate[];
+  created?: number;
+  updated?: number;
+}
+
 export interface ConnectionSyncResult extends SyncResult {
   connection?: CustomConnection;
   action?: 'created' | 'updated';
@@ -671,6 +681,92 @@ export class SyncManager {
   async deleteModelTemplateFromServer(id: string): Promise<SyncResult> {
     try {
       const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/model-templates/${encodeURIComponent(id)}`)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  // ============================================
+  // Interview Template Sync Methods
+  // ============================================
+
+  /** Pull all interview templates from server */
+  async pullInterviewTemplates(): Promise<InterviewTemplatesListSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl('/sync/interview-templates')}`, { method: 'GET' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, interviewTemplates: data.interviewTemplates || [] };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Push multiple interview templates to server */
+  async pushInterviewTemplates(interviewTemplates: import('@/lib/interview/types').InterviewTemplate[]): Promise<InterviewTemplatesListSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl('/sync/interview-templates')}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interviewTemplates }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: data.success, created: data.created, updated: data.updated, error: data.errors?.join(', ') };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Pull a single interview template from server */
+  async pullInterviewTemplate(id: string): Promise<InterviewTemplateSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/interview-templates/${encodeURIComponent(id)}`)}`, { method: 'GET' });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, interviewTemplate: data.interviewTemplate };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Push a single interview template to server */
+  async pushInterviewTemplate(interviewTemplate: import('@/lib/interview/types').InterviewTemplate): Promise<InterviewTemplateSyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/interview-templates/${encodeURIComponent(interviewTemplate.id)}`)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interviewTemplate }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      return { success: true, interviewTemplate: data.interviewTemplate, action: data.action };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Delete an interview template from server */
+  async deleteInterviewTemplateFromServer(id: string): Promise<SyncResult> {
+    try {
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/interview-templates/${encodeURIComponent(id)}`)}`, { method: 'DELETE' });
       if (!response.ok) {
         const errorData = await response.json();
         return { success: false, error: errorData.error || `HTTP ${response.status}` };

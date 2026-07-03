@@ -6,6 +6,16 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.81.0 - Custom Interview Templates (2026-07-03)
+
+Interview mode launched with four built-in templates and a note that custom ones were planned. They're here now: you can write your own interviews, deciding the questions the agent asks and what counts as a complete answer. Manage them from the interview picker or a new Interviews entry in the main menu, and in Server Mode they sync across devices the way skills and templates already do.
+
+### Interview mode
+- **Your own templates**: Create, edit, and duplicate interview templates. Each item is a question plus a "done when" condition that decides when it's covered, and an optional handoff button can start a build from the result when the interview finishes
+- **Sync**: In Server Mode, custom interview templates sync across devices
+
+---
+
 ## v1.80.0 - Opencode Go (2026-06-30)
 
 Added Opencode Go as a provider — a subscription service with a range of open-weight models (GLM, Kimi, DeepSeek, MiMo, MiniMax, Qwen). Add your token under Connections and its models show up like any other provider's, with context lengths and input types pulled from models.dev.

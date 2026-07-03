@@ -10,6 +10,7 @@ import {
   Globe,
   Users,
   LayoutTemplate,
+  ClipboardList,
   Sparkles,
   Settings,
   Info,
@@ -59,6 +60,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: 'deployments', label: 'Deployments', icon: Globe, path: 'deployments', serverModeOnly: true },
   { id: 'templates', label: 'Templates', icon: LayoutTemplate, path: 'templates' },
   { id: 'skills', label: 'Skills', icon: Sparkles, path: 'skills' },
+  { id: 'interviews', label: 'Interviews', icon: ClipboardList, path: 'interviews' },
   { id: 'users', label: 'Users', icon: Users, path: 'users', serverModeOnly: true, adminOnly: true, managedOnly: true },
   {
     id: 'docs',

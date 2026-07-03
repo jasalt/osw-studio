@@ -382,6 +382,22 @@ const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    id: 'add_interview_templates_v9',
+    up: (db) => {
+      // User interview templates synced from the client. items/artifacts/handoff
+      // stored together as a JSON spec blob (server never queries inside a template).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS interview_templates (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          spec TEXT NOT NULL DEFAULT '{}',
+          updated_at TEXT NOT NULL
+        )
+      `);
+    }
+  },
 ];
 
 /**
@@ -1416,6 +1432,72 @@ export class SQLiteAdapter implements StorageAdapter {
       assignment: parseJSON(row.assignment as string, {} as ModelAssignment),
       updatedAt: parseDate(row.updated_at as string),
       builtin: false,
+    };
+  }
+
+  // ============================================
+  // Interview templates (user interview setups; core database)
+  // ============================================
+
+  async createInterviewTemplate(t: import('@/lib/interview/types').InterviewTemplate): Promise<void> {
+    const db = this.getDB();
+    db.prepare(`
+      INSERT INTO interview_templates (id, name, description, spec, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      t.id, t.title, t.description ?? null,
+      JSON.stringify({ items: t.items, artifacts: t.artifacts, handoff: t.handoff ?? null }),
+      toISOStringRequired(t.updatedAt ?? new Date()),
+    );
+  }
+
+  async updateInterviewTemplate(t: import('@/lib/interview/types').InterviewTemplate): Promise<void> {
+    const db = this.getDB();
+    db.prepare(`
+      UPDATE interview_templates SET name = ?, description = ?, spec = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      t.title, t.description ?? null,
+      JSON.stringify({ items: t.items, artifacts: t.artifacts, handoff: t.handoff ?? null }),
+      toISOStringRequired(t.updatedAt ?? new Date()), t.id,
+    );
+  }
+
+  async getInterviewTemplate(id: string): Promise<import('@/lib/interview/types').InterviewTemplate | null> {
+    const db = this.getDB();
+    const row = db.prepare('SELECT * FROM interview_templates WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToInterviewTemplate(row) : null;
+  }
+
+  async getAllInterviewTemplates(): Promise<import('@/lib/interview/types').InterviewTemplate[]> {
+    const db = this.getDB();
+    const rows = db.prepare('SELECT * FROM interview_templates ORDER BY name').all() as Record<string, unknown>[];
+    return rows.map((r) => this.rowToInterviewTemplate(r));
+  }
+
+  async deleteInterviewTemplate(id: string): Promise<void> {
+    this.getDB().prepare('DELETE FROM interview_templates WHERE id = ?').run(id);
+  }
+
+  listInterviewTemplateSummaries(): Array<{ id: string; name: string; updatedAt: string }> {
+    return this.getDB().prepare('SELECT id, name, updated_at as updatedAt FROM interview_templates')
+      .all() as Array<{ id: string; name: string; updatedAt: string }>;
+  }
+
+  private rowToInterviewTemplate(row: Record<string, unknown>): import('@/lib/interview/types').InterviewTemplate {
+    const spec = parseJSON<{
+      items: import('@/lib/interview/types').InterviewItem[];
+      artifacts: { path: string; description?: string }[];
+      handoff: import('@/lib/interview/types').InterviewHandoff | null;
+    }>(row.spec as string, { items: [], artifacts: [], handoff: null });
+    return {
+      id: row.id as string,
+      title: row.name as string,
+      description: (row.description as string) ?? '',
+      items: spec.items ?? [],
+      artifacts: spec.artifacts ?? [],
+      handoff: spec.handoff ?? undefined,
+      updatedAt: row.updated_at ? parseDate(row.updated_at as string) : undefined,
     };
   }
 

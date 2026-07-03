@@ -156,7 +156,11 @@ const PREPARE_PUBLISH: InterviewTemplate = {
   },
 };
 
-const BUILT_IN_INTERVIEWS: InterviewTemplate[] = [UNDERSTAND_COMPANY, PLAN_WEBSITE, PLAN_FEATURE, PREPARE_PUBLISH];
+export const BUILT_IN_INTERVIEWS: InterviewTemplate[] = [UNDERSTAND_COMPANY, PLAN_WEBSITE, PLAN_FEATURE, PREPARE_PUBLISH];
+
+export function isBuiltInInterviewTemplateId(id: string): boolean {
+  return BUILT_IN_INTERVIEWS.some(t => t.id === id);
+}
 
 export function listInterviewTemplates(): InterviewTemplate[] {
   return BUILT_IN_INTERVIEWS;

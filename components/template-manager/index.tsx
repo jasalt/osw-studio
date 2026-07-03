@@ -288,8 +288,11 @@ export function TemplateManager({ onProjectCreated }: TemplateManagerProps) {
     return matchesSearch;
   });
 
-  // Sort templates
+  // Sort templates: custom first, then built-in; the chosen sort applies within each group.
+  const builtInTemplateIds = new Set(BUILT_IN_TEMPLATES.map(t => t.id));
   const sortedTemplates = [...filteredTemplates].sort((a, b) => {
+    const builtInDelta = Number(builtInTemplateIds.has(a.id)) - Number(builtInTemplateIds.has(b.id));
+    if (builtInDelta !== 0) return builtInDelta;
     switch (sortBy) {
       case 'updated':
         const aDate = ('updatedAt' in a && a.updatedAt) ? a.updatedAt : new Date('2024-01-01');

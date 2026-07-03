@@ -24,7 +24,7 @@ export type ItemSyncStatus =
 export interface SyncableItem {
   id: string;
   name: string;
-  type: 'project' | 'skill' | 'template' | 'modelTemplate';
+  type: 'project' | 'skill' | 'template' | 'modelTemplate' | 'interviewTemplate';
   localUpdatedAt: Date | null;
   serverUpdatedAt: Date | null;
   lastSyncedAt: Date | null;
@@ -52,6 +52,7 @@ export interface DetailedSyncStatus {
   skills: CategorySyncStatus;
   templates: CategorySyncStatus;
   modelTemplates: CategorySyncStatus;
+  interviewTemplates: CategorySyncStatus;
   loading: boolean;
   error: string | null;
 }
@@ -84,6 +85,15 @@ export interface ModelTemplateSyncStatus {
 }
 
 /**
+ * Server status response for interview templates
+ */
+export interface InterviewTemplateSyncStatus {
+  id: string;
+  name: string;
+  updatedAt: string; // ISO string
+}
+
+/**
  * Server status response for projects
  */
 export interface ProjectSyncStatus {
@@ -101,11 +111,13 @@ export interface EnhancedSyncStatusResponse {
   skills: SkillSyncStatus[];
   templates: TemplateSyncStatus[];
   modelTemplates: ModelTemplateSyncStatus[];
+  interviewTemplates: InterviewTemplateSyncStatus[];
   summary: {
     projectCount: number;
     skillCount: number;
     templateCount: number;
     modelTemplateCount: number;
+    interviewTemplateCount: number;
     deploymentCount: number;
     lastUpdated: string | null;
     isUninitialized: boolean;

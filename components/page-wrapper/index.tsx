@@ -14,7 +14,7 @@ import { GenerationShelf } from '@/components/generation-shelf';
 import { vfs } from '@/lib/vfs';
 import { toast } from 'sonner';
 
-type View = 'dashboard' | 'projects' | 'templates' | 'skills' | 'deployments' | 'users' | 'workspaces' | 'docs' | 'settings';
+type View = 'dashboard' | 'projects' | 'templates' | 'skills' | 'interviews' | 'deployments' | 'users' | 'workspaces' | 'docs' | 'settings';
 
 interface PageWrapperProps {
   view: View;
@@ -31,6 +31,7 @@ function getViewRoute(view: string, workspaceId?: string): string {
     deployments: `${base}/deployments`,
     settings: `${base}/settings`,
     skills: `${base}/skills`,
+    interviews: `${base}/interviews`,
     templates: `${base}/templates`,
     docs: `${base}/docs`,
     // System-wide routes (always /admin/)

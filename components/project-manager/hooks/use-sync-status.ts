@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { vfs } from '@/lib/vfs';
 import { skillsService } from '@/lib/vfs/skills/service';
 import { configManager } from '@/lib/config/storage';
+import { interviewTemplatesService } from '@/lib/interview/templates-service';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 import {
   DetailedSyncStatus,
@@ -29,6 +30,7 @@ const INITIAL_STATUS: DetailedSyncStatus = {
   skills: EMPTY_CATEGORY,
   templates: EMPTY_CATEGORY,
   modelTemplates: EMPTY_CATEGORY,
+  interviewTemplates: EMPTY_CATEGORY,
   loading: false,
   error: null,
 };
@@ -74,6 +76,9 @@ export function useSyncStatus() {
       );
       const serverModelTemplates = new Map(
         (serverData.modelTemplates ?? []).map((t) => [t.id, { name: t.name, updatedAt: new Date(t.updatedAt) }])
+      );
+      const serverInterviewTemplates = new Map(
+        (serverData.interviewTemplates ?? []).map((t) => [t.id, { name: t.name, updatedAt: new Date(t.updatedAt) }])
       );
 
       // Get local data
@@ -249,17 +254,58 @@ export function useSyncStatus() {
         }
       }
 
+      // Build interview-template items
+      const localInterviewTemplates = await interviewTemplatesService.getCustomTemplates();
+      const interviewTemplateItems: SyncableItem[] = [];
+      const processedInterviewTemplateIds = new Set<string>();
+
+      for (const t of localInterviewTemplates) {
+        processedInterviewTemplateIds.add(t.id);
+        const serverInfo = serverInterviewTemplates.get(t.id);
+        const localUpdatedAt = t.updatedAt || null;
+        const status = calculateItemSyncStatus(
+          localUpdatedAt,
+          serverInfo?.updatedAt || null,
+          t.lastSyncedAt || null
+        );
+        interviewTemplateItems.push({
+          id: t.id,
+          name: t.title,
+          type: 'interviewTemplate',
+          localUpdatedAt,
+          serverUpdatedAt: serverInfo?.updatedAt || null,
+          lastSyncedAt: t.lastSyncedAt || null,
+          status,
+        });
+      }
+
+      for (const [id, info] of serverInterviewTemplates) {
+        if (!processedInterviewTemplateIds.has(id)) {
+          interviewTemplateItems.push({
+            id,
+            name: info.name,
+            type: 'interviewTemplate',
+            localUpdatedAt: null,
+            serverUpdatedAt: info.updatedAt,
+            lastSyncedAt: null,
+            status: 'server-only',
+          });
+        }
+      }
+
       // Calculate counts
       const projectCounts = calculateCategoryCounts(projectItems);
       const skillCounts = calculateCategoryCounts(skillItems);
       const templateCounts = calculateCategoryCounts(templateItems);
       const modelTemplateCounts = calculateCategoryCounts(modelTemplateItems);
+      const interviewTemplateCounts = calculateCategoryCounts(interviewTemplateItems);
 
       setStatus({
         projects: { items: projectItems, ...projectCounts },
         skills: { items: skillItems, ...skillCounts },
         templates: { items: templateItems, ...templateCounts },
         modelTemplates: { items: modelTemplateItems, ...modelTemplateCounts },
+        interviewTemplates: { items: interviewTemplateItems, ...interviewTemplateCounts },
         loading: false,
         error: null,
       });

@@ -6,6 +6,7 @@ import { logger } from '@/lib/utils';
 import { ProjectsView } from './projects-view';
 import { TemplatesView } from './templates-view';
 import { SkillsView } from './skills-view';
+import { InterviewsView } from './interviews-view';
 import { DeploymentsView } from './deployments-view';
 import { UsersView } from './users-view';
 import { WorkspacesView } from './workspaces-view';
@@ -70,6 +71,8 @@ export function ContentArea({
       return <TemplatesView onProjectSelect={(project) => handleProjectSelectById(project.id)} onNavigate={onNavigate} />;
     case 'skills':
       return <SkillsView />;
+    case 'interviews':
+      return <InterviewsView />;
     case 'docs':
       return <DocsView />;
     case 'settings':

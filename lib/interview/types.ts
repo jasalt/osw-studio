@@ -32,4 +32,10 @@ export interface InterviewTemplate {
   artifacts: { path: string; description?: string }[];
   /** Optional action offered when the interview completes. */
   handoff?: InterviewHandoff;
+  /** Custom-only metadata. Undefined on built-ins. */
+  isBuiltIn?: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
+  lastSyncedAt?: Date | null;
+  serverUpdatedAt?: Date | null;
 }

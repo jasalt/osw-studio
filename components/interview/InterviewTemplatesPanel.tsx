@@ -1,0 +1,303 @@
+'use client';
+
+import React, { useState, useEffect, useCallback } from 'react';
+import type { InterviewTemplate } from '@/lib/interview/types';
+import { interviewTemplatesService } from '@/lib/interview/templates-service';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
+import { Search, Plus, Edit, Copy, Trash2, Eye, ClipboardList, FileText } from 'lucide-react';
+import { InterviewTemplateEditor } from './InterviewTemplateEditor';
+
+interface InterviewTemplatesPanelProps {
+  initialMode?: 'list' | 'create';
+  onChanged?: () => void;
+}
+
+type View =
+  | 'list'
+  | { mode: 'create' }
+  | { mode: 'edit'; template: InterviewTemplate }
+  | { mode: 'view'; template: InterviewTemplate };
+
+export function InterviewTemplatesPanel({
+  initialMode = 'list',
+  onChanged,
+}: InterviewTemplatesPanelProps) {
+  const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
+  const [view, setView] = useState<View>(initialMode === 'create' ? { mode: 'create' } : 'list');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showBuiltIn, setShowBuiltIn] = useState(true);
+  const [showCustom, setShowCustom] = useState(true);
+  const [templateToDelete, setTemplateToDelete] = useState<InterviewTemplate | null>(null);
+
+  const reloadList = useCallback(async () => {
+    try {
+      const all = await interviewTemplatesService.getAllTemplates();
+      setTemplates(all);
+    } catch {
+      toast.error('Failed to load interview templates');
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadList();
+  }, [reloadList]);
+
+  const handleDuplicate = async (src: InterviewTemplate) => {
+    try {
+      const id = await interviewTemplatesService.generateId(src.title + ' copy');
+      await interviewTemplatesService.createTemplate({
+        ...src,
+        id,
+        title: `${src.title} copy`,
+        isBuiltIn: false,
+      });
+      await reloadList();
+      onChanged?.();
+      const created = await interviewTemplatesService.getTemplate(id);
+      if (created) {
+        toast.success(`Duplicated: ${src.title}`);
+        setView({ mode: 'edit', template: created });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to duplicate template';
+      toast.error(message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!templateToDelete) return;
+    try {
+      await interviewTemplatesService.deleteTemplate(templateToDelete.id);
+      toast.success(`Deleted: ${templateToDelete.title}`);
+      await reloadList();
+      onChanged?.();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to delete template';
+      toast.error(message);
+    } finally {
+      setTemplateToDelete(null);
+    }
+  };
+
+  const handleEditorSaved = async () => {
+    await reloadList();
+    setView('list');
+    onChanged?.();
+  };
+
+  const filtered = templates.filter(t => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch =
+      t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q);
+    if (!matchesSearch) return false;
+    if (t.isBuiltIn && !showBuiltIn) return false;
+    if (!t.isBuiltIn && !showCustom) return false;
+    return true;
+  }).sort((a, b) => Number(!!a.isBuiltIn) - Number(!!b.isBuiltIn)); // custom first, then built-in
+
+  const inEditor = view !== 'list';
+  const editorTemplate =
+    inEditor && view.mode === 'create' ? null : inEditor ? view.template : null;
+
+  return (
+    <>
+      <div className="flex flex-col h-full">
+        <div className="px-6 pt-6 pb-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="w-5 h-5" />
+            <h2 className="text-lg font-semibold leading-none tracking-tight">Interview Templates</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1.5">
+            Manage the guided interviews available in interview mode.
+          </p>
+        </div>
+
+        <div className="px-6 pb-3 shrink-0 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search templates..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <Button size="sm" onClick={() => setView({ mode: 'create' })}>
+              <Plus className="w-4 h-4 mr-2" />
+              New
+            </Button>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Show:</span>
+            <Button
+              variant={showBuiltIn ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 px-2 gap-1.5"
+              onClick={() => setShowBuiltIn(v => !v)}
+              aria-pressed={showBuiltIn}
+            >
+              <FileText className="w-3 h-3" />
+              Built-in
+            </Button>
+            <Button
+              variant={showCustom ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 px-2 gap-1.5"
+              onClick={() => setShowCustom(v => !v)}
+              aria-pressed={showCustom}
+            >
+              <ClipboardList className="w-3 h-3" />
+              Custom
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
+          {filtered.length === 0 ? (
+            <div className="text-center py-12">
+              <ClipboardList className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-lg font-semibold mb-2">No templates found</h3>
+              <p className="text-muted-foreground mb-4">
+                {!showBuiltIn && !showCustom
+                  ? 'Both Built-in and Custom are hidden. Enable at least one above.'
+                  : searchQuery
+                    ? 'Try a different search query'
+                    : 'Create your first interview template'}
+              </p>
+              {!searchQuery && (
+                <Button onClick={() => setView({ mode: 'create' })}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  New Template
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {filtered.map(t => (
+                <div key={t.id} className="border rounded-lg p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h3 className="font-semibold truncate">{t.title}</h3>
+                        <Badge variant={t.isBuiltIn ? 'secondary' : 'outline'} className="text-xs">
+                          {t.isBuiltIn ? 'Built-in' : 'Custom'}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground line-clamp-2">{t.description}</p>
+                      {t.artifacts[0] && (
+                        <p className="text-xs text-muted-foreground/80 mt-1 font-mono truncate">
+                          {t.artifacts[0].path}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {t.isBuiltIn ? (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setView({ mode: 'view', template: t })}
+                            title="View"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDuplicate(t)}
+                            title="Duplicate"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setView({ mode: 'edit', template: t })}
+                            title="Edit"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDuplicate(t)}
+                            title="Duplicate"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setTemplateToDelete(t)}
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Editor dialog (matches the Skills editor: a modal over the list) */}
+      <Dialog open={inEditor} onOpenChange={(o) => !o && setView('list')}>
+        <DialogContent className="max-w-[90vw] sm:max-w-[85vw] lg:max-w-3xl h-[90vh] p-0 overflow-hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>
+              {editorTemplate ? `Edit ${editorTemplate.title}` : 'Create interview template'}
+            </DialogTitle>
+          </DialogHeader>
+          {inEditor && (
+            <InterviewTemplateEditor
+              template={editorTemplate}
+              onSaved={handleEditorSaved}
+              onCancel={() => setView('list')}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation */}
+      <Dialog open={!!templateToDelete} onOpenChange={(o) => !o && setTemplateToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Template</DialogTitle>
+            <DialogDescription>
+              {templateToDelete
+                ? `Are you sure you want to delete "${templateToDelete.title}"? This action cannot be undone.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTemplateToDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

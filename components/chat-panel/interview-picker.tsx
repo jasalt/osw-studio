@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, ClipboardList, ArrowRight } from 'lucide-react';
+import { Search, ClipboardList, ArrowRight, Plus, Settings2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { filterInterviewTemplates } from '@/lib/interview/templates';
@@ -9,9 +9,11 @@ interface InterviewPickerProps {
   templates: InterviewTemplate[];
   onStart: (template: InterviewTemplate) => void;
   disabled?: boolean;
+  onNew?: () => void;
+  onManage?: () => void;
 }
 
-export function InterviewPicker({ templates, onStart, disabled }: InterviewPickerProps) {
+export function InterviewPicker({ templates, onStart, disabled, onNew, onManage }: InterviewPickerProps) {
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -23,6 +25,30 @@ export function InterviewPicker({ templates, onStart, disabled }: InterviewPicke
       <div className="flex items-center gap-2 text-xs font-medium text-blue-500">
         <ClipboardList className="h-4 w-4" />
         <span>Start an interview</span>
+        <div className="ml-auto flex items-center gap-1">
+          {onManage && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-xs text-muted-foreground gap-1"
+              onClick={onManage}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              Manage
+            </Button>
+          )}
+          {onNew && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-xs text-muted-foreground gap-1"
+              onClick={onNew}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="relative">

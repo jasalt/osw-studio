@@ -30,12 +30,16 @@ export function renderInterviewAgenda(template: InterviewTemplate): string {
 
 /**
  * Appends the rendered agenda for the given template to a system prompt.
- * Returns the prompt unchanged when no id is given or the id does not resolve,
- * so callers can pass it through unconditionally.
+ * Prefers an already-resolved template (custom templates are not in the built-in
+ * registry, so the id lookup only covers built-ins). Returns the prompt unchanged
+ * when nothing resolves, so callers can pass it through unconditionally.
  */
-export function withInterviewAgenda(systemPrompt: string, templateId: string | undefined): string {
-  if (!templateId) return systemPrompt;
-  const template = getInterviewTemplate(templateId);
-  if (!template) return systemPrompt;
-  return `${systemPrompt}\n\n${renderInterviewAgenda(template)}`;
+export function withInterviewAgenda(
+  systemPrompt: string,
+  templateId: string | undefined,
+  template?: InterviewTemplate
+): string {
+  const resolved = template ?? (templateId ? getInterviewTemplate(templateId) : undefined);
+  if (!resolved) return systemPrompt;
+  return `${systemPrompt}\n\n${renderInterviewAgenda(resolved)}`;
 }

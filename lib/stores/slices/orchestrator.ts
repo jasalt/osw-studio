@@ -18,6 +18,7 @@ import { handleBuildRequested } from '@/lib/server-generate/build-delegation-han
 import { playTaskCompleteSound, playTaskCompleteSoundSubtle } from '@/lib/utils/task-complete-sound';
 import { checkpointManager } from '@/lib/vfs/checkpoint';
 import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
+import type { InterviewTemplate } from '@/lib/interview/types';
 
 const MAX_DEBUG_EVENTS = 2000;
 let debugIdCounter = 0;
@@ -528,11 +529,17 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       let orchestrator = newTask.persistedInstance;
 
       if (!orchestrator) {
+        let interviewTemplate: InterviewTemplate | undefined;
+        if (options?.mode === 'interview' && options?.templateId) {
+          const { interviewTemplatesService } = await import('@/lib/interview/templates-service');
+          interviewTemplate = (await interviewTemplatesService.getTemplate(options.templateId)) ?? undefined;
+        }
+
         orchestrator = new MultiAgentOrchestrator(
           projectId,
           options?.mode === 'interview' ? 'interview' : 'orchestrator',
           progressCallback,
-          { chatMode, model: modelToUse, assignment, interviewTemplateId: options?.templateId },
+          { chatMode, model: modelToUse, assignment, interviewTemplateId: options?.templateId, interviewTemplate },
         );
 
         // Only bootstrap conversation if viewing this project.

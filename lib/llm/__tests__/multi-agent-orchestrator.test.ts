@@ -341,6 +341,39 @@ describe('MultiAgentOrchestrator result propagation and lifecycle', () => {
     expect(progress).toHaveBeenCalledWith('interview_gate', expect.objectContaining({ complete: false }));
   });
 
+  it('buildCompletionGate uses an injected custom interview template (not just built-ins)', async () => {
+    h.agent = { type: 'interview', maxIterations: 30, isReadOnly: false, tools: ['bash'], hasTool: () => true };
+    const custom = {
+      id: 'custom-x', title: 'Custom X', description: 'd',
+      artifacts: [{ path: '/.interviews/custom-x.md' }],
+      items: [{ id: 'q', elicit: 'Q?', completion: [{ type: 'judge', criteria: 'CUSTOM CRITERIA', description: 'q' }], required: true }],
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (runStructuredJudge as any).mockResolvedValue({
+      verdicts: [{ passed: true, reasoning: '' }],
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, provider: 'openrouter', model: 'm' },
+    });
+    const progress = vi.fn();
+    // With injection: gate resolves and uses the custom criteria.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orch = new MultiAgentOrchestrator('p', 'interview', progress, { interviewTemplateId: 'custom-x', interviewTemplate: custom as any });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gate = (orch as any).buildCompletionGate();
+    expect(typeof gate).toBe('function');
+    await gate();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((runStructuredJudge as any)).toHaveBeenCalledWith(
+      ['CUSTOM CRITERIA'],
+      expect.anything(),
+      expect.anything(),
+    );
+
+    // Without injection: a non-built-in id resolves to no gate.
+    const orch2 = new MultiAgentOrchestrator('p', 'interview', vi.fn(), { interviewTemplateId: 'custom-x' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((orch2 as any).buildCompletionGate()).toBeUndefined();
+  });
+
   it('does not append an agenda for the orchestrator agent', async () => {
     let captured: Message[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

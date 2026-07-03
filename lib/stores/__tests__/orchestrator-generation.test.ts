@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { createTestStore, setupOrchestratorMocks } from './test-helpers';
 import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
+import { MultiAgentOrchestrator } from '@/lib/llm/multi-agent-orchestrator';
+import { interviewTemplatesService } from '@/lib/interview/templates-service';
 import type { GenerationTask } from '../types';
 
 const mockExecute = vi.fn().mockResolvedValue({
@@ -22,6 +24,10 @@ vi.mock('@/lib/llm/multi-agent-orchestrator', () => ({
     continue: mockContinue,
     importConversation: mockImportConversation,
   })),
+}));
+
+vi.mock('@/lib/interview/templates-service', () => ({
+  interviewTemplatesService: { getTemplate: vi.fn() },
 }));
 
 setupOrchestratorMocks();
@@ -81,6 +87,25 @@ describe('orchestrator slice — generation lifecycle', () => {
     expect(store.getState().generating).toBe(false);
     expect(store.getState().generationTasks.size).toBe(0);
     expect(mockExecute).not.toHaveBeenCalled(); // never instantiated the orchestrator
+  });
+
+  it('startGeneration resolves a custom interview template and passes it to the orchestrator', async () => {
+    const custom = {
+      id: 'custom-x', title: 'Custom X', description: 'd',
+      artifacts: [{ path: '/.interviews/custom-x.md' }], items: [],
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(interviewTemplatesService.getTemplate).mockResolvedValue(custom as any);
+
+    await store.getState().startGeneration('start', undefined, { projectId: 'p1', mode: 'interview', templateId: 'custom-x' });
+
+    expect(interviewTemplatesService.getTemplate).toHaveBeenCalledWith('custom-x');
+    expect(vi.mocked(MultiAgentOrchestrator)).toHaveBeenCalledWith(
+      'p1',
+      'interview',
+      expect.any(Function),
+      expect.objectContaining({ interviewTemplateId: 'custom-x', interviewTemplate: custom }),
+    );
   });
 
   it('stopGeneration calls stop on orchestrator and sets generating=false', async () => {

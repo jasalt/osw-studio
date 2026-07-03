@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useMemo, useCallback, DragEvent, Clipboard
 import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, Brain, Image as ImageIcon, Type, Mic, Square, Plus, FileText } from 'lucide-react';
 import type { WorkspaceMode, ActiveInterview } from '@/lib/stores/slices/project';
 import { InterviewPicker } from './interview-picker';
-import { listInterviewTemplates } from '@/lib/interview/templates';
+import { InterviewTemplatesManager } from '@/components/interview/InterviewTemplatesManager';
+import { interviewTemplatesService } from '@/lib/interview/templates-service';
 import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { DebugEvent } from '@/lib/stores/types';
@@ -204,6 +205,15 @@ export function ChatPanel({
     setShowProvidersManage(true);
   }, []);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [interviewTemplates, setInterviewTemplates] = useState<InterviewTemplate[]>([]);
+  const [interviewManagerOpen, setInterviewManagerOpen] = useState(false);
+  const [interviewManagerMode, setInterviewManagerMode] = useState<'list' | 'create'>('list');
+  const loadInterviewTemplates = useCallback(() => {
+    interviewTemplatesService.getAllTemplates().then(setInterviewTemplates).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadInterviewTemplates();
+  }, [loadInterviewTemplates]);
   // Mobile breakpoint — the per-project model picker becomes a full-screen dialog
   // instead of an anchored popover (which can't fill a phone screen).
   const [isMobile, setIsMobile] = useState(false);
@@ -752,9 +762,11 @@ export function ChatPanel({
 
           {mode === 'interview' && !activeInterview ? (
             <InterviewPicker
-              templates={listInterviewTemplates()}
+              templates={interviewTemplates}
               onStart={onStartInterview}
               disabled={!providerReady}
+              onManage={() => { setInterviewManagerMode('list'); setInterviewManagerOpen(true); }}
+              onNew={() => { setInterviewManagerMode('create'); setInterviewManagerOpen(true); }}
             />
           ) : (isRecording || speech.isListening) ? (
             <div className="flex items-center gap-3 px-3 py-3">
@@ -976,6 +988,13 @@ export function ChatPanel({
                   <ProvidersModelsView initialTab={providersManageTab} />
                 </DialogContent>
               </Dialog>
+
+              <InterviewTemplatesManager
+                open={interviewManagerOpen}
+                onOpenChange={setInterviewManagerOpen}
+                initialMode={interviewManagerMode}
+                onChanged={loadInterviewTemplates}
+              />
 
               {!hideHeader && (() => {
                 const active = MODE_CONFIG[mode];

@@ -353,7 +353,7 @@ export function SkillsManager() {
     if (skill.isBuiltIn && !showBuiltIn) return false;
     if (!skill.isBuiltIn && !showCustom) return false;
     return true;
-  });
+  }).sort((a, b) => Number(!!a.isBuiltIn) - Number(!!b.isBuiltIn)); // custom first, then built-in
 
   const filteredGroups = groups.filter(g => {
     const q = searchQuery.toLowerCase();
@@ -614,7 +614,7 @@ export function SkillsManager() {
 
       {/* Skill Editor Dialog */}
       <Dialog open={!!editorMode} onOpenChange={(open) => !open && handleEditorCancel()}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[85vw] lg:max-w-[75vw] xl:max-w-[1200px] h-[90vh] p-0 overflow-hidden">
+        <DialogContent className="max-w-[90vw] sm:max-w-[85vw] lg:max-w-3xl h-[90vh] p-0 overflow-hidden">
           {editorMode && (
             <SkillEditor
               skill={selectedSkill}

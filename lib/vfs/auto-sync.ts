@@ -641,6 +641,34 @@ export async function pullConnectionsIntoCache(): Promise<void> {
 }
 
 /**
+ * Auto-sync a custom interview template to the server (non-blocking)
+ */
+export async function autoSyncInterviewTemplate(template: import('@/lib/interview/types').InterviewTemplate): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  if (template.isBuiltIn) return;
+  try {
+    const { getSyncManager } = await import('./sync-manager');
+    await getSyncManager().pushInterviewTemplate(template);
+    logger.debug(`[AutoSync] Interview template ${template.id} synced`);
+  } catch (error) {
+    logger.error(`[AutoSync] Failed to sync interview template ${template.id}:`, error);
+  }
+}
+
+/**
+ * Auto-delete an interview template from the server (non-blocking)
+ */
+export async function autoDeleteInterviewTemplate(templateId: string): Promise<void> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return;
+  try {
+    await apiFetch(getAutoSyncApiUrl(`/sync/interview-templates/${templateId}`), { method: 'DELETE' });
+    logger.debug(`[AutoSync] Interview template ${templateId} deleted from server`);
+  } catch (error) {
+    logger.error(`[AutoSync] Failed to delete interview template ${templateId} from server:`, error);
+  }
+}
+
+/**
  * Auto-delete a custom provider connection from the server (non-blocking)
  */
 export async function autoDeleteConnection(id: string): Promise<void> {

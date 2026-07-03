@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { listInterviewTemplates, getInterviewTemplate, filterInterviewTemplates } from '../templates';
+import { listInterviewTemplates, getInterviewTemplate, filterInterviewTemplates, isBuiltInInterviewTemplateId } from '../templates';
 import { renderInterviewAgenda, withInterviewAgenda } from '../agenda';
 
 describe('interview template registry', () => {
@@ -90,6 +90,13 @@ describe('filterInterviewTemplates', () => {
   });
 });
 
+describe('isBuiltInInterviewTemplateId', () => {
+  it('is true for built-ins and false otherwise', () => {
+    expect(isBuiltInInterviewTemplateId('understand-company')).toBe(true);
+    expect(isBuiltInInterviewTemplateId('my-custom-one')).toBe(false);
+  });
+});
+
 describe('withInterviewAgenda', () => {
   it('appends the rendered agenda when the template id resolves', () => {
     const base = 'SYSTEM PROMPT';
@@ -106,5 +113,23 @@ describe('withInterviewAgenda', () => {
 
   it('returns the prompt unchanged when the template id is unknown', () => {
     expect(withInterviewAgenda('SYSTEM PROMPT', 'no-such-template')).toBe('SYSTEM PROMPT');
+  });
+
+  it('appends the agenda for a custom template passed in directly (not in the built-in registry)', () => {
+    const base = 'SYSTEM PROMPT';
+    const custom = {
+      id: 'image-generation',
+      title: 'Image generation',
+      description: 'Creates an image generation prompt',
+      artifacts: [{ path: '/.interviews/image-generation.md' }],
+      items: [{ id: 'type', elicit: 'What type of image', completion: [{ type: 'judge' as const, criteria: 'The type of image is clear', description: 'type' }] }],
+    };
+    // The id does not resolve in the built-in registry, so only the passed object can supply the agenda.
+    expect(withInterviewAgenda(base, 'image-generation')).toBe(base);
+    const result = withInterviewAgenda(base, 'image-generation', custom);
+    expect(result.startsWith(base)).toBe(true);
+    expect(result).toContain('Image generation');
+    expect(result).toContain('/.interviews/image-generation.md');
+    expect(result).toContain('What type of image');
   });
 });

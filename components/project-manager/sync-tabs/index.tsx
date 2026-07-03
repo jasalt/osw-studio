@@ -7,7 +7,8 @@ import { ProjectsTab } from './projects-tab';
 import { SkillsTab } from './skills-tab';
 import { TemplatesTab } from './templates-tab';
 import { ModelTemplatesTab } from './model-templates-tab';
-import { FolderGit2, BookOpen, Layout, Cpu } from 'lucide-react';
+import { InterviewTemplatesTab } from './interview-templates-tab';
+import { FolderGit2, BookOpen, Layout, Cpu, ClipboardList } from 'lucide-react';
 
 export interface BulkActionState {
   selectableCount: number;
@@ -27,7 +28,7 @@ interface SyncTabsProps {
   onBulkActionStateChange?: (state: BulkActionState) => void;
 }
 
-type TabType = 'projects' | 'skills' | 'templates' | 'modelTemplates';
+type TabType = 'projects' | 'skills' | 'templates' | 'modelTemplates' | 'interviewTemplates';
 
 export function SyncTabs({
   syncStatus,
@@ -42,12 +43,14 @@ export function SyncTabs({
   const [skillSelectedIds, setSkillSelectedIds] = useState<Set<string>>(new Set());
   const [templateSelectedIds, setTemplateSelectedIds] = useState<Set<string>>(new Set());
   const [modelTemplateSelectedIds, setModelTemplateSelectedIds] = useState<Set<string>>(new Set());
+  const [interviewTemplateSelectedIds, setInterviewTemplateSelectedIds] = useState<Set<string>>(new Set());
 
   // Syncing state per tab
   const [projectSyncingIds, setProjectSyncingIds] = useState<Set<string>>(new Set());
   const [skillSyncingIds, setSkillSyncingIds] = useState<Set<string>>(new Set());
   const [templateSyncingIds, setTemplateSyncingIds] = useState<Set<string>>(new Set());
   const [modelTemplateSyncingIds, setModelTemplateSyncingIds] = useState<Set<string>>(new Set());
+  const [interviewTemplateSyncingIds, setInterviewTemplateSyncingIds] = useState<Set<string>>(new Set());
 
   // Push/pull handler refs (set by child tabs) - using refs to avoid re-render loops
   const pushSelectedHandlerRef = useRef<(() => Promise<void>) | null>(null);
@@ -57,6 +60,7 @@ export function SyncTabs({
   const skillCount = syncStatus.skills.items.length;
   const templateCount = syncStatus.templates.items.length;
   const modelTemplateCount = syncStatus.modelTemplates.items.length;
+  const interviewTemplateCount = syncStatus.interviewTemplates.items.length;
 
   // Helper functions for calculating item states
   const getSelectableItems = useCallback((items: SyncableItem[]) =>
@@ -99,8 +103,15 @@ export function SyncTabs({
           setSelectedIds: setModelTemplateSelectedIds,
           syncingIds: modelTemplateSyncingIds,
         };
+      case 'interviewTemplates':
+        return {
+          items: syncStatus.interviewTemplates.items,
+          selectedIds: interviewTemplateSelectedIds,
+          setSelectedIds: setInterviewTemplateSelectedIds,
+          syncingIds: interviewTemplateSyncingIds,
+        };
     }
-  }, [activeTab, syncStatus, projectSelectedIds, skillSelectedIds, templateSelectedIds, modelTemplateSelectedIds, projectSyncingIds, skillSyncingIds, templateSyncingIds, modelTemplateSyncingIds]);
+  }, [activeTab, syncStatus, projectSelectedIds, skillSelectedIds, templateSelectedIds, modelTemplateSelectedIds, interviewTemplateSelectedIds, projectSyncingIds, skillSyncingIds, templateSyncingIds, modelTemplateSyncingIds, interviewTemplateSyncingIds]);
 
   const handleSelectAll = useCallback(() => {
     const { items, selectedIds, setSelectedIds } = getCurrentTabData();
@@ -156,7 +167,7 @@ export function SyncTabs({
 
   return (
     <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabType)}>
-      <TabsList className="grid w-full grid-cols-4">
+      <TabsList className="grid w-full grid-cols-5">
         <TabsTrigger value="projects" className="flex items-center gap-1.5">
           <FolderGit2 className="h-3.5 w-3.5" />
           <span>Projects</span>
@@ -176,6 +187,11 @@ export function SyncTabs({
           <Cpu className="h-3.5 w-3.5" />
           <span>Models</span>
           <span className="text-xs text-muted-foreground">({modelTemplateCount})</span>
+        </TabsTrigger>
+        <TabsTrigger value="interviewTemplates" className="flex items-center gap-1.5">
+          <ClipboardList className="h-3.5 w-3.5" />
+          <span>Interviews</span>
+          <span className="text-xs text-muted-foreground">({interviewTemplateCount})</span>
         </TabsTrigger>
       </TabsList>
 
@@ -228,6 +244,20 @@ export function SyncTabs({
           syncingIds={modelTemplateSyncingIds}
           onSelectedIdsChange={setModelTemplateSelectedIds}
           onSyncingIdsChange={setModelTemplateSyncingIds}
+          onRefresh={onRefresh}
+          onSyncComplete={onSyncComplete}
+          onRegisterPushSelected={registerPushSelected}
+          onRegisterPullSelected={registerPullSelected}
+        />
+      </TabsContent>
+
+      <TabsContent value="interviewTemplates" className="mt-4">
+        <InterviewTemplatesTab
+          items={syncStatus.interviewTemplates.items}
+          selectedIds={interviewTemplateSelectedIds}
+          syncingIds={interviewTemplateSyncingIds}
+          onSelectedIdsChange={setInterviewTemplateSelectedIds}
+          onSyncingIdsChange={setInterviewTemplateSyncingIds}
           onRefresh={onRefresh}
           onSyncComplete={onSyncComplete}
           onRegisterPushSelected={registerPushSelected}

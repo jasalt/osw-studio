@@ -149,6 +149,7 @@ export class MultiAgentOrchestrator {
   private assignment?: ResolvedAssignment;
   private serverContext: ServerOrchestratorContext | null;
   private interviewTemplateId?: string;
+  private interviewTemplate?: InterviewTemplate;
 
   private stopped = false;
   private abortController = new AbortController();
@@ -172,7 +173,7 @@ export class MultiAgentOrchestrator {
     projectId: string,
     agentType: AgentType = 'orchestrator',
     onProgress?: (message: string, step?: unknown) => void,
-    options?: { chatMode?: boolean; model?: string; assignment?: ResolvedAssignment; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string }
+    options?: { chatMode?: boolean; model?: string; assignment?: ResolvedAssignment; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string; interviewTemplate?: InterviewTemplate }
   ) {
     this.projectId = projectId;
     this.onProgress = onProgress;
@@ -181,6 +182,7 @@ export class MultiAgentOrchestrator {
     this.assignment = options?.assignment;
     this.serverContext = options?.serverContext ?? null;
     this.interviewTemplateId = options?.interviewTemplateId;
+    this.interviewTemplate = options?.interviewTemplate;
 
     const agent = agentRegistry.get(agentType);
     if (!agent) throw new Error(`Agent type "${agentType}" not found`);
@@ -259,7 +261,7 @@ export class MultiAgentOrchestrator {
       const modelSupportsTools = this.checkModelSupportsTools();
       let systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools, this.isImageGenAvailable());
       if (this.rootAgent.type === 'interview') {
-        systemPrompt = withInterviewAgenda(systemPrompt, this.interviewTemplateId);
+        systemPrompt = withInterviewAgenda(systemPrompt, this.interviewTemplateId, this.interviewTemplate);
       }
 
       const hasExistingSystemMessage = conversation.messages.some(m => m.role === 'system');
@@ -747,7 +749,7 @@ export class MultiAgentOrchestrator {
       };
     }
     if (this.rootAgent.type === 'interview' && this.interviewTemplateId) {
-      const template = getInterviewTemplate(this.interviewTemplateId);
+      const template = this.interviewTemplate ?? getInterviewTemplate(this.interviewTemplateId);
       if (template) return () => this.runInterviewCompletionGate(template);
     }
     return undefined;

@@ -26,7 +26,7 @@ function StudioInner() {
   const docParam = searchParams.get('doc');
 
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'projects' | 'deployments' | 'templates' | 'skills' | 'docs' | 'settings'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'projects' | 'deployments' | 'templates' | 'skills' | 'interviews' | 'docs' | 'settings'>('dashboard');
   const [autoCreateProject, setAutoCreateProject] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showTelemetryDisclosure, setShowTelemetryDisclosure] = useState(false);

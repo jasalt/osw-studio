@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.81.0 - 2026-07-03
+
+### Interview mode
+- **Custom interview templates**: You can now create, edit, duplicate, and delete your own interview templates, alongside the four built-ins. The editor sets the interview's title and description, the file under `/.interviews/` it records into, and a list of items. Each item is a question the agent asks and a "done when" condition that the completion check verifies against what was recorded. An optional handoff shows a button when the interview finishes that starts a build (or chat) from the result. Built-in templates are read-only, but you can duplicate one to start from it. Interview mode itself is unchanged; this adds the template management that was missing.
+- **Managing templates**: Reach them from the interview picker in the chat panel (New and Manage), or from a new Interviews entry in the main menu.
+- **Sync (Server Mode)**: Your custom interview templates sync across devices, alongside skills, project templates, and model templates. Only the template definition travels; nothing device-specific is sent.
+
+### UI
+- **Custom items listed first**: In the Skills, Templates, and Interviews listings, your own custom items now sort before the built-in ones.
+- **Narrower editor dialogs**: The skill and interview template editors no longer stretch to full width on large screens.
+
 ## v1.80.2 - 2026-07-02
 
 ### Fixes
