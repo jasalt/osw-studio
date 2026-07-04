@@ -14,6 +14,8 @@ import { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-o
 import { configManager, migrateBackendKey } from '@/lib/config/storage';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
 import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
+import { track } from '@/lib/telemetry';
+import { bucketInterviewTemplateId } from '@/lib/telemetry/tool-analytics';
 import { PANEL_MAP } from '@/lib/stores/slices/layout';
 import { useCostSettings } from '@/lib/hooks/use-cost-settings';
 import { getModelInputModalities } from '@/lib/llm/providers/registry';
@@ -396,7 +398,13 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     await useWorkspaceStore.getState().clearChat(project.id);
     // Clear auto-checkpoints when conversation is cleared (keep manual saves)
     await checkpointManager.clearAutoCheckpoints(project.id);
-    // Clearing the chat also ends any active interview (returns to the picker)
+    // Clearing the chat also ends any active interview (returns to the picker).
+    // Note: this counts as abandoned even if the interview had already completed
+    // and the user is just clearing up afterwards; acceptable minor over-count.
+    const endingInterview = useWorkspaceStore.getState().activeInterview;
+    if (endingInterview) {
+      track('interview_abandoned', { template: bucketInterviewTemplateId(endingInterview.templateId) });
+    }
     useWorkspaceStore.getState().setActiveInterview(null);
   }, [project.id]);
   
@@ -1051,7 +1059,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
-  const handleRestoreCheckpoint = useCallback(async (checkpointId: string, description?: string) => {
+  const handleRestoreCheckpoint = useCallback(async (checkpointId: string, description?: string, options?: { isDiscard?: boolean }) => {
     try {
       // First check if checkpoint exists
       const exists = await checkpointManager.checkpointExists(checkpointId);
@@ -1066,6 +1074,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
       );
       if (success) {
         toast.success(`Restored to: ${description || 'checkpoint'}`);
+        track(options?.isDiscard ? 'changes_discarded' : 'checkpoint_restore');
         handleFilesChange();
 
         const savedId = saveManager.getSavedCheckpointId(project.id);
@@ -1224,6 +1233,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
 
   const handleStartInterview = useCallback(async (template: InterviewTemplate) => {
     if (!project.id) return;
+    track('interview_started', { template: bucketInterviewTemplateId(template.id) });
     // Start fresh: an interview should not append onto a prior conversation.
     await useWorkspaceStore.getState().clearChat(project.id);
     storeSetActiveInterview({ templateId: template.id, title: template.title });
@@ -1236,6 +1246,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
 
   const handleHandoff = useCallback(async (handoff: InterviewHandoff) => {
     if (!project.id) return;
+    track('handoff_used', { mode: handoff.mode });
     // End the interview and start the follow-up task fresh in its target mode.
     storeSetActiveInterview(null);
     storeSetMode(handoff.mode);
@@ -1304,7 +1315,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => handleRestoreCheckpoint(initialCheckpointId, 'Last saved state')}
+            onClick={() => handleRestoreCheckpoint(initialCheckpointId, 'Last saved state', { isDiscard: true })}
             disabled={discardDisabled}
             className="rounded-r-none border-r-0"
           >

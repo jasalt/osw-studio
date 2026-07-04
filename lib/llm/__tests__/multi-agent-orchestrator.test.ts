@@ -155,7 +155,10 @@ vi.mock('@/lib/vfs/skills', () => ({
 }));
 
 vi.mock('@/lib/telemetry', () => ({ track: vi.fn() }));
-vi.mock('@/lib/telemetry/tool-analytics', () => ({ extractToolAnalytics: () => ({}) }));
+vi.mock('@/lib/telemetry/tool-analytics', () => ({
+  extractToolAnalytics: () => ({}),
+  bucketInterviewTemplateId: (id: string) => id,
+}));
 
 import { MultiAgentOrchestrator, AgentMessage } from '../multi-agent-orchestrator';
 import { runStructuredJudge } from '@/lib/testing/judge';

@@ -10,6 +10,12 @@ import { Button } from '@/components/ui/button';
 import { cn, logger } from '@/lib/utils';
 import { useTheme } from 'next-themes';
 import { useTypescriptIntelliSense } from '@/lib/hooks/use-typescript-intellisense';
+import { track } from '@/lib/telemetry';
+
+// Module-level, session-scoped: ensures `code_edited` fires at most once per
+// project per session, regardless of how many files are edited or how many
+// MultiTabEditor instances mount/unmount.
+const editedProjectsThisSession = new Set<string>();
 
 /** Error boundary to catch Monaco disposal crashes during panel resize/move. */
 class EditorErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -203,10 +209,18 @@ export function MultiTabEditor({ projectId, runtime, onClose }: MultiTabEditorPr
           content: value,
           modified: isModified
         });
+        // Genuine user typing diverges from the state already committed by
+        // the filesChanged handler (programmatic VFS updates set state and
+        // editor content to the same value in the same pass, so isModified
+        // is false for those). Only fire on real, user-originated edits.
+        if (isModified && !editedProjectsThisSession.has(projectId)) {
+          editedProjectsThisSession.add(projectId);
+          track('code_edited');
+        }
       }
       return next;
     });
-  }, []);
+  }, [projectId]);
 
   const saveFile = useCallback(async (path: string) => {
     const openFile = openFiles.get(path);

@@ -11,6 +11,7 @@ import {
   type TemplateForm,
 } from '@/lib/interview/template-form';
 import { interviewTemplatesService } from '@/lib/interview/templates-service';
+import { track } from '@/lib/telemetry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -103,6 +104,7 @@ export function InterviewTemplateEditor({ template, onSaved, onCancel }: Intervi
       if (isCreate) {
         const id = await interviewTemplatesService.generateId(form.title);
         await interviewTemplatesService.createTemplate(formToTemplate(form, id));
+        track('interview_template_created');
         toast.success(`Created interview template: ${form.title.trim()}`);
       } else {
         await interviewTemplatesService.updateTemplate(template.id, formToTemplate(form, template.id));

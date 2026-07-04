@@ -5,6 +5,7 @@ import { AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { configManager } from '@/lib/config/storage';
 import { getProvider } from '@/lib/llm/providers/registry';
+import { track } from '@/lib/telemetry';
 import type { ModelTemplate, ModelRef } from '@/lib/llm/models/assignment';
 
 // ---------------------------------------------------------------------------
@@ -275,11 +276,13 @@ export function TemplatesPane() {
       assignment: structuredClone(src.assignment),
     };
     configManager.saveModelTemplate(clone);
+    track('model_template_created');
     refresh();
   }
 
   function handleDelete(id: string) {
     configManager.deleteModelTemplate(id);
+    track('model_template_deleted');
 
     // If we deleted the active template, fall back to any remaining template
     if (id === activeId) {

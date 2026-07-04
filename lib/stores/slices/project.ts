@@ -2,6 +2,7 @@ import { StateCreator } from 'zustand';
 import type { ProjectRuntime } from '@/lib/vfs/types';
 import type { ProjectModelConfig } from '@/lib/llm/models/assignment';
 import type { FocusContextPayload } from '@/lib/preview/types';
+import { track } from '@/lib/telemetry';
 
 type FocusTarget = FocusContextPayload & { timestamp: number };
 
@@ -97,7 +98,11 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
   },
 
   setMode: (mode: WorkspaceMode) => {
+    const prevMode = get().mode;
     set({ mode });
+    if (prevMode !== mode) {
+      track('mode_switch', { from: prevMode, to: mode });
+    }
     if (typeof window !== 'undefined') {
       localStorage.setItem('osw-studio-mode', mode);
     }

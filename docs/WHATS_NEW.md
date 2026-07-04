@@ -6,6 +6,16 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.82.0 - Usage Analytics (2026-07-04)
+
+The optional anonymous usage analytics now cover a lot more of what happens in the app, and for the first time they also report from self-hosted and desktop instances, which previously sent nothing. This is how a one-person project decides what to work on next. Nothing about what you build is collected: only counts and category labels, never prompts, code, names, keys, or errors. The first-run notice lists the fuller set and is shown once more so you can look it over; if you already turned analytics off, they stay off.
+
+### Analytics
+- **Wider coverage**: Mode switches, interview and skill/template authoring, project and deployment activity, manual sync, and which built-in skills the AI reads are now counted, all anonymously
+- **Server Mode included**: Self-hosted and desktop instances now report the same anonymous signals; self-hosted builds can disable analytics entirely at build time
+
+---
+
 ## v1.81.0 - Custom Interview Templates (2026-07-03)
 
 Interview mode launched with four built-in templates and a note that custom ones were planned. They're here now: you can write your own interviews, deciding the questions the agent asks and what counts as a complete answer. Manage them from the interview picker or a new Interviews entry in the main menu, and in Server Mode they sync across devices the way skills and templates already do.

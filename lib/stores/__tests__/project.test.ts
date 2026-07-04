@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createTestStore, setupOrchestratorMocks } from './test-helpers';
 import type { GenerationTask } from '../types';
+import { track } from '@/lib/telemetry';
 
 vi.mock('@/lib/llm/multi-agent-orchestrator', () => ({ MultiAgentOrchestrator: vi.fn() }));
 setupOrchestratorMocks();
@@ -78,6 +79,17 @@ describe('project slice', () => {
     expect(store.getState().mode).toBe('chat');
     store.getState().setMode('interview');
     expect(store.getState().mode).toBe('interview');
+  });
+
+  it('setMode tracks mode_switch only on an actual change', () => {
+    vi.mocked(track).mockClear();
+    store.getState().setMode('chat');
+    store.getState().setMode('interview');
+    expect(track).toHaveBeenCalledWith('mode_switch', { from: 'chat', to: 'interview' });
+
+    vi.mocked(track).mockClear();
+    store.getState().setMode('interview');
+    expect(track).not.toHaveBeenCalled();
   });
 
   it('setMode defers reset when generating', () => {

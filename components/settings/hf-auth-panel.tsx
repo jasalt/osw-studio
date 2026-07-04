@@ -11,6 +11,7 @@ import { configManager } from '@/lib/config/storage';
 import { validateApiKey } from '@/lib/llm/llm-client';
 import { checkHFCapabilities, loginHF } from '@/lib/auth/hf-auth';
 import type { HFCapabilities } from '@/lib/auth/hf-auth';
+import { track } from '@/lib/telemetry';
 
 interface HFAuthPanelProps {
   onAuthChange?: () => void;
@@ -110,6 +111,7 @@ export function HFAuthPanel({ onAuthChange }: HFAuthPanelProps) {
         setIsConnected(true);
         setTokenInput('');
         toast.success('Connected to HuggingFace');
+        track('connection_added', { provider: 'huggingface' });
         dispatchAuthEvent(true);
       } else {
         toast.error('Invalid token. Check that it has "Inference Providers" permission.');
@@ -130,6 +132,7 @@ export function HFAuthPanel({ onAuthChange }: HFAuthPanelProps) {
       setOauthUsername(undefined);
       setTokenInput('');
       toast.success('Disconnected from HuggingFace');
+      track('connection_removed', { provider: 'huggingface' });
       dispatchAuthEvent(false);
     } catch {
       toast.error('Failed to disconnect. Please try again.');

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -13,13 +13,21 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ChevronDown } from 'lucide-react';
 import { setTelemetryOptIn, track } from '@/lib/telemetry';
+import { getDisclosureLines } from '@/lib/telemetry/events';
 
 interface TelemetryDisclosureProps {
   open: boolean;
   onDismiss: () => void;
 }
 
+// Bump when the collected-events list changes, so the Details badge signals
+// there is something new to review.
+const DISCLOSURE_UPDATED = 'July 2026';
+
 export function TelemetryDisclosure({ open, onDismiss }: TelemetryDisclosureProps) {
+  // Which "what will be collected" category is expanded; only one at a time.
+  const [openCategory, setOpenCategory] = useState<string | null>(null);
+
   const handleDisable = () => {
     setTelemetryOptIn(false);
     onDismiss();
@@ -27,7 +35,7 @@ export function TelemetryDisclosure({ open, onDismiss }: TelemetryDisclosureProp
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onDismiss(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto]">
         <DialogHeader>
           <DialogTitle>Anonymous Usage Analytics</DialogTitle>
           <DialogDescription>
@@ -35,7 +43,7 @@ export function TelemetryDisclosure({ open, onDismiss }: TelemetryDisclosureProp
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+        <div className="space-y-4 text-sm text-muted-foreground leading-relaxed overflow-y-auto min-h-0 -mx-1 px-1">
           <p className="text-sm">
             Built with{' '}
             <a
@@ -54,6 +62,9 @@ export function TelemetryDisclosure({ open, onDismiss }: TelemetryDisclosureProp
               <CollapsibleTrigger className="flex items-center gap-1.5 w-full p-3 text-xs text-foreground hover:text-foreground transition-colors group">
                 <ChevronDown className="h-3.5 w-3.5 transition-transform duration-200 group-data-[state=open]:rotate-180" />
                 Details
+                <span className="ml-auto rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] font-medium text-orange-400">
+                  Updated {DISCLOSURE_UPDATED}
+                </span>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="px-4 pb-4 space-y-3 text-sm text-muted-foreground">
@@ -71,19 +82,27 @@ export function TelemetryDisclosure({ open, onDismiss }: TelemetryDisclosureProp
 
                   <div>
                     <p className="font-bold text-foreground mb-1.5">What will be collected:</p>
-                    <ul className="list-disc pl-5 space-y-0.5">
-                      <li>Which views are visited (e.g. dashboard, workspace, settings)</li>
-                      <li>Which AI providers and models are selected</li>
-                      <li>Whether tasks succeed or fail (not what was asked)</li>
-                      <li>Which tools the AI uses and whether they work</li>
-                      <li>API error types (not error messages)</li>
-                      <li>Which creation flow and runtime are used when a project is created (e.g. quick vs. describe, static vs. react)</li>
-                      <li>Whether a publish succeeded or failed, and whether a custom domain is configured (not the domain)</li>
-                      <li>Whether conversation compaction ran, with token counts only (not messages)</li>
-                      <li>Whether an image was attached to a chat message (not the image itself)</li>
-                      <li>Session heartbeats (how long the app is open)</li>
-                      <li>A randomly generated ID stored in your browser to count unique visitors</li>
-                    </ul>
+                    <div className="divide-y divide-border/60 rounded-md border border-border/60">
+                      {getDisclosureLines().map(group => (
+                        <Collapsible
+                          key={group.label}
+                          open={openCategory === group.label}
+                          onOpenChange={(o) => setOpenCategory(o ? group.label : null)}
+                        >
+                          <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2.5 py-2 text-xs font-medium text-foreground/80 hover:text-foreground transition-colors group">
+                            <ChevronDown className="h-3 w-3 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                            <span>{group.label}</span>
+                            <span className="ml-auto text-muted-foreground">{group.lines.length}</span>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <ul className="list-disc pl-7 pr-3 pb-2 space-y-0.5">
+                              {group.lines.map(line => <li key={line}>{line}</li>)}
+                            </ul>
+                          </CollapsibleContent>
+                        </Collapsible>
+                      ))}
+                    </div>
+                    <p className="mt-2">A randomly generated ID stored in your browser is used to count unique visitors.</p>
                   </div>
                 </div>
               </CollapsibleContent>

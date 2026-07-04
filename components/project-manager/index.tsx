@@ -489,6 +489,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       localStorage.removeItem(`osw-db-schema-${project.id}`);
       import('@/lib/vfs/auto-sync').then(m => m.autoDeleteProject(project.id)).catch(() => {});
       toast.success('Project deleted');
+      track('project_delete');
       await reloadProjects();
     } catch (error) {
       logger.error('Failed to delete project:', error);
@@ -525,6 +526,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       URL.revokeObjectURL(url);
 
       toast.success('Project exported');
+      track('project_export', { format: 'json' });
     } catch (error) {
       logger.error('Failed to export project:', error);
       toast.error('Failed to export project');
@@ -545,6 +547,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       URL.revokeObjectURL(url);
 
       toast.success('Project exported as ZIP');
+      track('project_export', { format: 'zip' });
     } catch (error) {
       logger.error('Failed to export project as ZIP:', error);
       toast.error('Failed to export project as ZIP');
@@ -571,6 +574,7 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
         const imported = await vfs.importProject(data);
         await pushProjectToServer(imported.id, workspaceId);
         toast.success('Project imported successfully');
+        track('project_import', { format: 'json' });
         await reloadProjects();
         onProjectSelect(imported);
       } catch (error) {

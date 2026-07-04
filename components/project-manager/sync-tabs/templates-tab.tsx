@@ -8,6 +8,7 @@ import { vfs } from '@/lib/vfs';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
+import { track } from '@/lib/telemetry';
 
 interface TemplatesTabProps {
   items: SyncableItem[];
@@ -54,7 +55,7 @@ export function TemplatesTab({
     onSelectedIdsChange(newSelected);
   };
 
-  const handlePushSingle = async (item: SyncableItem) => {
+  const handlePushSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       // Get template from IndexedDB
@@ -70,14 +71,19 @@ export function TemplatesTab({
 
       if (result.success) {
         toast.success(`Pushed "${item.name}" to server`);
+        if (!opts?.silent) {
+          track('sync_manual', { item_type: 'template', direction: 'push', bulk: false, count: 1 });
+        }
         onRefresh();
         onSyncComplete();
       } else {
         toast.error(result.error || 'Failed to push template');
+        track('sync_fail', { item_type: 'template', direction: 'push' });
       }
     } catch (error) {
       logger.error('Push template error:', error);
       toast.error('Failed to push template');
+      track('sync_fail', { item_type: 'template', direction: 'push' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -87,13 +93,14 @@ export function TemplatesTab({
     }
   };
 
-  const handlePullSingle = async (item: SyncableItem) => {
+  const handlePullSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullTemplate(item.id);
 
       if (!result.success || !result.template) {
         toast.error(result.error || 'Failed to pull template');
+        track('sync_fail', { item_type: 'template', direction: 'pull' });
         return;
       }
 
@@ -110,11 +117,15 @@ export function TemplatesTab({
       await vfs.getStorageAdapter().saveCustomTemplate(template);
 
       toast.success(`Pulled "${item.name}" from server`);
+      if (!opts?.silent) {
+        track('sync_manual', { item_type: 'template', direction: 'pull', bulk: false, count: 1 });
+      }
       onRefresh();
       onSyncComplete();
     } catch (error) {
       logger.error('Pull template error:', error);
       toast.error('Failed to pull template');
+      track('sync_fail', { item_type: 'template', direction: 'pull' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -137,7 +148,11 @@ export function TemplatesTab({
       );
 
       for (const item of itemsToPush) {
-        await handlePushSingle(item);
+        await handlePushSingle(item, { silent: true });
+      }
+
+      if (itemsToPush.length > 0) {
+        track('sync_manual', { item_type: 'template', direction: 'push', bulk: true, count: itemsToPush.length });
       }
 
       onSelectedIdsChange(new Set());
@@ -154,7 +169,11 @@ export function TemplatesTab({
       );
 
       for (const item of itemsToPull) {
-        await handlePullSingle(item);
+        await handlePullSingle(item, { silent: true });
+      }
+
+      if (itemsToPull.length > 0) {
+        track('sync_manual', { item_type: 'template', direction: 'pull', bulk: true, count: itemsToPull.length });
       }
 
       onSelectedIdsChange(new Set());

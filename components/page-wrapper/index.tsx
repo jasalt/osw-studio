@@ -13,6 +13,8 @@ import { AboutModal } from '@/components/about-modal';
 import { GenerationShelf } from '@/components/generation-shelf';
 import { vfs } from '@/lib/vfs';
 import { toast } from 'sonner';
+import { track } from '@/lib/telemetry';
+import { TelemetryBootstrap } from '@/components/telemetry-bootstrap';
 
 type View = 'dashboard' | 'projects' | 'templates' | 'skills' | 'interviews' | 'deployments' | 'users' | 'workspaces' | 'docs' | 'settings';
 
@@ -50,19 +52,30 @@ function PageWrapperInner({ view, workspaceId, settingsTab, autoCreateProject }:
     useWorkspaceStore.getState().reattachServerTasks();
   }, []);
 
+  // Track pageview on view/project changes
+  useEffect(() => {
+    const path = selectedProject ? 'workspace' : view;
+    track('pageview', { path });
+  }, [view, selectedProject]);
+
   const handleNavigate = useCallback((targetView: string) => {
     const route = getViewRoute(targetView, workspaceId);
     router.push(route);
   }, [router, workspaceId]);
 
+  const handleProjectOpen = useCallback((project: Project) => {
+    setSelectedProject(project);
+    track('project_open');
+  }, []);
+
   const handleShelfNavigate = useCallback(async (info: { id: string; name: string }) => {
     try {
       const project = await vfs.getProject(info.id);
-      if (project) setSelectedProject(project);
+      if (project) handleProjectOpen(project);
     } catch {
       toast.error('Could not open project');
     }
-  }, []);
+  }, [handleProjectOpen]);
 
   const content = selectedProject ? (
     <Workspace
@@ -74,7 +87,7 @@ function PageWrapperInner({ view, workspaceId, settingsTab, autoCreateProject }:
     <ContentArea
       view={view}
       workspaceId={workspaceId}
-      onProjectSelect={setSelectedProject}
+      onProjectSelect={handleProjectOpen}
       settingsTab={settingsTab}
       onNavigate={handleNavigate}
       autoCreateProject={autoCreateProject}
@@ -87,7 +100,7 @@ function PageWrapperInner({ view, workspaceId, settingsTab, autoCreateProject }:
         currentView={view}
         workspaceId={workspaceId}
         onNavigate={handleNavigate}
-        onProjectSelect={setSelectedProject}
+        onProjectSelect={handleProjectOpen}
         onOpenAbout={() => setShowAboutModal(true)}
         showSidebar={!selectedProject}
       >
@@ -98,6 +111,7 @@ function PageWrapperInner({ view, workspaceId, settingsTab, autoCreateProject }:
         open={showAboutModal}
         onOpenChange={setShowAboutModal}
       />
+      <TelemetryBootstrap />
       <GenerationShelf
         selectedProject={selectedProject}
         onNavigateToProject={handleShelfNavigate}

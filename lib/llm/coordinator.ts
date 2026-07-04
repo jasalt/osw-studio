@@ -4,6 +4,7 @@
 
 import { AgentLoop } from './core/agent-loop';
 import { ContextManagerImpl } from './core/context-manager';
+import { track } from '@/lib/telemetry';
 import type {
   ToolExecutor,
   ToolCall,
@@ -248,6 +249,8 @@ export class MultiAgentCoordinator {
     if (this.stopped) {
       return { type, prompt, body: '(Cancelled — parent stopped)' };
     }
+
+    track('agent_spawned', { type });
 
     const promptLabel = prompt.length > 80 ? prompt.slice(0, 80) + '...' : prompt;
     const startedAt = Date.now();

@@ -210,6 +210,12 @@ export function DeploymentsView({ onProjectSelect, workspaceId }: DeploymentsVie
 
       const result = await response.json();
 
+      // Fire only on the empty -> set transition, never on every save and
+      // never with the domain value itself.
+      if (!selectedDeployment.customDomain && settings.customDomain) {
+        track('custom_domain_set');
+      }
+
       // Update local deployment state in the selected deployment modal
       setSelectedDeployment({
         ...selectedDeployment,
@@ -493,6 +499,8 @@ export function DeploymentsView({ onProjectSelect, workspaceId }: DeploymentsVie
         throw new Error(error.error || 'Failed to delete deployment');
       }
 
+      track('deployment_delete');
+
       await loadData();
     } catch (error) {
       logger.error('Failed to delete deployment:', error);
@@ -514,6 +522,8 @@ export function DeploymentsView({ onProjectSelect, workspaceId }: DeploymentsVie
         const error = await response.json();
         throw new Error(error.error || 'Failed to create deployment');
       }
+
+      track('deployment_create');
 
       await loadData();
       setShowCreateModal(false);

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Skill, SkillGroup } from '@/lib/vfs/skills/types';
 import { skillsService } from '@/lib/vfs/skills';
 import { vfs } from '@/lib/vfs';
+import { track } from '@/lib/telemetry';
 import { logger } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -219,6 +220,7 @@ export function SkillsManager() {
     if (skillToDelete) {
       try {
         await skillsService.deleteSkill(skillToDelete.id);
+        track('skill_deleted');
         toast.success(`Deleted skill: ${skillToDelete.name}`);
         await loadAll();
         await vfs.reloadTransientSkills();

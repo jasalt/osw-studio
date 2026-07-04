@@ -13,8 +13,8 @@ import { AboutModal } from '@/components/about-modal';
 import { oauthHandleRedirectIfPresent } from '@/lib/auth/hf-auth';
 import { configManager } from '@/lib/config/storage';
 import { toast } from 'sonner';
-import { initTelemetry, track } from '@/lib/telemetry';
-import { TelemetryDisclosure } from '@/components/telemetry-disclosure';
+import { track } from '@/lib/telemetry';
+import { TelemetryBootstrap } from '@/components/telemetry-bootstrap';
 import { GenerationShelf } from '@/components/generation-shelf';
 
 // Module-level guard: prevents double token exchange when React strict mode
@@ -29,7 +29,6 @@ function StudioInner() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'projects' | 'deployments' | 'templates' | 'skills' | 'interviews' | 'docs' | 'settings'>('dashboard');
   const [autoCreateProject, setAutoCreateProject] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
-  const [showTelemetryDisclosure, setShowTelemetryDisclosure] = useState(false);
   const { state, setActiveProjectId, start: startTour } = useGuidedTour();
 
   const settingsParam = searchParams.get('settings');
@@ -44,16 +43,6 @@ function StudioInner() {
       setCurrentView('settings');
     }
   }, [docParam, settingsParam]);
-
-  // Init telemetry + first-run disclosure
-  useEffect(() => {
-    initTelemetry();
-    track('session_start');
-
-    if (!localStorage.getItem('osw-telemetry-disclosed')) {
-      setShowTelemetryDisclosure(true);
-    }
-  }, []);
 
   // Flush pending syncs on tab/window close
   useEffect(() => {
@@ -87,6 +76,7 @@ function StudioInner() {
             username: username || undefined,
           });
           toast.success(`Connected to HuggingFace${username ? ` as ${username}` : ''}`);
+          track('connection_added', { provider: 'huggingface' });
           window.dispatchEvent(new CustomEvent('apiKeyUpdated', {
             detail: { provider: 'huggingface', hasKey: true }
           }));
@@ -197,21 +187,21 @@ function StudioInner() {
     }
   }, [startTour]);
 
-  const handleDismissTelemetryDisclosure = useCallback(() => {
-    localStorage.setItem('osw-telemetry-disclosed', 'true');
-    setShowTelemetryDisclosure(false);
+  const handleProjectOpen = useCallback((project: Project) => {
+    setSelectedProject(project);
+    track('project_open');
   }, []);
 
   const handleShelfNavigate = useCallback(async (info: { id: string; name: string }) => {
     try {
       const project = await vfs.getProject(info.id);
       if (project) {
-        setSelectedProject(project);
+        handleProjectOpen(project);
       }
     } catch {
       toast.error('Could not open project');
     }
-  }, []);
+  }, [handleProjectOpen]);
 
   const content = useMemo(() => {
     if (selectedProject) {
@@ -226,7 +216,7 @@ function StudioInner() {
       <ContentArea
         view={currentView}
         onProjectSelect={(project) => {
-          setSelectedProject(project);
+          handleProjectOpen(project);
           setAutoCreateProject(false);
         }}
         onNavigate={handleNavigate}
@@ -234,14 +224,14 @@ function StudioInner() {
         autoCreateProject={autoCreateProject}
       />
     );
-  }, [selectedProject, currentView, handleNavigate, handleStartTour, autoCreateProject]);
+  }, [selectedProject, currentView, handleNavigate, handleStartTour, autoCreateProject, handleProjectOpen]);
 
   return (
     <>
       <PageLayout
         currentView={currentView}
         onNavigate={(view: string) => setCurrentView(view as typeof currentView)}
-        onProjectSelect={setSelectedProject}
+        onProjectSelect={handleProjectOpen}
         onStartTour={handleStartTour}
         onOpenAbout={() => setShowAboutModal(true)}
         showSidebar={!selectedProject}
@@ -253,10 +243,7 @@ function StudioInner() {
         open={showAboutModal}
         onOpenChange={setShowAboutModal}
       />
-      <TelemetryDisclosure
-        open={showTelemetryDisclosure}
-        onDismiss={handleDismissTelemetryDisclosure}
-      />
+      <TelemetryBootstrap />
       <GenerationShelf
         selectedProject={selectedProject}
         onNavigateToProject={handleShelfNavigate}

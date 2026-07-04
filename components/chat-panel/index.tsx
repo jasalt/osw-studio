@@ -446,6 +446,19 @@ export function ChatPanel({
 
   // Handle send with attachments (text + images + audio + files)
   const handleSend = useCallback(() => {
+    if (pendingAudio.length) {
+      // Mirrors MultiAgentOrchestrator.execute()'s passToAgent check: the clip
+      // goes to the agent as audio when the voice slot IS the agent, or is a
+      // model matching the agent's provider/model. Otherwise it is transcribed,
+      // either on-device (browser slot, pre-captured transcript) or via the
+      // dedicated voice-input model at send time.
+      const agent = resolvedAssignment?.agent;
+      const passToAgent = voiceInput === 'agent'
+        || !!(voiceInput && typeof voiceInput === 'object' && agent && voiceInput.provider === agent.provider && voiceInput.model === agent.model);
+      const handling = passToAgent ? 'agent_audio' : (voiceIsBrowser ? 'on_device' : 'transcription');
+      track('voice_input_used', { handling });
+    }
+
     onGenerate(
       prompt,
       pendingImages.length ? pendingImages : undefined,
@@ -455,7 +468,7 @@ export function ChatPanel({
     setPendingImages([]);
     setPendingAudio([]);
     setPendingFiles([]);
-  }, [onGenerate, pendingImages, pendingAudio, pendingFiles, prompt]);
+  }, [onGenerate, pendingImages, pendingAudio, pendingFiles, prompt, resolvedAssignment, voiceInput, voiceIsBrowser]);
 
   // Listen for tour event to open provider settings
   useEffect(() => {
@@ -1144,7 +1157,10 @@ function TurnDisplay({ turn, collatedUsage, collatedTaskStartTime, onRestore, on
                 )}
                 <ChipsBlock
                   options={askData.options}
-                  onSelect={(value) => onGenerate?.(value)}
+                  onSelect={(value) => {
+                    track('ask_response', { via: 'chip' });
+                    onGenerate?.(value);
+                  }}
                   disabled={!!generating}
                 />
               </div>

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Eye, EyeOff, Loader2, ExternalLink, MoreVertical, Pencil, RefreshCw, Unplug } from 'lucide-react';
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
+import { track } from '@/lib/telemetry';
 import { validateApiKey as checkApiKey } from '@/lib/llm/llm-client';
 import { getAllProviders, getOfferableProviders, getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
 import { isProviderConnected } from '@/lib/llm/providers/connection-status';
@@ -86,6 +87,7 @@ function ConnectConfigBody({ providerId, onConnected, onBack }: ConnectConfigBod
       if (isValid) {
         configManager.setProviderApiKey(providerId, key);
         configManager.clearModelCache(providerId);
+        track('connection_added', { provider: providerId });
         toast.success(`Connected to ${providerConfig.name}!`);
         dispatchApiKeyEvent(true);
         onConnected();
@@ -108,6 +110,7 @@ function ConnectConfigBody({ providerId, onConnected, onBack }: ConnectConfigBod
     try {
       const models = await loadProviderModels(providerId);
       if (models.length > 0) {
+        track('connection_added', { provider: providerId });
         toast.success(`Connected to ${providerConfig.name} · ${models.length} model${models.length === 1 ? '' : 's'}`);
         dispatchApiKeyEvent(!!currentApiKey.trim());
         onConnected();
@@ -333,6 +336,7 @@ function ConnectCustomBody({ onConnected, onBack }: ConnectCustomBodyProps) {
     configManager.saveCustomProvider(id, cfg);
     if (key) configManager.setProviderApiKey(id, key);
     configManager.clearModelCache(id);
+    track('connection_added', { provider: 'custom' });
     try {
       const models = await loadProviderModels(id);
       if (models.length > 0) {
@@ -670,6 +674,7 @@ function EditConfigBody({ providerId, onDone, onDisconnected }: EditConfigBodyPr
       if (isCustom) {
         configManager.removeCustomProvider(providerId);
       }
+      track('connection_removed', { provider: isCustom ? 'custom' : providerId });
       toast.success(`Disconnected from ${providerConfig.name}`);
       dispatchApiKeyEvent(false);
       onDisconnected();
@@ -970,6 +975,7 @@ export function ConnectionsPane() {
       if (isCustom) {
         configManager.removeCustomProvider(id);
       }
+      track('connection_removed', { provider: isCustom ? 'custom' : id });
       toast.success(`Disconnected from ${cfg.name}`);
       emitApiKeyUpdate(id, false);
       refresh();

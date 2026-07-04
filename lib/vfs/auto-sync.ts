@@ -11,6 +11,7 @@ import { saveManager } from './save-manager';
 import { logger } from '@/lib/utils';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api/backend-status';
+import { track } from '@/lib/telemetry';
 
 // ── Workspace-scoped URL helpers ─────────────────────────────────────────────
 
@@ -223,6 +224,7 @@ export async function autoSyncProject(projectId: string, silent = true): Promise
     }
   } catch (error) {
     logger.error(`[AutoSync] Failed to sync project ${projectId}:`, error);
+    track('sync_fail', { item_type: 'project', direction: 'push' });
 
     const retries = syncRetries.get(projectId) ?? 0;
     if (retries < MAX_RETRIES) {
@@ -357,6 +359,7 @@ export async function pullServerUpdates(projectId: string, showToast = true): Pr
     return true;
   } catch (error) {
     logger.error(`[AutoSync] Failed to pull updates for ${projectId}:`, error);
+    track('sync_fail', { item_type: 'project', direction: 'pull' });
     if (showToast) {
       toast.error('Failed to pull server updates');
     }
@@ -477,6 +480,7 @@ export async function autoPullAllProjects(onProgress?: (current: number, total: 
         }
       } catch (error) {
         logger.error(`[AutoSync] Failed to process project ${item.id}:`, error);
+        track('sync_fail', { item_type: 'project', direction: 'pull' });
         errors++;
       } finally {
         processed++;
@@ -528,6 +532,7 @@ export async function autoSyncSkill(skill: import('./skills/types').Skill): Prom
     logger.debug(`[AutoSync] Skill ${skill.id} synced`);
   } catch (error) {
     logger.error(`[AutoSync] Failed to sync skill ${skill.id}:`, error);
+    track('sync_fail', { item_type: 'skill', direction: 'push' });
   }
 }
 
@@ -556,6 +561,7 @@ export async function autoSyncTemplate(template: import('./types').CustomTemplat
     logger.debug(`[AutoSync] Template ${template.id} synced`);
   } catch (error) {
     logger.error(`[AutoSync] Failed to sync template ${template.id}:`, error);
+    track('sync_fail', { item_type: 'template', direction: 'push' });
   }
 }
 
@@ -585,6 +591,7 @@ export async function autoSyncModelTemplate(template: import('@/lib/llm/models/a
     logger.debug(`[AutoSync] Model template ${template.id} synced`);
   } catch (error) {
     logger.error(`[AutoSync] Failed to sync model template ${template.id}:`, error);
+    track('sync_fail', { item_type: 'modelTemplate', direction: 'push' });
   }
 }
 
@@ -652,6 +659,7 @@ export async function autoSyncInterviewTemplate(template: import('@/lib/intervie
     logger.debug(`[AutoSync] Interview template ${template.id} synced`);
   } catch (error) {
     logger.error(`[AutoSync] Failed to sync interview template ${template.id}:`, error);
+    track('sync_fail', { item_type: 'interviewTemplate', direction: 'push' });
   }
 }
 

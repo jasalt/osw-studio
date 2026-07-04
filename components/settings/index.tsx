@@ -12,7 +12,7 @@ import { DollarSign, AlertTriangle, Info, Download, Upload, Database, ChevronDow
 import { CostCalculator } from '@/lib/llm/cost-calculator';
 import { AboutModal } from '@/components/about-modal';
 import { BackupService } from '@/lib/vfs/backup-service';
-import { setTelemetryOptIn } from '@/lib/telemetry';
+import { setTelemetryOptIn, track } from '@/lib/telemetry';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
@@ -63,6 +63,7 @@ export function SettingsPanel() {
       setIsExporting(true);
       await BackupService.exportAllData();
       toast.success('Data exported successfully!');
+      track('project_export', { format: 'osws' });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Export failed');
     } finally {
@@ -103,6 +104,7 @@ export function SettingsPanel() {
         });
 
         toast.success('Data imported successfully!');
+        track('project_import', { format: 'osws' });
         setTimeout(() => window.location.reload(), 1000);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Import failed');

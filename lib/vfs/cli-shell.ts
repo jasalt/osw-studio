@@ -1,5 +1,6 @@
 import { VirtualFileSystem } from './index';
 import { drainCompileErrors, formatCompileErrors } from '@/lib/preview/compile-errors';
+import { track } from '@/lib/telemetry';
 
 /**
  * Minimal context passed from the orchestrator into the shell executor so
@@ -2664,6 +2665,8 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('runtimeChanged', { detail: { runtime } }));
           }
+
+          track('runtime_switch', { from: currentRuntime, to: runtime });
 
           return { stdout: `Runtime changed to ${requested}`, stderr: '', exitCode: 0 };
         } catch (err: any) {

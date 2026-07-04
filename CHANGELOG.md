@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.82.0 - 2026-07-04
+
+### Analytics
+- **Wider anonymous usage analytics**: The optional usage analytics now cover many more actions, so a one-person project can see which features are actually used. New signals include mode switches, interview and skill/template authoring, project open/export/import, deployment and manual-sync activity, and which built-in skills the AI reads while working. Everything collected is still counts and category labels only, never your prompts, code, file names, custom skill/template names, API keys, or error messages. The first-run notice was updated to list the fuller set and is shown once more so you can review it; if you had already turned analytics off, they stay off and you are not asked again.
+- **Analytics now report in Server Mode**: Previously only the browser app reported usage, so self-hosted and desktop instances sent nothing at all. They now report the same anonymous signals. Self-hosted builds can still disable analytics entirely at build time.
+
 ## v1.81.0 - 2026-07-03
 
 ### Interview mode

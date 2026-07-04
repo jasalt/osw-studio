@@ -38,7 +38,7 @@ import { runAssertions } from '@/lib/testing/assertion-runner';
 import { evaluateRelevantSkills } from './skill-evaluator';
 import { skillsService } from '@/lib/vfs/skills';
 import { track } from '@/lib/telemetry';
-import { extractToolAnalytics } from '@/lib/telemetry/tool-analytics';
+import { extractToolAnalytics, extractSkillRead, bucketInterviewTemplateId } from '@/lib/telemetry/tool-analytics';
 import type { ServerOrchestratorContext } from '@/lib/server-generate/types';
 import type { ResolvedAssignment, ModelRef } from '@/lib/llm/models/assignment';
 import { transcribeAudio } from '@/lib/llm/transcribe';
@@ -501,11 +501,16 @@ export class MultiAgentOrchestrator {
       });
       skipNextUserMessage = false;
       this.onProgress?.('conversation_replaced', { messages: conversation.messages });
+      // this.totalUsage.promptTokens reflects the context window size as of the
+      // last recorded usage (see costTracker.record below) — the cheapest
+      // available approximation of the pre-compaction token count.
+      track('compaction_fired', { token_count: this.totalUsage.promptTokens });
     };
 
     // Build ProgressReporter (facade wraps onProgress + telemetry)
     const progress: ProgressReporter = {
       onEvent: (event: string, data?: Record<string, unknown>) => {
+        if (event === 'nudge') track('task_nudged');
         this.onProgress?.(event, data);
       },
     };
@@ -575,8 +580,13 @@ export class MultiAgentOrchestrator {
         abortSignal: this.abortController.signal,
         generateImage: generateImageCapability,
       });
-      executor.onAfterExecute = async (toolCall, result) => {
-        track('tool_call', extractToolAnalytics(toolCall.function.name, toolCall.function.arguments, result.success));
+      executor.onAfterExecute = async (toolCall, result, durationMs) => {
+        track('tool_call', {
+          ...extractToolAnalytics(toolCall.function.name, toolCall.function.arguments, result.success),
+          ...(typeof durationMs === 'number' ? { duration_ms: durationMs } : {}),
+        });
+        const skillRead = extractSkillRead(toolCall.function.arguments);
+        if (skillRead) track('skill_read', skillRead);
       };
       return executor;
     };
@@ -637,6 +647,14 @@ export class MultiAgentOrchestrator {
             error_type: (error as PausableApiError).errorType,
             error_category: (error as PausableApiError).errorCategory,
             status_code: (error as PausableApiError).status,
+          });
+        } else {
+          // Non-pausable generation error (not a PausableApiError) — still
+          // reaches this handler and can lead to nudge/retry or task failure.
+          // Report best-effort fields only; never the error message.
+          track('api_error', {
+            error_type: error.name || 'unknown',
+            error_category: 'unknown',
           });
         }
         await new Promise<void>(resolve => { this.pauseResolve = resolve; });
@@ -810,6 +828,12 @@ export class MultiAgentOrchestrator {
     }
 
     const feedback = buildCompletionFeedback(template.items, results);
+    if (feedback === null) {
+      track('interview_completed', {
+        template: bucketInterviewTemplateId(template.id),
+        required_items: required.length,
+      });
+    }
     this.onProgress?.('interview_gate', {
       complete: feedback === null,
       items: summarizeCompletion(template.items, results),

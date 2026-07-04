@@ -8,6 +8,7 @@ import { skillsService } from '@/lib/vfs/skills/service';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
+import { track } from '@/lib/telemetry';
 
 interface SkillsTabProps {
   items: SyncableItem[];
@@ -54,7 +55,7 @@ export function SkillsTab({
     onSelectedIdsChange(newSelected);
   };
 
-  const handlePushSingle = async (item: SyncableItem) => {
+  const handlePushSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const skill = await skillsService.getSkill(item.id);
@@ -75,14 +76,19 @@ export function SkillsTab({
           );
         }
         toast.success(`Pushed "${item.name}" to server`);
+        if (!opts?.silent) {
+          track('sync_manual', { item_type: 'skill', direction: 'push', bulk: false, count: 1 });
+        }
         onRefresh();
         onSyncComplete();
       } else {
         toast.error(result.error || 'Failed to push skill');
+        track('sync_fail', { item_type: 'skill', direction: 'push' });
       }
     } catch (error) {
       logger.error('Push skill error:', error);
       toast.error('Failed to push skill');
+      track('sync_fail', { item_type: 'skill', direction: 'push' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -92,13 +98,14 @@ export function SkillsTab({
     }
   };
 
-  const handlePullSingle = async (item: SyncableItem) => {
+  const handlePullSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullSkill(item.id);
 
       if (!result.success || !result.skill) {
         toast.error(result.error || 'Failed to pull skill');
+        track('sync_fail', { item_type: 'skill', direction: 'pull' });
         return;
       }
 
@@ -106,11 +113,15 @@ export function SkillsTab({
       await skillsService.importFromServer(result.skill);
 
       toast.success(`Pulled "${item.name}" from server`);
+      if (!opts?.silent) {
+        track('sync_manual', { item_type: 'skill', direction: 'pull', bulk: false, count: 1 });
+      }
       onRefresh();
       onSyncComplete();
     } catch (error) {
       logger.error('Pull skill error:', error);
       toast.error('Failed to pull skill');
+      track('sync_fail', { item_type: 'skill', direction: 'pull' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -133,7 +144,11 @@ export function SkillsTab({
       );
 
       for (const item of itemsToPush) {
-        await handlePushSingle(item);
+        await handlePushSingle(item, { silent: true });
+      }
+
+      if (itemsToPush.length > 0) {
+        track('sync_manual', { item_type: 'skill', direction: 'push', bulk: true, count: itemsToPush.length });
       }
 
       onSelectedIdsChange(new Set());
@@ -150,7 +165,11 @@ export function SkillsTab({
       );
 
       for (const item of itemsToPull) {
-        await handlePullSingle(item);
+        await handlePullSingle(item, { silent: true });
+      }
+
+      if (itemsToPull.length > 0) {
+        track('sync_manual', { item_type: 'skill', direction: 'pull', bulk: true, count: itemsToPull.length });
       }
 
       onSelectedIdsChange(new Set());

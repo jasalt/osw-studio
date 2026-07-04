@@ -8,6 +8,7 @@ import { configManager } from '@/lib/config/storage';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
+import { track } from '@/lib/telemetry';
 
 interface ModelTemplatesTabProps {
   items: SyncableItem[];
@@ -48,7 +49,7 @@ export function ModelTemplatesTab({
     onSelectedIdsChange(newSelected);
   };
 
-  const handlePushSingle = async (item: SyncableItem) => {
+  const handlePushSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const template = configManager.getModelTemplate(item.id);
@@ -62,14 +63,19 @@ export function ModelTemplatesTab({
           configManager.updateModelTemplateSyncMetadata(item.id, new Date(), new Date(result.modelTemplate.updatedAt));
         }
         toast.success(`Pushed "${item.name}" to server`);
+        if (!opts?.silent) {
+          track('sync_manual', { item_type: 'modelTemplate', direction: 'push', bulk: false, count: 1 });
+        }
         onRefresh();
         onSyncComplete();
       } else {
         toast.error(result.error || 'Failed to push template');
+        track('sync_fail', { item_type: 'modelTemplate', direction: 'push' });
       }
     } catch (error) {
       logger.error('Push model template error:', error);
       toast.error('Failed to push template');
+      track('sync_fail', { item_type: 'modelTemplate', direction: 'push' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -79,21 +85,26 @@ export function ModelTemplatesTab({
     }
   };
 
-  const handlePullSingle = async (item: SyncableItem) => {
+  const handlePullSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullModelTemplate(item.id);
       if (!result.success || !result.modelTemplate) {
         toast.error(result.error || 'Failed to pull template');
+        track('sync_fail', { item_type: 'modelTemplate', direction: 'pull' });
         return;
       }
       configManager.importModelTemplateFromServer(result.modelTemplate);
       toast.success(`Pulled "${item.name}" from server`);
+      if (!opts?.silent) {
+        track('sync_manual', { item_type: 'modelTemplate', direction: 'pull', bulk: false, count: 1 });
+      }
       onRefresh();
       onSyncComplete();
     } catch (error) {
       logger.error('Pull model template error:', error);
       toast.error('Failed to pull template');
+      track('sync_fail', { item_type: 'modelTemplate', direction: 'pull' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -109,14 +120,20 @@ export function ModelTemplatesTab({
       const itemsToPush = itemsRef.current.filter(
         (item) => selectedIdsRef.current.has(item.id) && ['local-newer', 'local-only', 'conflict'].includes(item.status)
       );
-      for (const item of itemsToPush) await handlePushSingle(item);
+      for (const item of itemsToPush) await handlePushSingle(item, { silent: true });
+      if (itemsToPush.length > 0) {
+        track('sync_manual', { item_type: 'modelTemplate', direction: 'push', bulk: true, count: itemsToPush.length });
+      }
       onSelectedIdsChange(new Set());
     };
     const pullSelected = async () => {
       const itemsToPull = itemsRef.current.filter(
         (item) => selectedIdsRef.current.has(item.id) && ['server-newer', 'server-only', 'conflict'].includes(item.status)
       );
-      for (const item of itemsToPull) await handlePullSingle(item);
+      for (const item of itemsToPull) await handlePullSingle(item, { silent: true });
+      if (itemsToPull.length > 0) {
+        track('sync_manual', { item_type: 'modelTemplate', direction: 'pull', bulk: true, count: itemsToPull.length });
+      }
       onSelectedIdsChange(new Set());
     };
     onRegisterPushSelected(pushSelected);

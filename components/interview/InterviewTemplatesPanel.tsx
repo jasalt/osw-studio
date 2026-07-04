@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { InterviewTemplate } from '@/lib/interview/types';
 import { interviewTemplatesService } from '@/lib/interview/templates-service';
+import { track } from '@/lib/telemetry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +63,7 @@ export function InterviewTemplatesPanel({
         title: `${src.title} copy`,
         isBuiltIn: false,
       });
+      track('interview_template_created');
       await reloadList();
       onChanged?.();
       const created = await interviewTemplatesService.getTemplate(id);
@@ -79,6 +81,7 @@ export function InterviewTemplatesPanel({
     if (!templateToDelete) return;
     try {
       await interviewTemplatesService.deleteTemplate(templateToDelete.id);
+      track('interview_template_deleted');
       toast.success(`Deleted: ${templateToDelete.title}`);
       await reloadList();
       onChanged?.();

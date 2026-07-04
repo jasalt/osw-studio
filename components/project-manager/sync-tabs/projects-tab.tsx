@@ -8,6 +8,7 @@ import { vfs, Project } from '@/lib/vfs';
 import { getSyncManager } from '@/lib/vfs/sync-manager';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
+import { track } from '@/lib/telemetry';
 
 interface ProjectsTabProps {
   items: SyncableItem[];
@@ -54,7 +55,7 @@ export function ProjectsTab({
     onSelectedIdsChange(newSelected);
   };
 
-  const handlePushSingle = async (item: SyncableItem) => {
+  const handlePushSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const project = await vfs.getProject(item.id);
@@ -77,14 +78,19 @@ export function ProjectsTab({
           await vfs.updateProject(project, { preserveUpdatedAt: true });
         }
         toast.success(`Pushed "${item.name}" to server`);
+        if (!opts?.silent) {
+          track('sync_manual', { item_type: 'project', direction: 'push', bulk: false, count: 1 });
+        }
         onRefresh();
         onSyncComplete();
       } else {
         toast.error(result.error || 'Failed to push project');
+        track('sync_fail', { item_type: 'project', direction: 'push' });
       }
     } catch (error) {
       logger.error('Push error:', error);
       toast.error('Failed to push project');
+      track('sync_fail', { item_type: 'project', direction: 'push' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -94,13 +100,14 @@ export function ProjectsTab({
     }
   };
 
-  const handlePullSingle = async (item: SyncableItem) => {
+  const handlePullSingle = async (item: SyncableItem, opts?: { silent?: boolean }) => {
     onSyncingIdsChange((prev: Set<string>) => new Set(prev).add(item.id));
     try {
       const result = await syncManager.pullSingleProject(item.id);
 
       if (!result.success || !result.project) {
         toast.error(result.error || 'Failed to pull project');
+        track('sync_fail', { item_type: 'project', direction: 'pull' });
         return;
       }
 
@@ -148,11 +155,15 @@ export function ProjectsTab({
       }
 
       toast.success(`Pulled "${item.name}" from server`);
+      if (!opts?.silent) {
+        track('sync_manual', { item_type: 'project', direction: 'pull', bulk: false, count: 1 });
+      }
       onRefresh();
       onSyncComplete();
     } catch (error) {
       logger.error('Pull error:', error);
       toast.error('Failed to pull project');
+      track('sync_fail', { item_type: 'project', direction: 'pull' });
     } finally {
       onSyncingIdsChange((prev: Set<string>) => {
         const next = new Set(prev);
@@ -175,7 +186,11 @@ export function ProjectsTab({
       );
 
       for (const item of itemsToPush) {
-        await handlePushSingle(item);
+        await handlePushSingle(item, { silent: true });
+      }
+
+      if (itemsToPush.length > 0) {
+        track('sync_manual', { item_type: 'project', direction: 'push', bulk: true, count: itemsToPush.length });
       }
 
       onSelectedIdsChange(new Set());
@@ -192,7 +207,11 @@ export function ProjectsTab({
       );
 
       for (const item of itemsToPull) {
-        await handlePullSingle(item);
+        await handlePullSingle(item, { silent: true });
+      }
+
+      if (itemsToPull.length > 0) {
+        track('sync_manual', { item_type: 'project', direction: 'pull', bulk: true, count: itemsToPull.length });
       }
 
       onSelectedIdsChange(new Set());

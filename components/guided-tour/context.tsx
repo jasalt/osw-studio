@@ -20,6 +20,7 @@ import { Project } from '@/lib/vfs/types';
 import { runGuidedDemoEdit, runGuidedFocusDemo } from './demo-runner';
 import { checkpointManager } from '@/lib/vfs/checkpoint';
 import { saveManager } from '@/lib/vfs/save-manager';
+import { track } from '@/lib/telemetry';
 
 interface TourWorkspaceData {
   projectId: string | null;
@@ -110,6 +111,8 @@ export function GuidedTourProvider({ children }: { children: React.ReactNode }) 
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    track('tour_started');
+
     try {
       // Create a fresh demo project for the tour
       const { vfs } = await import('@/lib/vfs');
@@ -168,6 +171,12 @@ export function GuidedTourProvider({ children }: { children: React.ReactNode }) 
   }, [workspaceData]);
 
   const completeTour = useCallback(async (mode: 'finish' | 'skip' = 'finish') => {
+    if (mode === 'finish') {
+      track('tour_completed');
+    } else {
+      track('tour_abandoned', { step: stepIndex });
+    }
+
     const currentData = workspaceDataRef.current;
     if (currentData.projectId && currentData.preCheckpointId && currentData.postCheckpointId) {
       saveManager
@@ -218,7 +227,7 @@ export function GuidedTourProvider({ children }: { children: React.ReactNode }) 
     configManager.setHasSeenTour(true);
     demoAbortController.current?.abort();
     workspaceHandlerRef.current = null;
-  }, [resetWorkspaceData, tourDemoProjectId, projectList]);
+  }, [resetWorkspaceData, tourDemoProjectId, projectList, stepIndex]);
 
   const skip = useCallback(() => {
     completeTour('skip');

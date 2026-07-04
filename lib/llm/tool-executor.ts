@@ -30,7 +30,7 @@ export interface OswsToolExecutorConfig {
 }
 
 export class OswsToolExecutor implements ToolExecutor {
-  onAfterExecute?: (toolCall: ToolCall, result: ToolResult) => Promise<void>;
+  onAfterExecute?: (toolCall: ToolCall, result: ToolResult, durationMs: number) => Promise<void>;
 
   constructor(private config: OswsToolExecutorConfig) {}
 
@@ -45,6 +45,8 @@ export class OswsToolExecutor implements ToolExecutor {
   }
 
   async execute(toolCall: ToolCall, context: ToolExecContext): Promise<ToolResult> {
+    const startedAt = Date.now();
+
     // 1. Sanitize tool name (strip <|...|> harmony tokens)
     const rawName = toolCall.function?.name;
     const toolId = rawName?.replace(HARMONY_TOKEN_STRIP_RE, '').trim();
@@ -129,7 +131,7 @@ export class OswsToolExecutor implements ToolExecutor {
       });
       this.config.progress.onEvent('tool_result', { toolCallId: toolCall.id, result: resultContent });
 
-      if (this.onAfterExecute) await this.onAfterExecute(toolCall, result);
+      if (this.onAfterExecute) await this.onAfterExecute(toolCall, result, Date.now() - startedAt);
 
       return result;
     } catch (error) {
@@ -147,7 +149,7 @@ export class OswsToolExecutor implements ToolExecutor {
         error: errorMessage,
       });
 
-      if (this.onAfterExecute) await this.onAfterExecute(toolCall, result);
+      if (this.onAfterExecute) await this.onAfterExecute(toolCall, result, Date.now() - startedAt);
 
       return result;
     }

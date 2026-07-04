@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { vfs } from '@/lib/vfs';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FunctionsManager } from '@/components/database-manager/functions-manager';
@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
+import { track } from '@/lib/telemetry';
 import type { Project, ProjectRuntime } from '@/lib/vfs/types';
 import { getProjectRuntimes } from '@/lib/runtimes/registry';
 import type {
@@ -34,7 +35,7 @@ import type {
   SecretsDataProvider,
   ScheduledFunctionsDataProvider,
 } from '@/components/database-manager/data-providers';
-import { SchemaEditor } from './schema-editor';
+import { SchemaEditor, getProjectSchema } from './schema-editor';
 
 interface ProjectSettingsPanelProps {
   project: Project;
@@ -56,6 +57,7 @@ function createFunctionsProvider(projectId: string): FunctionsDataProvider {
         const existing = await adapter.getEdgeFunction(id);
         if (existing) await adapter.updateEdgeFunction({ ...existing, ...data, updatedAt: now });
       } else if (adapter.createEdgeFunction) {
+        const enabled = data.enabled ?? true;
         await adapter.createEdgeFunction({
           id: crypto.randomUUID(),
           projectId,
@@ -63,11 +65,12 @@ function createFunctionsProvider(projectId: string): FunctionsDataProvider {
           method: data.method || 'GET',
           code: data.code || '',
           description: data.description || '',
-          enabled: data.enabled ?? true,
+          enabled,
           timeoutMs: data.timeoutMs ?? 10000,
           createdAt: now,
           updatedAt: now,
         });
+        if (enabled) track('backend_feature_enabled', { kind: 'edge' });
       }
     },
     async remove(id) {
@@ -78,7 +81,10 @@ function createFunctionsProvider(projectId: string): FunctionsDataProvider {
       const adapter = vfs.getStorageAdapter();
       if (adapter.getEdgeFunction && adapter.updateEdgeFunction) {
         const existing = await adapter.getEdgeFunction(id);
-        if (existing) await adapter.updateEdgeFunction({ ...existing, enabled, updatedAt: new Date() });
+        if (existing) {
+          await adapter.updateEdgeFunction({ ...existing, enabled, updatedAt: new Date() });
+          if (enabled && !existing.enabled) track('backend_feature_enabled', { kind: 'edge' });
+        }
       }
     },
   };
@@ -97,16 +103,18 @@ function createServerFunctionsProvider(projectId: string): ServerFunctionsDataPr
         const existing = await adapter.getServerFunction(id);
         if (existing) await adapter.updateServerFunction({ ...existing, ...data, updatedAt: now });
       } else if (adapter.createServerFunction) {
+        const enabled = data.enabled ?? true;
         await adapter.createServerFunction({
           id: crypto.randomUUID(),
           projectId,
           name: data.name || '',
           code: data.code || '',
           description: data.description || '',
-          enabled: data.enabled ?? true,
+          enabled,
           createdAt: now,
           updatedAt: now,
         });
+        if (enabled) track('backend_feature_enabled', { kind: 'server_fn' });
       }
     },
     async remove(id) {
@@ -117,7 +125,10 @@ function createServerFunctionsProvider(projectId: string): ServerFunctionsDataPr
       const adapter = vfs.getStorageAdapter();
       if (adapter.getServerFunction && adapter.updateServerFunction) {
         const existing = await adapter.getServerFunction(id);
-        if (existing) await adapter.updateServerFunction({ ...existing, enabled, updatedAt: new Date() });
+        if (existing) {
+          await adapter.updateServerFunction({ ...existing, enabled, updatedAt: new Date() });
+          if (enabled && !existing.enabled) track('backend_feature_enabled', { kind: 'server_fn' });
+        }
       }
     },
   };
@@ -147,6 +158,7 @@ function createSecretsProvider(projectId: string): SecretsDataProvider {
           createdAt: now,
           updatedAt: now,
         });
+        track('backend_feature_enabled', { kind: 'secrets' });
       }
     },
     async remove(id) {
@@ -173,6 +185,7 @@ function createScheduledFunctionsProvider(projectId: string): ScheduledFunctions
         const existing = await adapter.getScheduledFunction(id);
         if (existing) await adapter.updateScheduledFunction({ ...existing, ...data, updatedAt: now });
       } else if (adapter.createScheduledFunction) {
+        const enabled = data.enabled ?? true;
         await adapter.createScheduledFunction({
           id: crypto.randomUUID(),
           projectId,
@@ -182,10 +195,11 @@ function createScheduledFunctionsProvider(projectId: string): ScheduledFunctions
           cronExpression: data.cronExpression || '',
           timezone: data.timezone || 'UTC',
           config: data.config || {},
-          enabled: data.enabled ?? true,
+          enabled,
           createdAt: now,
           updatedAt: now,
         });
+        if (enabled) track('backend_feature_enabled', { kind: 'scheduled' });
       }
     },
     async remove(id) {
@@ -196,7 +210,10 @@ function createScheduledFunctionsProvider(projectId: string): ScheduledFunctions
       const adapter = vfs.getStorageAdapter();
       if (adapter.getScheduledFunction && adapter.updateScheduledFunction) {
         const existing = await adapter.getScheduledFunction(id);
-        if (existing) await adapter.updateScheduledFunction({ ...existing, enabled, updatedAt: new Date() });
+        if (existing) {
+          await adapter.updateScheduledFunction({ ...existing, enabled, updatedAt: new Date() });
+          if (enabled && !existing.enabled) track('backend_feature_enabled', { kind: 'scheduled' });
+        }
       }
     },
   };
@@ -258,12 +275,14 @@ function GeneralTab({ project, onProjectUpdate }: { project: Project; onProjectU
 
   const handleRuntimeChange = async (value: ProjectRuntime) => {
     try {
+      const previousRuntime = project.settings?.runtime || 'handlebars';
       const proj = await vfs.getProject(project.id);
       proj.settings = { ...proj.settings, runtime: value };
       await vfs.updateProject(proj);
       onProjectUpdate(proj);
       const label = getProjectRuntimes().find(r => r.value === value)?.label || value;
       toast.success(`Runtime changed to ${label}`);
+      track('runtime_switch', { from: previousRuntime, to: value });
       await updatePromptForRuntime(value);
     } catch (err) {
       logger.error('Failed to update runtime:', err);
@@ -358,6 +377,10 @@ export function ProjectSettingsPanel({ project, onProjectUpdate, enabled, worksp
   const serverFunctionsProvider = useMemo(() => createServerFunctionsProvider(project.id), [project.id]);
   const secretsProvider = useMemo(() => createSecretsProvider(project.id), [project.id]);
   const scheduledFunctionsProvider = useMemo(() => createScheduledFunctionsProvider(project.id), [project.id]);
+
+  // Tracks whether the project already had a database schema, so we only
+  // fire backend_feature_enabled on the empty -> has-schema transition.
+  const hadDbSchemaRef = useRef(!!getProjectSchema(project.id));
 
   const backendTabTrigger = (value: string, icon: React.ReactNode, label: string) => (
     <TabsTrigger
@@ -470,6 +493,10 @@ export function ProjectSettingsPanel({ project, onProjectUpdate, enabled, worksp
                     projectId={project.id}
                     enabled={enabled}
                     onSchemaChange={() => {
+                      if (!hadDbSchemaRef.current) {
+                        hadDbSchemaRef.current = true;
+                        track('backend_feature_enabled', { kind: 'db' });
+                      }
                       vfs.refreshServerContext();
                     }}
                     workspaceId={workspaceId}

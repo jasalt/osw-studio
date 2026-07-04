@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Skill } from '@/lib/vfs/skills/types';
 import { skillsService } from '@/lib/vfs/skills';
 import { createSkillTemplate, parseSkillFile, generateSkillFile } from '@/lib/vfs/skills/parser';
+import { track } from '@/lib/telemetry';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -77,6 +78,7 @@ export function SkillEditor({ skill, mode, onSave, onCancel }: SkillEditorProps)
 
       if (mode === 'create') {
         await skillsService.createSkill(rawContent);
+        track('skill_created');
         toast.success(`Created skill: ${frontmatter.name}`);
       } else if (skill) {
         await skillsService.updateSkill(skill.id, rawContent);

@@ -8,6 +8,7 @@ import { ConnectionBadge } from '@/components/settings/connection-badge';
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
 import { parseCodexAuthJson, connectCodex, disconnectCodex, checkCodexStatus } from '@/lib/auth/codex-auth';
+import { track } from '@/lib/telemetry';
 
 interface CodexAuthPanelProps {
   onAuthChange?: () => void;
@@ -77,6 +78,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
       setIsAuthenticated(true);
       setPasteValue('');
       toast.success('Token saved! Tokens will refresh automatically.');
+      track('connection_added', { provider: 'openai-codex' });
       dispatchAuthEvent(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Invalid JSON';
@@ -93,6 +95,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
       configManager.clearModelCache('openai-codex');
       setIsAuthenticated(false);
       toast.success('Disconnected from ChatGPT');
+      track('connection_removed', { provider: 'openai-codex' });
       dispatchAuthEvent(false);
     } catch {
       toast.error('Failed to disconnect. Please try again.');
