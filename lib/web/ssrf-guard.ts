@@ -1,0 +1,117 @@
+import net from 'node:net';
+
+// Expand an IPv6 literal into its 8 numeric hextets, handling the "::" gap and
+// an optional embedded dotted-IPv4 tail. Returns null if it cannot be parsed.
+function expandIpv6(ip: string): number[] | null {
+  let s = ip.toLowerCase();
+  // Handle an embedded dotted IPv4 tail by converting it to two hextets first.
+  const dotted = s.match(/(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const [a, b, c, d] = dotted[2].split('.').map(Number);
+    if ([a, b, c, d].some(n => n > 255 || Number.isNaN(n))) return null;
+    const h6 = ((a << 8) | b).toString(16);
+    const h7 = ((c << 8) | d).toString(16);
+    s = dotted[1] + h6 + ':' + h7;
+  }
+  const parts = s.split('::');
+  if (parts.length > 2) return null;
+  const head = parts[0] ? parts[0].split(':') : [];
+  const tail = parts.length === 2 ? (parts[1] ? parts[1].split(':') : []) : [];
+  const missing = 8 - (head.length + tail.length);
+  if (parts.length === 1 && head.length !== 8) return null;
+  if (missing < 0) return null;
+  const groups = parts.length === 2
+    ? [...head, ...Array(missing).fill('0'), ...tail]
+    : head;
+  const nums = groups.map(g => parseInt(g || '0', 16));
+  if (nums.length !== 8 || nums.some(n => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+  return nums;
+}
+
+export function isPrivateIp(ip: string): boolean {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 0 || a === 127) return true;             // this-host, loopback
+    if (a === 10) return true;                          // 10/8
+    if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16/12
+    if (a === 192 && b === 168) return true;            // 192.168/16
+    if (a === 169 && b === 254) return true;            // link-local + metadata
+    if (a === 100 && b >= 64 && b <= 127) return true;  // CGNAT 100.64/10
+    return false;
+  }
+  if (net.isIPv6(ip)) {
+    const h = expandIpv6(ip);
+    // Fail closed: something net.isIPv6 accepted but we cannot normalize.
+    if (!h) return true;
+    const [h0, h1, h2, h3, h4, h5, h6, h7] = h;
+
+    // Loopback (::1 in any spelling) and unspecified (::).
+    if (h0 === 0 && h1 === 0 && h2 === 0 && h3 === 0 && h4 === 0 && h5 === 0 && h6 === 0) {
+      return h7 === 0 || h7 === 1;
+    }
+
+    // Link-local fe80::/10.
+    if (h0 >= 0xfe80 && h0 <= 0xfebf) return true;
+
+    // ULA fc00::/7 (high byte 0xfc or 0xfd).
+    const highByte = h0 >> 8;
+    if (highByte === 0xfc || highByte === 0xfd) return true;
+
+    // Embedded IPv4: IPv4-mapped (::ffff:a.b.c.d) or IPv4-compatible (::a.b.c.d).
+    // First 5 hextets zero and the 6th is 0x0000 or 0xffff.
+    if (h0 === 0 && h1 === 0 && h2 === 0 && h3 === 0 && h4 === 0 && (h5 === 0 || h5 === 0xffff)) {
+      const a = h6 >> 8, b = h6 & 0xff, c = h7 >> 8, d = h7 & 0xff;
+      return isPrivateIp(`${a}.${b}.${c}.${d}`);
+    }
+
+    // Fallback prefix checks (belt and suspenders).
+    const x = ip.toLowerCase();
+    if (x === '::1' || x === '::') return true;
+    if (x.startsWith('fe80') || x.startsWith('fc') || x.startsWith('fd')) return true;
+    const m = x.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (m) return isPrivateIp(m[1]);
+    return false;
+  }
+  return true; // not a valid IP literal -> treat as unsafe
+}
+
+export function isBlockedHostname(host: string): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  if (h === 'localhost') return true;
+  if (h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  return false;
+}
+
+type Resolver = (hostname: string) => Promise<string[]>;
+
+export async function assertPublicUrl(
+  raw: string,
+  opts: { resolve?: Resolver } = {},
+): Promise<URL> {
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new Error('invalid URL'); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`blocked: unsupported scheme ${url.protocol}`);
+  }
+  // url.hostname wraps IPv6 literals in brackets (e.g. "[::1]"); strip them so
+  // net.isIP and isPrivateIp receive a bare literal.
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (isBlockedHostname(host)) throw new Error('blocked: private hostname');
+
+  // If the host is an IP literal, check directly; otherwise resolve and check every A/AAAA.
+  if (net.isIP(host)) {
+    if (isPrivateIp(host)) throw new Error('blocked: private address');
+    return url;
+  }
+  const resolve = opts.resolve ?? (async (h: string) => {
+    const dns = await import('node:dns');
+    const records = await dns.promises.lookup(h, { all: true });
+    return records.map(r => r.address);
+  });
+  const ips = await resolve(host);
+  if (ips.length === 0) throw new Error('blocked: no address');
+  for (const ip of ips) {
+    if (isPrivateIp(ip)) throw new Error('blocked: private address');
+  }
+  return url;
+}

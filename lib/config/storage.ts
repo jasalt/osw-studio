@@ -13,6 +13,7 @@ import { UsageInfo } from '@/lib/llm/types';
 import type { ModelTemplate } from '@/lib/llm/models/assignment';
 import { BUILT_IN_MODEL_TEMPLATES, isBuiltInTemplateId } from '@/lib/llm/models/registry';
 import { logger } from '@/lib/utils';
+import type { PermissionMode, GateDecision } from '@/lib/llm/permissions';
 
 export interface SessionCost {
   sessionId: string;
@@ -78,6 +79,15 @@ export interface AppSettings {
   debugStreamEnabled?: boolean;
   modelTemplates?: Record<string, ModelTemplate>;
   defaultTemplateId?: string;
+  permissionMode?: 'auto' | 'ask' | 'custom';
+  permissionOverrides?: Record<string, 'ask' | 'allow'>;
+  webSearch?: {
+    provider?: 'tavily' | 'firecrawl' | 'brave' | 'searxng';
+    keys?: Partial<Record<'tavily' | 'firecrawl' | 'brave', string>>;
+    searxngUrl?: string;
+  };
+  /** Provider group ids collapsed in the model picker. */
+  modelPickerCollapsed?: string[];
 }
 
 /**
@@ -620,6 +630,62 @@ class ConfigManager {
   }
   getDefaultTemplateId(): string { return this.getSettings().defaultTemplateId || 'default'; }
   setDefaultTemplateId(id: string): void { this.setSetting('defaultTemplateId', id); }
+
+  // Permission mode and per-command overrides
+  getPermissionMode(): PermissionMode {
+    return this.getSettings().permissionMode ?? 'ask';
+  }
+  setPermissionMode(mode: PermissionMode): void {
+    this.setSetting('permissionMode', mode);
+  }
+  getPermissionOverrides(): Record<string, GateDecision> {
+    return this.getSettings().permissionOverrides ?? {};
+  }
+  setPermissionOverride(key: string, decision: GateDecision): void {
+    const next = { ...this.getPermissionOverrides(), [key]: decision };
+    this.setSetting('permissionOverrides', next);
+  }
+  setPermissionOverrides(map: Record<string, GateDecision>): void {
+    this.setSetting('permissionOverrides', map);
+  }
+
+  // Web search provider configuration
+  getWebSearchProvider(): 'tavily' | 'firecrawl' | 'brave' | 'searxng' | null {
+    return this.getSettings().webSearch?.provider ?? null;
+  }
+  setWebSearchProvider(p: 'tavily' | 'firecrawl' | 'brave' | 'searxng' | null): void {
+    const ws = { ...this.getSettings().webSearch };
+    if (p === null) { delete ws.provider; } else { ws.provider = p; }
+    this.setSetting('webSearch', ws);
+  }
+  getWebSearchKey(p: 'tavily' | 'firecrawl' | 'brave'): string | null {
+    return this.getSettings().webSearch?.keys?.[p] ?? null;
+  }
+  setWebSearchKey(p: 'tavily' | 'firecrawl' | 'brave', key: string): void {
+    const ws = this.getSettings().webSearch ?? {};
+    this.setSetting('webSearch', { ...ws, keys: { ...ws.keys, [p]: key } });
+  }
+  getSearxngUrl(): string | null {
+    return this.getSettings().webSearch?.searxngUrl ?? null;
+  }
+  setSearxngUrl(url: string): void {
+    this.setSetting('webSearch', { ...this.getSettings().webSearch, searxngUrl: url });
+  }
+  isWebSearchConfigured(): boolean {
+    const ws = this.getSettings().webSearch;
+    if (!ws?.provider) return false;
+    if (ws.provider === 'searxng') return !!ws.searxngUrl;
+    return !!ws.keys?.[ws.provider];
+  }
+
+  getCollapsedModelGroups(): string[] {
+    return this.getSettings().modelPickerCollapsed ?? [];
+  }
+  setModelGroupCollapsed(groupId: string, collapsed: boolean): void {
+    const set = new Set(this.getCollapsedModelGroups());
+    if (collapsed) set.add(groupId); else set.delete(groupId);
+    this.setSetting('modelPickerCollapsed', [...set]);
+  }
 
   // Custom provider management
   getCustomProviders(): Record<string, ProviderConfig> {

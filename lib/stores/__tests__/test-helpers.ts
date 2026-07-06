@@ -34,6 +34,8 @@ export function setupOrchestratorMocks() {
       isCompactionEnabled: () => false,
       getCompactionLimit: () => null,
       getDebugStreamEnabled: () => false,
+      getPermissionMode: () => 'auto',
+      getPermissionOverrides: () => ({}),
     },
     migrateBackendKey: () => false,
   }));

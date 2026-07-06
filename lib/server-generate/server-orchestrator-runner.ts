@@ -121,7 +121,15 @@ export async function runServerGeneration(
       request.projectId,
       'orchestrator',
       progressCallback,
-      { model: request.model, serverContext },
+      {
+        model: request.model,
+        serverContext,
+        permissionMode: request.permissionMode,
+        permissionOverrides: request.permissionOverrides,
+        // Server-side has no UI to prompt, so gated commands are declined.
+        // Auto mode never gates, so this only affects Ask/Custom users.
+        onApprovalNeeded: async () => 'deny' as const,
+      },
     );
 
     task.orchestrator = orchestrator;

@@ -67,7 +67,17 @@ function imageGenCommandDoc(modelSupportsTools: boolean): string {
 Optional flags: --out <path> (default saves under /.generated/, which is excluded from the published build), --aspect <1:1|16:9|4:3|2:3>, --size <0.5K|1K|2K|4K>. Reports the saved path.`;
 }
 
-export async function buildSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true, imageGenAvailable = false): Promise<string> {
+/** Docs for the optional `search` command (only when a web search provider is configured). */
+function searchCommandDoc(modelSupportsTools: boolean): string {
+  const example = modelSupportsTools
+    ? `bash({ command: "search 'static site generators comparison'" })`
+    : "```bash\nsearch 'static site generators comparison'\n```";
+  return `Search command (search the web for current information):
+  ${example}
+Optional flags: -n <count> (default 5), --markdown (include extracted page content per result). Returns numbered results (title, URL, snippet). To read a result in full, use: curl --markdown <url>.`;
+}
+
+export async function buildSystemPrompt(chatMode?: boolean, serverContext?: ServerContextMetadata | null, projectId?: string, agentType?: AgentType, modelSupportsTools = true, imageGenAvailable = false, webSearchAvailable = false): Promise<string> {
   if (agentType === 'setup') return SETUP_SYSTEM_PROMPT;
   if (agentType === 'interview') return INTERVIEW_SYSTEM_PROMPT;
   if (agentType === 'explore') return buildExplorePrompt(serverContext, projectId);
@@ -76,7 +86,7 @@ export async function buildSystemPrompt(chatMode?: boolean, serverContext?: Serv
   if (chatMode) {
     return buildChatModePrompt(serverContext, projectId);
   }
-  return await buildCodeModePrompt(serverContext, projectId, modelSupportsTools, imageGenAvailable);
+  return await buildCodeModePrompt(serverContext, projectId, modelSupportsTools, imageGenAvailable, webSearchAvailable);
 }
 
 /**
@@ -128,7 +138,9 @@ Shell commands:
 - List: ls [-R] path, tree [-L depth] path
 - Find: find path -name pattern
 - Count: wc [-l] [-w] [-c] file
-- Preview: curl localhost/[path] (view compiled HTML output)`;
+- Preview: curl localhost/[path] (view compiled HTML output)
+- Fetch web: curl <url> (fetch an external page), curl --markdown <url> (readable text). Needs web access permission.
+- Search web: search "query" (only when a search provider is configured).`;
 
   if (hasServerContext) {
     prompt += `
@@ -367,7 +379,7 @@ Focus on exploration, analysis, and planning.`;
   return prompt;
 }
 
-async function buildCodeModePrompt(serverContext?: ServerContextMetadata | null, projectId?: string, modelSupportsTools = true, imageGenAvailable = false): Promise<string> {
+async function buildCodeModePrompt(serverContext?: ServerContextMetadata | null, projectId?: string, modelSupportsTools = true, imageGenAvailable = false, webSearchAvailable = false): Promise<string> {
   let prompt = buildSharedPreamble(false, !!serverContext, modelSupportsTools);
 
   if (modelSupportsTools) {
@@ -396,7 +408,7 @@ Runtime command (change project runtime):
 Valid runtimes: static, handlebars, react, preact, svelte, vue, python, lua.
 Changes the project runtime and updates .PROMPT.md if it hasn't been customized.
 
-${imageGenAvailable ? imageGenCommandDoc(modelSupportsTools) + '\n\n' : ''}Status command (always run before finishing):
+${imageGenAvailable ? imageGenCommandDoc(modelSupportsTools) + '\n\n' : ''}${webSearchAvailable ? searchCommandDoc(modelSupportsTools) + '\n\n' : ''}Status command (always run before finishing):
   ${modelSupportsTools ? 'bash({ command: "status --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete" })' : '```bash\nstatus --task \'the original request\' --done \'work completed\' --remaining \'none\' --complete\n```'}
 End with --complete when done, or --incomplete if more work remains.
 

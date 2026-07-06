@@ -115,6 +115,7 @@ vi.mock('@/lib/config/storage', () => ({
     getCompactionLimit: () => null,
     getModelContextLengthFromCache: () => null,
     getCurrentSession: () => null,
+    isWebSearchConfigured: () => false,
   },
 }));
 

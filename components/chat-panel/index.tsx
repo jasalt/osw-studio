@@ -30,6 +30,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ContentBlock } from '@/lib/llm/types';
 import type { PlacedBlock } from '@/lib/semantic-blocks/types';
 import { MessageContext } from '@/components/message-context';
+import { PermissionModeSelector } from '@/components/permissions/PermissionModeSelector';
+import { ApprovalCard } from '@/components/permissions/ApprovalCard';
 import { track } from '@/lib/telemetry';
 import { toast } from 'sonner';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
@@ -733,6 +735,7 @@ export function ChatPanel({
         {recError && !isRecording && (
           <p className="text-xs text-destructive">{recError}</p>
         )}
+        <ApprovalCard />
         {/* Modality indicators */}
         <div className="flex !mb-0">
           {[
@@ -753,6 +756,9 @@ export function ChatPanel({
               <TooltipContent side="top">{mod.label}</TooltipContent>
             </Tooltip>
           ))}
+          <div className="ml-auto flex items-center">
+            <PermissionModeSelector />
+          </div>
         </div>
         <div
           className={`bg-card border rounded-lg shadow-sm overflow-hidden transition-all rounded-tl-none ${

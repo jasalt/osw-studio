@@ -20,6 +20,7 @@ import { loadProviderModels } from '@/lib/llm/models/model-catalog';
 import { CodexAuthPanel } from '@/components/settings/codex-auth-panel';
 import { HFAuthPanel } from '@/components/settings/hf-auth-panel';
 import { Drawer } from './drawer';
+import { SearchConnectionsSection } from './search-connections';
 import type { ProviderId } from '@/lib/llm/providers/types';
 import { disconnectCodex } from '@/lib/auth/codex-auth';
 import { cn, logger } from '@/lib/utils';
@@ -1022,12 +1023,32 @@ export function ConnectionsPane() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Cloud section */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-          Cloud
-        </p>
+    <div className="flex flex-col gap-8">
+      {/* AI section */}
+      <div className="flex flex-col gap-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">AI</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Inference providers. When multiple are connected, the model you pick (globally or per project) decides which one is used.
+            </p>
+          </div>
+          <Button
+            variant="default"
+            size="sm"
+            className="gap-1.5 shrink-0"
+            onClick={openAddDrawer}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add a provider
+          </Button>
+        </div>
+
+        {/* Cloud section */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Cloud
+          </p>
         {cloudProviders.length === 0 ? (
           <p className="text-sm text-muted-foreground py-1 pl-1">None yet.</p>
         ) : (
@@ -1089,18 +1110,13 @@ export function ConnectionsPane() {
         </div>
       )}
 
-      {/* Add provider button */}
-      <div>
-        <Button
-          variant="default"
-          size="sm"
-          className="gap-1.5"
-          onClick={openAddDrawer}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add a provider
-        </Button>
       </div>
+
+      {/* Separator between AI and Search */}
+      <div className="border-t border-border" />
+
+      {/* Search section */}
+      <SearchConnectionsSection />
 
       {/* Drawer */}
       <Drawer

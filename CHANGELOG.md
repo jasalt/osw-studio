@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.83.0 - 2026-07-05
+
+### Web access
+- **`search` command**: The agent can search the web when you configure a search provider under Connections. Pick one of Tavily (1,000 searches/month free, no card), Firecrawl (1,000/month free), Brave ($5 monthly credit, card required), or your own SearXNG instance, and enter its key or URL. `search "query"` returns numbered results; `-n N` sets the count and `--markdown` includes extracted page content. Without a configured provider the command is not offered to the agent, so no wasted calls.
+- **`curl` fetches external URLs**: `curl` previously only served the local preview. It now also fetches real external pages through a server-side proxy. `curl --markdown <url>` returns readable markdown instead of raw HTML, and `curl -o <path> <url>` downloads a file (including images and other binaries) into the project. Localhost preview behavior is unchanged. Outbound requests are validated against private and internal addresses, capped in size and time, and can be disabled per instance.
+
+### Permissions
+- **Permission modes**: A new selector on the chat input sets when the agent asks before running a consequential command: Auto (never ask), Ask (the default; prompts for web access, image generation, and file deletion), or Custom. When a gated command comes up, the run pauses and shows a prompt with Allow once, Always allow, or Deny. Denying tells the agent to continue without that action.
+- **Custom permissions**: A per-command matrix (from the selector's cogwheel or the Permissions section in Settings) lets you choose exactly which commands ask for confirmation, including separate control for read versus write on commands that do both.
+- **Server Mode**: Server-mode generation runs on the backend where there is no prompt to show, so any command you have gated is declined there rather than run silently. Set the mode to Auto if you want server-mode runs to use these commands without asking.
+
+### UI
+- **Connections reorganized**: The Connections screen is now split into an AI section (cloud and local inference providers) and a Search section. Web search providers are managed the same way as inference connections, as cards, with one marked active and used for searches. Each section's "Add" button sits on its header.
+- **Collapsible model groups**: In the model picker, each provider's header can be collapsed to hide its models, and the collapsed state is remembered. Searching temporarily expands every group so matches are never hidden.
+- **Completion sound**: Task completion now plays the same two-note sound whether the run was in the foreground or background; a single-note sound signals a pending permission prompt.
+
+### Fixes
+- **Desktop: generation**: In the desktop app, generation failed with an "Unauthorized" error, and its progress stream flooded the console with 401s. Desktop runs in Server Mode, where generation happens server-side, but the generation endpoints did not recognize the desktop app's local session (it has no login the way a self-hosted server does). They now do, so generation and its live updates work.
+- **Desktop: Open Logs Folder**: The Help menu's "Open Logs Folder" failed on a clean install because the folder was only created when something was logged. The folder is now created when you open it, and a line is written at startup so it is never empty.
+
 ## v1.82.0 - 2026-07-04
 
 ### Analytics

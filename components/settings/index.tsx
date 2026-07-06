@@ -8,13 +8,14 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
-import { DollarSign, AlertTriangle, Info, Download, Upload, Database, ChevronDown, Palette } from 'lucide-react';
+import { DollarSign, AlertTriangle, Info, Download, Upload, Database, ChevronDown, Palette, Shield } from 'lucide-react';
 import { CostCalculator } from '@/lib/llm/cost-calculator';
 import { AboutModal } from '@/components/about-modal';
 import { BackupService } from '@/lib/vfs/backup-service';
 import { setTelemetryOptIn, track } from '@/lib/telemetry';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { PermissionMatrix } from '@/components/permissions/PermissionMatrix';
 
 export function SettingsPanel() {
   const [, setSettings] = useState<AppSettings>({});
@@ -31,6 +32,7 @@ export function SettingsPanel() {
   );
   const [openSections, setOpenSections] = useState({
     application: true,
+    permissions: false,
     costTracking: true,
     dataManagement: true
   });
@@ -197,6 +199,27 @@ export function SettingsPanel() {
                 />
               </div>
             </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Permissions Section */}
+        <Collapsible
+          open={openSections.permissions}
+          onOpenChange={() => toggleSection('permissions')}
+        >
+          <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg hover:bg-muted/50 transition-colors">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              <h4 className="font-medium text-sm">Permissions</h4>
+            </div>
+            <ChevronDown
+              className={`h-4 w-4 transition-transform duration-200 ${
+                openSections.permissions ? 'rotate-180' : ''
+              }`}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="px-3 pt-2 pb-3">
+            <PermissionMatrix />
           </CollapsibleContent>
         </Collapsible>
 

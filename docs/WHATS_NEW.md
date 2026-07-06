@@ -6,6 +6,19 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.83.0 - Web Access & Permissions (2026-07-05)
+
+The agent can now reach the internet: it can fetch external pages with `curl` and, once you connect a search provider, search the web with a new `search` command. Because letting the agent make outbound requests, generate images, and delete files is more consequential than editing your project, a new permission control lets you decide when it should ask first. By default it asks before web access, image generation, and deletion, and runs everything else without interruption.
+
+### Web access
+- **Search the web**: Connect a provider under Connections (Tavily and Firecrawl have free tiers, Brave is paid, or point at your own SearXNG), and the agent can run web searches while it works
+- **Fetch pages**: `curl` now fetches real external URLs, with `--markdown` for readable text and `-o` to download images and other files into the project
+
+### Permissions
+- **Ask before consequential actions**: A selector on the chat input sets when the agent asks first (Auto, Ask, or Custom). When a gated command comes up, the run pauses so you can Allow once, Always allow, or Deny. Custom mode lets you choose exactly which commands ask
+
+---
+
 ## v1.82.0 - Usage Analytics (2026-07-04)
 
 The optional anonymous usage analytics now cover a lot more of what happens in the app, and for the first time they also report from self-hosted and desktop instances, which previously sent nothing. This is how a one-person project decides what to work on next. Nothing about what you build is collected: only counts and category labels, never prompts, code, names, keys, or errors. The first-run notice lists the fuller set and is shown once more so you can look it over; if you already turned analytics off, they stay off.

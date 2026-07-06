@@ -414,7 +414,11 @@ function buildMenu(): void {
         { label: 'Open Releases Page', click: () => shell.openExternal(RELEASES_URL) },
         { type: 'separator' as const },
         { label: 'Report an Issue', click: () => shell.openExternal('https://github.com/o-stahl/osw-studio/issues') },
-        { label: 'Open Logs Folder', click: () => shell.openPath(path.join(app.getPath('userData'), 'logs')) },
+        { label: 'Open Logs Folder', click: () => {
+          const logDir = path.join(app.getPath('userData'), 'logs');
+          try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* opening still surfaces the path */ }
+          shell.openPath(logDir);
+        } },
       ],
     },
   ];
@@ -483,6 +487,7 @@ app.whenReady().then(async () => {
     return;
   }
 
+  logToFile(`OSW Studio Desktop v${app.getVersion()} starting on ${process.platform}/${process.arch}`);
   buildMenu();
   try {
     if (isDev) {

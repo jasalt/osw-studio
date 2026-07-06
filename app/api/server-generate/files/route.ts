@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySession } from '@/lib/auth/session';
+import { getSession } from '@/lib/auth/session';
 import { taskManager } from '@/lib/server-generate/singleton';
 import { VirtualFileSystem } from '@/lib/vfs';
 import { getWorkspaceAdapter, getSQLiteAdapter } from '@/lib/vfs/adapters/server';
@@ -12,11 +12,8 @@ async function getVFSForTask(workspaceId?: string): Promise<VirtualFileSystem> {
 }
 
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('osw_session')?.value;
-  if (!sessionToken) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const session = await verifySession(sessionToken);
-  if (!session) return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   let taskId: string, paths: string[];
   try { ({ taskId, paths } = await request.json()); } catch {

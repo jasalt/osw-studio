@@ -1,6 +1,8 @@
 import { VirtualFileSystem } from './index';
 import { drainCompileErrors, formatCompileErrors } from '@/lib/preview/compile-errors';
 import { track } from '@/lib/telemetry';
+import { isExternalCurl } from '@/lib/llm/permissions';
+import { base64ToArrayBuffer } from '@/lib/vfs/binary-encoding';
 
 /**
  * Minimal context passed from the orchestrator into the shell executor so
@@ -2390,26 +2392,25 @@ Examples:
       case 'curl': {
         // curl localhost/path — fetch compiled HTML from preview engine
         // Flags: -s/--silent, -I/--head, -o FILE/--output FILE, -X METHOD, -H header, -d body
-        const curlFlags = { silent: false, head: false, outputFile: '', method: '', headers: [] as string[], body: '' };
-        let curlUrl = '';
+        const curlFlags = { silent: false, head: false, outputFile: '', method: '', headers: [] as string[], body: '', markdown: false };
+        const curlUrls: string[] = [];
 
         for (let i = 0; i < args.length; i++) {
           const a = args[i];
           if (a === '-s' || a === '--silent') { curlFlags.silent = true; continue; }
           if (a === '-I' || a === '--head') { curlFlags.head = true; continue; }
+          if (a === '--markdown') { curlFlags.markdown = true; continue; }
           if ((a === '-o' || a === '--output') && args[i + 1]) { curlFlags.outputFile = args[++i]; continue; }
           if ((a === '-X' || a === '--request') && args[i + 1]) { curlFlags.method = args[++i]; continue; }
           if ((a === '-H' || a === '--header') && args[i + 1]) { curlFlags.headers.push(args[++i]); continue; }
           if ((a === '-d' || a === '--data' || a === '--data-raw') && args[i + 1]) { curlFlags.body = args[++i]; continue; }
-          if (!a.startsWith('-') && a) curlUrl = a;
+          if (!a.startsWith('-') && a) {
+            // Assume http:// when no protocol is specified
+            curlUrls.push(a.includes('://') ? a : 'http://' + a);
+          }
         }
 
-        // Assume http:// when no protocol is specified
-        if (curlUrl && !curlUrl.includes('://')) {
-          curlUrl = 'http://' + curlUrl;
-        }
-
-        if (!curlUrl) {
+        if (curlUrls.length === 0) {
           return {
             stdout: '',
             stderr: `curl: no URL specified
@@ -2420,43 +2421,99 @@ Options:
   -s, --silent     Suppress progress output
   -I, --head       Show response headers only
   -o, --output FILE  Write output to FILE
+  --markdown       Convert fetched HTML to readable markdown
 
 Examples:
-  curl localhost/                    — compiled index.html
-  curl localhost/about               — compiled about page
-  curl -I localhost/                 — response headers only
-  curl -s localhost/ | grep '<title>'  — pipe to grep
-  curl localhost/ > /output.html     — redirect to file
+  curl localhost/                    - compiled index.html
+  curl localhost/about               - compiled about page
+  curl -I localhost/                 - response headers only
+  curl -s localhost/ | grep '<title>'  - pipe to grep
+  curl localhost/ > /output.html     - redirect to file
+  curl https://example.com            - fetch an external page
+  curl --markdown https://example.com - fetch and convert to readable markdown
+  curl -o /logo.png https://.../x.png - download a binary asset into the project
 
-Only localhost URLs are supported (fetches compiled HTML from preview engine).`,
+Localhost URLs fetch compiled HTML from the preview engine; external URLs are fetched through the outbound proxy.`,
             exitCode: 2
           };
         }
 
-        // Validate localhost-only
-        const urlLower = curlUrl.toLowerCase();
-        const isLocalhost =
-          urlLower.startsWith('http://localhost') ||
-          urlLower.startsWith('https://localhost') ||
-          urlLower.startsWith('http://127.0.0.1') ||
-          urlLower.startsWith('https://127.0.0.1');
+        // Per-URL fetch. Decides local-vs-external via the same classifier as the
+        // permission gate so the runtime path and the gate stay in sync. Multiple
+        // URLs are fetched in order and their output concatenated (like real curl),
+        // while the whole batch is covered by one permission prompt.
+        const fetchOneUrl = async (u: string): Promise<ShellResult> => {
+        const external = isExternalCurl(['curl', u]);
 
-        if (!isLocalhost) {
-          return {
-            stdout: '',
-            stderr: `curl: external URLs are not supported: ${curlUrl}\n\nOnly localhost URLs are supported. curl fetches compiled HTML from the preview engine.\n\nExamples:\n  curl localhost/\n  curl localhost/about`,
-            exitCode: 1
-          };
+        if (external) {
+          // External curl requires the browser runtime (relative fetch to our own
+          // API route). Server-side generation has no origin for '/api/web/fetch'.
+          if (typeof window === 'undefined') {
+            return { stdout: '', stderr: 'curl: external URLs require the browser runtime (open the app to fetch the internet).', exitCode: 1 };
+          }
+          try {
+            const resp = await fetch('/api/web/fetch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: u,
+                method: curlFlags.method || (curlFlags.head ? 'HEAD' : 'GET'),
+                headers: curlFlags.headers,
+                body: curlFlags.body || undefined,
+              }),
+            });
+            const data = await resp.json();
+            if (data.error) {
+              return { stdout: '', stderr: `curl: ${data.error}`, exitCode: 1 };
+            }
+
+            // Write to file (-o). Binary content is base64; decode to bytes.
+            if (curlFlags.outputFile) {
+              const outPath = normalizePath(curlFlags.outputFile);
+              if (!outPath) return { stdout: '', stderr: 'curl: -o: missing file path', exitCode: 2 };
+              const dirPath = outPath.split('/').slice(0, -1).join('/') || '/';
+              if (dirPath !== '/') await ensureDirectory(vfs, projectId, dirPath);
+              const content: string | ArrayBuffer =
+                data.encoding === 'base64' ? base64ToArrayBuffer(data.body) : data.body;
+              try { await vfs.createFile(projectId, outPath, content); }
+              catch { await vfs.updateFile(projectId, outPath, content); }
+              const msg = curlFlags.silent ? '' : `Saved to ${outPath}`;
+              return { stdout: msg, stderr: '', exitCode: 0 };
+            }
+
+            // Headers only (-I / HEAD)
+            if (curlFlags.head) {
+              const headers = [`HTTP/1.1 ${data.status} OK`, `Content-Type: ${data.contentType}`, ''].join('\n');
+              if (redirect) return applyRedirect(vfs, projectId, headers, redirect);
+              return { stdout: headers, stderr: '', exitCode: 0 };
+            }
+
+            let out: string;
+            if (data.encoding === 'base64') {
+              out = '[binary content omitted; use -o FILE to save]';
+            } else {
+              out = data.body || '';
+              if (curlFlags.markdown) {
+                const { htmlToMarkdown } = await import('@/lib/web/extract');
+                out = htmlToMarkdown(out, u);
+              }
+            }
+            const curlResult: ShellResult = { stdout: truncate(out), stderr: '', exitCode: 0 };
+            if (redirect) return applyRedirect(vfs, projectId, curlResult.stdout, redirect);
+            return curlResult;
+          } catch (e: any) {
+            return { stdout: '', stderr: `curl: request failed: ${e?.message || 'network error'}`, exitCode: 1 };
+          }
         }
 
         // Extract path from URL
         let urlPath = '/';
         try {
-          const parsed = new URL(curlUrl);
+          const parsed = new URL(u);
           urlPath = parsed.pathname || '/';
         } catch {
           // Fallback: extract path manually
-          const pathMatch = curlUrl.match(/(?:localhost|127\.0\.0\.1)(?::\d+)?(\/.*)?$/i);
+          const pathMatch = u.match(/(?:localhost|127\.0\.0\.1)(?::\d+)?(\/.*)?$/i);
           urlPath = pathMatch?.[1] || '/';
         }
 
@@ -2528,6 +2585,105 @@ Only localhost URLs are supported (fetches compiled HTML from preview engine).`,
         } catch (e: any) {
           // Compilation errors from Handlebars are still useful for the LLM
           return { stdout: '', stderr: `curl: error compiling ${resolvedPath}: ${e?.message || 'unknown error'}`, exitCode: 1 };
+        }
+        };
+
+        // Single URL: behave exactly as before (including redirect handling).
+        if (curlUrls.length === 1) {
+          return await fetchOneUrl(curlUrls[0]);
+        }
+
+        // Multiple URLs: fetch each in order and concatenate output (like real curl).
+        const curlStdouts: string[] = [];
+        const curlStderrs: string[] = [];
+        let curlExitCode = 0;
+        for (const u of curlUrls) {
+          const r = await fetchOneUrl(u);
+          if (r.stdout) curlStdouts.push(r.stdout);
+          if (r.stderr) curlStderrs.push(r.stderr);
+          if (r.exitCode !== 0) curlExitCode = 1;
+        }
+        return {
+          stdout: curlStdouts.join('\n\n'),
+          stderr: curlStderrs.join('\n'),
+          exitCode: curlExitCode,
+        };
+      }
+      case 'search': {
+        if (typeof window === 'undefined') {
+          return { stdout: '', stderr: 'search: requires the browser runtime.', exitCode: 1 };
+        }
+        const { configManager } = await import('@/lib/config/storage');
+        const provider = configManager.getWebSearchProvider();
+        if (!provider) {
+          return { stdout: '', stderr: 'search: no web search provider configured. Add one under Connections (Settings).', exitCode: 1 };
+        }
+
+        let count = 5;
+        let markdown = false;
+        const queryParts: string[] = [];
+        for (let i = 0; i < args.length; i++) {
+          const a = args[i];
+          if ((a === '-n' || a === '--count') && args[i + 1]) { count = parseInt(args[++i], 10) || 5; continue; }
+          if (a === '--markdown') { markdown = true; continue; }
+          if (a) queryParts.push(a);
+        }
+        const query = queryParts.join(' ').trim();
+        if (!query) {
+          return { stdout: '', stderr: 'Usage: search [-n N] [--markdown] "query"', exitCode: 1 };
+        }
+
+        const auth = provider === 'searxng'
+          ? { searxngUrl: configManager.getSearxngUrl() || undefined }
+          : { key: configManager.getWebSearchKey(provider) || undefined };
+
+        try {
+          const resp = await fetch('/api/web/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, query, count, markdown, auth }),
+          });
+          const data = await resp.json();
+          if (data.error) return { stdout: '', stderr: `search: ${data.error}`, exitCode: 1 };
+          const results: Array<{ title: string; url: string; snippet: string; content?: string }> = data.results || [];
+          if (results.length === 0) return { stdout: 'No results.', stderr: '', exitCode: 0 };
+
+          // Non-native providers with --markdown: fetch + extract the top results client-side.
+          // Covered by the original search approval; no re-prompt (the gate keys on `search`).
+          const { WEB_SEARCH_PROVIDERS } = await import('@/lib/web-search');
+          const nativeContent = WEB_SEARCH_PROVIDERS[provider].nativeContent;
+          if (markdown && !nativeContent) {
+            const top = results.slice(0, Math.min(3, results.length));
+            await Promise.all(top.map(async (r) => {
+              try {
+                const fr = await fetch('/api/web/fetch', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url: r.url }),
+                });
+                const fd = await fr.json();
+                if (!fd.error && fd.encoding !== 'base64' && fd.body) {
+                  const { htmlToMarkdown } = await import('@/lib/web/extract');
+                  r.content = htmlToMarkdown(fd.body, r.url);
+                }
+              } catch { /* leave snippet only */ }
+            }));
+          }
+
+          const lines: string[] = [];
+          results.forEach((r, i) => {
+            lines.push(`${i + 1}. ${r.title}`);
+            lines.push(`   ${r.url}`);
+            if (r.snippet) lines.push(`   ${r.snippet}`);
+            if (markdown && r.content) {
+              lines.push('');
+              lines.push(r.content.slice(0, 2000));
+            }
+            lines.push('');
+          });
+          return { stdout: truncate(lines.join('\n').trim()), stderr: '', exitCode: 0 };
+        } catch (e: any) {
+          return { stdout: '', stderr: `search: request failed: ${e?.message || 'network error'}`, exitCode: 1 };
         }
       }
       case 'sqlite3': {
@@ -2985,7 +3141,7 @@ Right: {"command": "ls -la"}
           stdout: '',
           stderr: `${program}: command not found${bashHint}
 
-Supported commands: ls, tree, cat, head, tail, rg, grep, find, mkdir, touch, rm, mv, cp, echo, sed, ss, wc, sort, uniq, tr, curl, sleep, sqlite3, build, status
+Supported commands: ls, tree, cat, head, tail, rg, grep, find, mkdir, touch, rm, mv, cp, echo, sed, ss, wc, sort, uniq, tr, curl, search, sleep, sqlite3, build, status
 Operators: | (pipe), > (redirect), >> (append), && (chain), || (fallback), ; (sequence)
 
 Correct shell tool usage:
@@ -3016,6 +3172,7 @@ Correct shell tool usage:
   {"cmd": ["curl", "localhost/"]}                 - View compiled HTML output
   {"cmd": ["curl", "localhost/about"]}            - View compiled page (path resolution)
   {"cmd": ["curl", "-I", "localhost/"]}           - Response headers only
+  {"cmd": ["search", "query"]}                    - Web search via configured provider
   {"cmd": ["sqlite3", "SELECT * FROM users"]} - Execute SQL (Server Mode)
   {"cmd": ["sqlite3", "-json", "SELECT * FROM products"]} - SQL output as JSON
 

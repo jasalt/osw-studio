@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Search, Loader2, Link, MonitorSpeaker } from 'lucide-react';
+import { Search, Loader2, Link, MonitorSpeaker, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { configManager } from '@/lib/config/storage';
 import { getProvider, getProviderArchetype } from '@/lib/llm/providers/registry';
 import { getConnectedProviders } from '@/lib/llm/providers/connection-status';
 import { modelsForSlot, matchesSlot, loadProviderModels, SlotModelEntry, SlotKind } from '@/lib/llm/models/model-catalog';
@@ -114,27 +115,49 @@ function entrySelected(entry: SlotModelEntry, current: ModelPickValue): boolean 
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** A sticky-headed group in the model list (a connection, or "Quick options"). */
+/** A sticky-headed group in the model list (a connection, or "Quick options").
+ *  When collapsible, the header toggles the group's rows. */
 function ListGroup({
   label,
   count,
+  collapsible,
+  collapsed,
+  onToggle,
   children,
 }: {
   label: string;
   count?: number;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
   children: React.ReactNode;
 }) {
+  const headerClass = 'sticky top-0 z-10 flex items-center justify-between px-2 py-1 bg-muted border-b border-border w-full text-left';
+  const headerInner = (
+    <>
+      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        {collapsible && (
+          collapsed
+            ? <ChevronRight size={11} className="shrink-0" />
+            : <ChevronDown size={11} className="shrink-0" />
+        )}
+        {label}
+      </span>
+      {count !== undefined && (
+        <span className="text-[10px] text-muted-foreground tabular-nums">{count} model{count === 1 ? '' : 's'}</span>
+      )}
+    </>
+  );
   return (
     <div>
-      <div className="sticky top-0 z-10 flex items-center justify-between px-2 py-1 bg-muted border-b border-border">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-          {label}
-        </span>
-        {count !== undefined && (
-          <span className="text-[10px] text-muted-foreground tabular-nums">{count} model{count === 1 ? '' : 's'}</span>
-        )}
-      </div>
-      <div className="flex flex-col gap-0.5 py-0.5">{children}</div>
+      {collapsible ? (
+        <button type="button" onClick={onToggle} className={cn(headerClass, 'cursor-pointer hover:bg-muted/80 transition-colors')}>
+          {headerInner}
+        </button>
+      ) : (
+        <div className={headerClass}>{headerInner}</div>
+      )}
+      {!collapsed && <div className="flex flex-col gap-0.5 py-0.5">{children}</div>}
     </div>
   );
 }
@@ -252,6 +275,21 @@ export function ModelPicker({ slot, currentValue, onPick, inline = false, agentR
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState('');
+
+  // Collapsed provider groups, persisted across sessions. An active search
+  // overrides collapse so matches are never hidden.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(configManager.getCollapsedModelGroups()),
+  );
+  const toggleGroup = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      const willCollapse = !next.has(groupId);
+      if (willCollapse) next.add(groupId); else next.delete(groupId);
+      configManager.setModelGroupCollapsed(groupId, willCollapse);
+      return next;
+    });
+  }, []);
 
   // Whether the agent model can serve this slot (drives the "reuse agent" option).
   // Only meaningful for imageGen/voiceInput. Defaults to false until resolved so
@@ -402,6 +440,9 @@ export function ModelPicker({ slot, currentValue, onPick, inline = false, agentR
                   key={g.provider}
                   label={getProvider(g.provider).name}
                   count={g.entries.length}
+                  collapsible
+                  collapsed={!query.trim() && collapsedGroups.has(g.provider)}
+                  onToggle={() => toggleGroup(g.provider)}
                 >
                   {g.entries.map((entry) => (
                     <ModelRow

@@ -14,6 +14,8 @@ import {
 } from './json-repair';
 import { scriptRunner } from '@/lib/scripting/script-runner';
 import type { ScriptRuntime } from '@/lib/scripting/types';
+import { classifyGateKey, needsApproval, capabilityLabel, type ApprovalRequest, type ApprovalOutcome } from './permissions';
+import { configManager } from '@/lib/config/storage';
 
 export type ToolId = 'bash';
 
@@ -68,6 +70,13 @@ export interface ToolExecutionContext {
   /** Resolves the project's image-generation model + key and produces an image.
    *  Absent when the project has no image model configured. */
   generateImage?: (prompt: string, opts: { aspectRatio?: string; imageSize?: string }) => Promise<{ base64: string; mimeType: string }>;
+  /** Held-promise approval gate. Absent when no interactive UI is available;
+   *  in that case gated commands are allowed (cannot prompt, do not block). */
+  onApprovalNeeded?: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+  /** Overrides the permission mode source (defaults to configManager/localStorage).
+   *  Set on server runs where localStorage is unavailable. */
+  permissionMode?: import('./permissions').PermissionMode;
+  permissionOverrides?: Record<string, import('./permissions').GateDecision>;
 }
 
 interface RegisteredTool {
@@ -97,7 +106,7 @@ export class ToolRegistry {
         name: 'bash',
         description: `Run commands in the virtual file system.
 
-Commands: cat, head, tail, ls, tree, grep, rg, find, mkdir, mv, cp, rm, touch, sed, ss, echo, wc, sort, uniq, tr, curl, sqlite3, python, python3, lua, preview, build, status, agent, runtime, ask.
+Commands: cat, head, tail, ls, tree, grep, rg, find, mkdir, mv, cp, rm, touch, sed, ss, echo, wc, sort, uniq, tr, curl, search, sqlite3, python, python3, lua, preview, build, status, agent, runtime, ask.
 Pipes (cmd1 | cmd2), redirects (> file, >> file), heredocs (<< 'EOF'), chaining (&&, ||, ;), and brace expansion ({a,b,c}) are supported.
 Run scripts: python <file>, lua <file>. Show output in preview: preview <path>.
 
@@ -418,6 +427,33 @@ function validateRepairedBashCommand(cmd: string): { ok: true } | { ok: false; r
  * Handles cd, python/lua, preview, server commands, and VFS shell fallthrough.
  * Returns empty string for success-no-output, 'Error: ...' for failures.
  */
+export async function checkCommandPermission(
+  cmdArray: string[],
+  context: ToolExecutionContext,
+): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  const gateKey = classifyGateKey(cmdArray);
+  if (!gateKey) return { allowed: true };
+
+  const mode = context.permissionMode ?? configManager.getPermissionMode();
+  const overrides = context.permissionOverrides ?? configManager.getPermissionOverrides();
+  if (!needsApproval(gateKey, mode, overrides)) return { allowed: true };
+
+  // Gated but no interactive UI -> allow (cannot prompt, must not hang).
+  if (!context.onApprovalNeeded) return { allowed: true };
+
+  const outcome = await context.onApprovalNeeded({
+    command: cmdArray.join(' '),
+    gateKey,
+    capabilityLabel: capabilityLabel(gateKey),
+  });
+
+  if (outcome === 'always') configManager.setPermissionOverride(gateKey, 'allow');
+  if (outcome === 'deny') {
+    return { allowed: false, reason: `permission denied by user: ${cmdArray[0]}. Do not retry; continue without it.` };
+  }
+  return { allowed: true };
+}
+
 async function executeShellSegment(
   projectId: string,
   cmdArray: string[],
@@ -426,6 +462,11 @@ async function executeShellSegment(
 ): Promise<string> {
   const command = cmdArray[0];
   if (!command) return 'Error: empty command';
+
+  const permission = await checkCommandPermission(cmdArray, context);
+  if (!permission.allowed) {
+    return permission.reason;
+  }
 
   // Block write operations in read-only mode
   if (context.isReadOnly && isWriteOperation(cmdArray)) {

@@ -40,6 +40,7 @@ import { skillsService } from '@/lib/vfs/skills';
 import { track } from '@/lib/telemetry';
 import { extractToolAnalytics, extractSkillRead, bucketInterviewTemplateId } from '@/lib/telemetry/tool-analytics';
 import type { ServerOrchestratorContext } from '@/lib/server-generate/types';
+import type { ApprovalRequest, ApprovalOutcome, PermissionMode, GateDecision } from './permissions';
 import type { ResolvedAssignment, ModelRef } from '@/lib/llm/models/assignment';
 import { transcribeAudio } from '@/lib/llm/transcribe';
 import { generateImage } from '@/lib/llm/image-gen';
@@ -150,6 +151,9 @@ export class MultiAgentOrchestrator {
   private serverContext: ServerOrchestratorContext | null;
   private interviewTemplateId?: string;
   private interviewTemplate?: InterviewTemplate;
+  private onApprovalNeeded?: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+  private permissionMode?: PermissionMode;
+  private permissionOverrides?: Record<string, GateDecision>;
 
   private stopped = false;
   private abortController = new AbortController();
@@ -173,7 +177,7 @@ export class MultiAgentOrchestrator {
     projectId: string,
     agentType: AgentType = 'orchestrator',
     onProgress?: (message: string, step?: unknown) => void,
-    options?: { chatMode?: boolean; model?: string; assignment?: ResolvedAssignment; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string; interviewTemplate?: InterviewTemplate }
+    options?: { chatMode?: boolean; model?: string; assignment?: ResolvedAssignment; serverContext?: ServerOrchestratorContext; interviewTemplateId?: string; interviewTemplate?: InterviewTemplate; onApprovalNeeded?: (req: ApprovalRequest) => Promise<ApprovalOutcome>; permissionMode?: PermissionMode; permissionOverrides?: Record<string, GateDecision> }
   ) {
     this.projectId = projectId;
     this.onProgress = onProgress;
@@ -183,6 +187,9 @@ export class MultiAgentOrchestrator {
     this.serverContext = options?.serverContext ?? null;
     this.interviewTemplateId = options?.interviewTemplateId;
     this.interviewTemplate = options?.interviewTemplate;
+    this.onApprovalNeeded = options?.onApprovalNeeded;
+    this.permissionMode = options?.permissionMode;
+    this.permissionOverrides = options?.permissionOverrides;
 
     const agent = agentRegistry.get(agentType);
     if (!agent) throw new Error(`Agent type "${agentType}" not found`);
@@ -259,7 +266,7 @@ export class MultiAgentOrchestrator {
 
       const serverCtxMeta = this.getVFS().getServerContextMetadata();
       const modelSupportsTools = this.checkModelSupportsTools();
-      let systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools, this.isImageGenAvailable());
+      let systemPrompt = await buildSystemPrompt(this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, modelSupportsTools, this.isImageGenAvailable(), this.isWebSearchAvailable());
       if (this.rootAgent.type === 'interview') {
         systemPrompt = withInterviewAgenda(systemPrompt, this.interviewTemplateId, this.interviewTemplate);
       }
@@ -458,7 +465,7 @@ export class MultiAgentOrchestrator {
         } catch { /* ignore */ }
         const serverCtxMeta = this.getVFS().getServerContextMetadata();
         const systemPrompt = await buildSystemPrompt(
-          this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, this.checkModelSupportsTools(), this.isImageGenAvailable()
+          this.chatMode, serverCtxMeta, this.projectId, this.rootAgent.type, this.checkModelSupportsTools(), this.isImageGenAvailable(), this.isWebSearchAvailable()
         );
         const projectContext = await buildProjectContext(fileTreeStr, serverCtxMeta);
         return { systemPrompt, projectContext };
@@ -579,6 +586,9 @@ export class MultiAgentOrchestrator {
         chatMode: this.chatMode,
         abortSignal: this.abortController.signal,
         generateImage: generateImageCapability,
+        onApprovalNeeded: this.onApprovalNeeded,
+        permissionMode: this.permissionMode,
+        permissionOverrides: this.permissionOverrides,
       });
       executor.onAfterExecute = async (toolCall, result, durationMs) => {
         track('tool_call', {
@@ -617,7 +627,7 @@ export class MultiAgentOrchestrator {
         const serverCtxMeta = this.getVFS().getServerContextMetadata();
         return buildSystemPrompt(
           this.chatMode || agentType === 'explore' || agentType === 'plan',
-          serverCtxMeta, this.projectId, agentType as AgentType, true, this.isImageGenAvailable()
+          serverCtxMeta, this.projectId, agentType as AgentType, true, this.isImageGenAvailable(), this.isWebSearchAvailable()
         );
       },
     });
@@ -754,6 +764,10 @@ export class MultiAgentOrchestrator {
     if (!imageGen) return false;
     if (imageGen !== 'agent') return true;
     return !!this.getModelOutputModalities(this.assignment!.agent)?.includes('image');
+  }
+
+  private isWebSearchAvailable(): boolean {
+    return configManager.isWebSearchConfigured();
   }
 
   /** Selects the completion gate for the active agent (undefined = no gate). */

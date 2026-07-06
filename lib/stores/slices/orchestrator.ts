@@ -19,6 +19,7 @@ import { playTaskCompleteSound, playTaskCompleteSoundSubtle } from '@/lib/utils/
 import { checkpointManager } from '@/lib/vfs/checkpoint';
 import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
 import type { InterviewTemplate } from '@/lib/interview/types';
+import type { ApprovalRequest, ApprovalOutcome } from '@/lib/llm/permissions';
 
 const MAX_DEBUG_EVENTS = 2000;
 let debugIdCounter = 0;
@@ -36,6 +37,8 @@ const backgroundEventsMap = new Map<string, DebugEvent[]>();
 
 let reattaching = false;
 const dismissedServerProjects = new Set<string>();
+type QueuedApproval = { req: ApprovalRequest; projectId: string; resolve: (o: ApprovalOutcome) => void };
+let approvalQueue: QueuedApproval[] = [];
 
 function isServerMode(): boolean {
   if (typeof window === 'undefined') return false;
@@ -171,6 +174,12 @@ export interface OrchestratorSlice {
   cleanupPersistence: () => void;
   dismissGenerationResult: (projectId?: string) => void;
   reattachServerTasks: () => Promise<void>;
+
+  // Permission approval gate
+  pendingApproval: { req: ApprovalRequest; projectId: string } | null;
+  _provideApprovalCallback: (projectId: string) => (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+  resolveApproval: (outcome: ApprovalOutcome) => void;
+  clearPendingApprovals: () => void;
 }
 
 type CombinedState = OrchestratorSlice & {
@@ -189,6 +198,36 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
   projectCost: 0,
   sseClient: null,
   generating: false,
+  pendingApproval: null,
+
+  _provideApprovalCallback: (projectId: string) => (req: ApprovalRequest) =>
+    new Promise<ApprovalOutcome>((resolve) => {
+      approvalQueue.push({ req, projectId, resolve });
+      // Only surface + sound when this is the front of the queue (nothing else pending).
+      if (approvalQueue.length === 1) {
+        set({ pendingApproval: { req, projectId } });
+        playTaskCompleteSoundSubtle(); // single-note request sound
+      }
+    }),
+
+  resolveApproval: (outcome: ApprovalOutcome) => {
+    const current = approvalQueue.shift();
+    current?.resolve(outcome);
+    const next = approvalQueue[0];
+    if (next) {
+      set({ pendingApproval: { req: next.req, projectId: next.projectId } });
+      playTaskCompleteSoundSubtle(); // announce the next pending request
+    } else {
+      set({ pendingApproval: null });
+    }
+  },
+
+  clearPendingApprovals: () => {
+    const queued = approvalQueue;
+    approvalQueue = [];
+    set({ pendingApproval: null });
+    queued.forEach((a) => a.resolve('deny'));
+  },
 
   isProjectGenerating: (projectId: string) => {
     const task = get().generationTasks.get(projectId);
@@ -539,7 +578,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           projectId,
           options?.mode === 'interview' ? 'interview' : 'orchestrator',
           progressCallback,
-          { chatMode, model: modelToUse, assignment, interviewTemplateId: options?.templateId, interviewTemplate },
+          { chatMode, model: modelToUse, assignment, interviewTemplateId: options?.templateId, interviewTemplate, onApprovalNeeded: get()._provideApprovalCallback(projectId) },
         );
 
         // Only bootstrap conversation if viewing this project.
@@ -617,7 +656,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           if (!awaitingUser) playTaskCompleteSound();
         }
         set({ generationTasks: successTasks, ...deriveScalarFields(successTasks, get().projectId) });
-        if (isForeground && !awaitingUser) playTaskCompleteSoundSubtle();
+        if (isForeground && !awaitingUser) playTaskCompleteSound();
         if (!awaitingUser) toast.success('Task completed');
       } else {
         // User-initiated stops are not failures: stopGeneration already
@@ -695,6 +734,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
   stopGeneration: async (projectId?: string) => {
     const targetId = projectId ?? get().projectId;
     const task = get().generationTasks.get(targetId);
+
+    // Release any waiting approval promises so gated sub-agents don't hang.
+    get().clearPendingApprovals();
 
     if (task?.serverTaskId) {
       // Soft stop: abort the current inference but let the server emit task_complete
@@ -862,11 +904,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
             set({ generationTasks: tasks, ...deriveScalarFields(tasks, get().projectId) });
             if (result === 'completed') {
               if (data.result !== 'stopped') {
-                if (!serverForeground) {
-                  playTaskCompleteSound();
-                } else {
-                  playTaskCompleteSoundSubtle();
-                }
+                playTaskCompleteSound();
               }
               toast.success(data.result === 'stopped' ? 'Task stopped' : 'Task completed');
               pullAndCheckpointServerFiles(projectId, get).catch(err => {
@@ -1063,6 +1101,8 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
           apiKey,
           workspaceId,
           providerConfig: { provider },
+          permissionMode: configManager.getPermissionMode(),
+          permissionOverrides: configManager.getPermissionOverrides(),
           conversationHistory,
           ...(Object.keys(executeOptions).length > 0 ? { executeOptions } : {}),
           generationParams: {

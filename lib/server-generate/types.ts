@@ -69,6 +69,8 @@ export interface StartGenerationRequest {
   workspaceId?: string;
   projectName?: string;
   providerConfig?: { baseUrl?: string; provider?: ProviderId };
+  permissionMode?: 'auto' | 'ask' | 'custom';
+  permissionOverrides?: Record<string, 'ask' | 'allow'>;
   conversationHistory: unknown[];
   executeOptions?: {
     images?: Array<{ data: string; mediaType: string }>;

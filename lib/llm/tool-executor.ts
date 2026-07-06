@@ -13,6 +13,7 @@
 import type { ToolExecutor, ToolCall, ToolResult, ToolExecContext, ToolDef, ProgressReporter } from './core/types';
 import { toolRegistry, ToolExecutionContext } from './tool-registry';
 import { Agent } from './agent';
+import type { ApprovalRequest, ApprovalOutcome, PermissionMode, GateDecision } from './permissions';
 
 const HARMONY_TOKEN_STRIP_RE = /<\|[^|]*\|>/g;
 
@@ -27,6 +28,9 @@ export interface OswsToolExecutorConfig {
   chatMode: boolean;
   abortSignal: AbortSignal;
   generateImage?: (prompt: string, opts: { aspectRatio?: string; imageSize?: string }) => Promise<{ base64: string; mimeType: string }>;
+  onApprovalNeeded?: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+  permissionMode?: PermissionMode;
+  permissionOverrides?: Record<string, GateDecision>;
 }
 
 export class OswsToolExecutor implements ToolExecutor {
@@ -94,6 +98,9 @@ export class OswsToolExecutor implements ToolExecutor {
         this.config.progress.onEvent(event, data);
       },
       generateImage: this.config.generateImage,
+      onApprovalNeeded: this.config.onApprovalNeeded,
+      permissionMode: this.config.permissionMode,
+      permissionOverrides: this.config.permissionOverrides,
     };
 
     try {

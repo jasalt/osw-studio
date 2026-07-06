@@ -1,19 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySession } from '@/lib/auth/session';
+import { getSession } from '@/lib/auth/session';
 import { taskManager, eventBus } from '@/lib/server-generate/singleton';
 import { runServerGeneration } from '@/lib/server-generate/server-orchestrator-runner';
 import type { StartGenerationRequest } from '@/lib/server-generate/types';
 
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('osw_session')?.value;
-  if (!sessionToken) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const session = await verifySession(sessionToken);
-  if (!session) {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   let body: StartGenerationRequest;
   try {
