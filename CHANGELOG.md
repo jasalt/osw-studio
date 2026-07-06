@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.83.1 - 2026-07-06
+
+### Desktop
+- **Generation works**: Desktop generation failed with an "Unauthorized" error, and its progress stream filled the console with errors. The desktop app runs in Server Mode but does not sign in the way a self-hosted server does, and the generation endpoints did not recognize its local session. They now do, so generation and its live updates work.
+- **Auto-update downloads**: The Windows and Linux auto-updater could not download new versions because the installer filename in the update manifest did not match the published file. The names now match, so updates download and install.
+- **Update failures are reported**: If an update fails to download, the app now shows an error with a link to the releases page, and reports download progress while it runs, instead of silently doing nothing.
+- **Open Logs Folder**: The Help menu's "Open Logs Folder" opened a folder that did not exist yet on a clean install. It is now created when you open it.
+
 ## v1.83.0 - 2026-07-05
 
 ### Web access
@@ -15,10 +23,6 @@
 - **Connections reorganized**: The Connections screen is now split into an AI section (cloud and local inference providers) and a Search section. Web search providers are managed the same way as inference connections, as cards, with one marked active and used for searches. Each section's "Add" button sits on its header.
 - **Collapsible model groups**: In the model picker, each provider's header can be collapsed to hide its models, and the collapsed state is remembered. Searching temporarily expands every group so matches are never hidden.
 - **Completion sound**: Task completion now plays the same two-note sound whether the run was in the foreground or background; a single-note sound signals a pending permission prompt.
-
-### Fixes
-- **Desktop: generation**: In the desktop app, generation failed with an "Unauthorized" error, and its progress stream flooded the console with 401s. Desktop runs in Server Mode, where generation happens server-side, but the generation endpoints did not recognize the desktop app's local session (it has no login the way a self-hosted server does). They now do, so generation and its live updates work.
-- **Desktop: Open Logs Folder**: The Help menu's "Open Logs Folder" failed on a clean install because the folder was only created when something was logged. The folder is now created when you open it, and a line is written at startup so it is never empty.
 
 ## v1.82.0 - 2026-07-04
 

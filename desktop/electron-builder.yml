@@ -30,6 +30,9 @@ mac:
   darkModeSupport: true
   x64ArchFiles: "**/*.node"
 
+dmg:
+  artifactName: OSW-Studio-${version}-${arch}.${ext}
+
 win:
   target:
     - nsis
@@ -38,6 +41,15 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # Explicit, space-free name so the built file, the uploaded GitHub asset, and
+  # the generated latest.yml all agree. The default ("OSW Studio Setup x.y.z.exe")
+  # is sanitized differently by electron-builder (spaces to hyphens in latest.yml)
+  # and by GitHub (spaces to dots in the asset name), which broke the Windows
+  # auto-updater with a 404 on the download URL.
+  artifactName: OSW-Studio-Setup-${version}.${ext}
+
+appImage:
+  artifactName: OSW-Studio-${version}-${arch}.${ext}
 
 linux:
   target:

@@ -277,6 +277,21 @@ async function promptRestartToUpdate(version: string): Promise<void> {
   }
 }
 
+async function showUpdateError(err: unknown): Promise<void> {
+  const logPath = path.join(app.getPath('userData'), 'logs', 'main.log');
+  const message = err instanceof Error ? err.message : String(err);
+  const { response } = await dialog.showMessageBox({
+    type: 'error',
+    title: 'Update failed',
+    message: 'The update could not be downloaded.',
+    detail: `${message}\n\nYou can download the latest version manually from the releases page. Details are saved to the log:\n${logPath}`,
+    buttons: ['Open releases page', 'Close'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) shell.openExternal(RELEASES_URL);
+}
+
 function wireUpdater(): void {
   if (updaterWired) return;
   updaterWired = true;
@@ -284,11 +299,19 @@ function wireUpdater(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
+  // Error dialogs are surfaced at the download call site (which owns the user
+  // interaction); here we only record the error and clear any progress state.
   autoUpdater.on('error', (err) => {
     logToFile(`Updater error: ${err?.message || err}`);
+    mainWindow?.setProgressBar(-1);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.setProgressBar((progress?.percent ?? 0) / 100);
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.setProgressBar(-1);
     updateDownloaded = true;
     downloadedVersion = info.version;
     void promptRestartToUpdate(info.version);
@@ -322,13 +345,19 @@ async function checkForUpdatesElectron(interactive: boolean): Promise<void> {
       type: 'info',
       title: 'Update available',
       message: `OSW Studio v${version} is available.`,
-      detail: `You are on v${app.getVersion()}. The update only downloads and installs if you choose to.`,
+      detail: `You are on v${app.getVersion()}. If you download, it downloads in the background (progress shows on the taskbar) and prompts you to restart when it is ready. It will not install until you choose to.`,
       buttons: ['Download', 'Skip this version', 'Later'],
       defaultId: 0,
       cancelId: 2,
     });
     if (response === 0) {
-      autoUpdater.downloadUpdate().catch(err => logToFile(`Update download failed: ${err?.message || err}`));
+      logToFile(`Downloading update v${version}`);
+      mainWindow?.setProgressBar(0);
+      autoUpdater.downloadUpdate().catch(err => {
+        mainWindow?.setProgressBar(-1);
+        logToFile(`Update download failed: ${err?.message || err}`);
+        void showUpdateError(err);
+      });
     } else if (response === 1) {
       writeUpdatePrefs({ skippedVersion: version });
     }

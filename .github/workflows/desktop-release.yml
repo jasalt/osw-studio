@@ -272,10 +272,27 @@ jobs:
           DEB=$(ls *.deb | head -1)
           DOWNLOADS="- **macOS**: ${DMG}\n- **Windows**: ${EXE}\n- **Linux**: ${APPIMAGE} or ${DEB}"
           cd ..
-          sed "s/{{VERSION}}/${VERSION}/g" .github/desktop-release-notes.md > notes.md
-          # Replace the {{DOWNLOADS}} placeholder with the actual artifact list
+
+          # Extract this version's What's New entry (from "## vX" to the next "---").
+          # Feature releases have an entry; maintenance/patch releases do not, so
+          # fall back to a generic blurb rather than shipping an empty section.
+          awk -v ver="## v${VERSION}" '
+            index($0, ver) == 1 && (substr($0, length(ver)+1, 1) == " " || length($0) == length(ver)) { grab=1; next }
+            grab && /^---[[:space:]]*$/ { exit }
+            grab { print }
+          ' docs/WHATS_NEW.md > whatsnew.md
+          if ! grep -q "[^[:space:]]" whatsnew.md; then
+            printf '%s\n' "This is a maintenance release with bug fixes and small improvements. See the [changelog](https://github.com/o-stahl/osw-studio/blob/main/CHANGELOG.md) for the full list of changes in this version." > whatsnew.md
+          fi
+
           printf '%b' "$DOWNLOADS" > downloads.md
-          awk '/{{DOWNLOADS}}/{while((getline line < "downloads.md") > 0) print line; next} {print}' notes.md > notes-final.md
+          sed "s/{{VERSION}}/${VERSION}/g" .github/desktop-release-notes.md > notes.md
+          # Replace the {{WHATS_NEW}} and {{DOWNLOADS}} placeholders with real content.
+          awk '
+            /{{WHATS_NEW}}/ { while ((getline line < "whatsnew.md") > 0) print line; next }
+            /{{DOWNLOADS}}/ { while ((getline line < "downloads.md") > 0) print line; next }
+            { print }
+          ' notes.md > notes-final.md
           cat notes-final.md
 
       - name: Publish release
@@ -294,7 +311,7 @@ jobs:
           fi
           gh release create "$TAG" \
             --draft \
-            --title "OSW Studio Desktop v${{ steps.version.outputs.version }}" \
+            --title "OSW Studio v${{ steps.version.outputs.version }}" \
             --notes-file notes-final.md \
             artifacts/*
           # Flip public only after every file is uploaded — updaters never see a partial release
