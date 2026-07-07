@@ -1,15 +1,22 @@
 import { configManager } from '@/lib/config/storage';
 import type { ModelAssignment, ModelTemplate } from '@/lib/llm/models/assignment';
+import type { ResolvedAssignment } from './assignment';
 
+// Resolve the active template. Delegates to configManager.getActiveModelTemplate, which owns the
+// single fallback chain (migrateModels-then-retry, then default -> or-recommended) so a dangling
+// defaultTemplateId never crashes synchronous render callers (resolveActiveAssignment /
+// isProjectProviderReady), e.g. when an active user template was deleted on another device and synced in.
 export function getActiveTemplate(): ModelTemplate {
-  const id = configManager.getDefaultTemplateId();
-  let t = configManager.getModelTemplate(id);
-  if (!t) {
-    configManager.migrateModels();
-    t = configManager.getModelTemplate(id);
-  }
-  if (!t) throw new Error(`Active template "${id}" not found even after migration`);
-  return t;
+  return configManager.getActiveModelTemplate();
+}
+
+// Resolve the global working (effective) model selection. This is the working-selection
+// layer: getActiveAssignment() returns the persisted working selection if set, else falls
+// back to the active template's assignment. It already returns a shallow copy so callers
+// can never mutate stored state. getActiveTemplate() stays as the template itself (the footer
+// diffs working vs getActiveTemplate().assignment for dirty state).
+export function resolveActiveAssignment(): ResolvedAssignment {
+  return configManager.getActiveAssignment();
 }
 
 /**

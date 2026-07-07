@@ -37,6 +37,9 @@ export async function loginHF(clientId: string, scopes: string): Promise<void> {
   const url = await oauthLoginUrl({
     clientId,
     scopes,
+    // Redirect to the app root; the open project is restored post-OAuth from the
+    // sessionStorage stash (hf_oauth_return_project) so we don't vary the
+    // registered redirect_uri that HF validates against.
     redirectUrl: window.location.origin + '/',
   });
   window.location.href = url;

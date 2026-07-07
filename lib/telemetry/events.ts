@@ -37,7 +37,7 @@ export const EVENT_CATALOG = {
   model_selected:     { category: 'generation', disclosure: 'Which AI models are selected' },
   task_started:       { category: 'generation', disclosure: 'When a generation task starts' },
   task_complete:      { category: 'generation', disclosure: 'Whether tasks succeed, with duration and tool/turn counts (not what was asked)' },
-  task_fail:          { category: 'generation', disclosure: 'Whether tasks fail and why in broad terms (api error vs stopped), never the error message itself' },
+  task_fail:          { category: 'generation', disclosure: 'Whether tasks fail and why in broad terms (api error vs stopped), how long the task ran, never the error message itself' },
   task_nudged:        { category: 'generation', disclosure: 'How often the AI needs a reminder to finish properly' },
   tool_call:          { category: 'generation', disclosure: 'Which tools the AI uses, whether they work, and how long they take (never file paths, arguments, or contents)' },
   api_error:          { category: 'generation', disclosure: 'API and tool error types (not error messages)' },

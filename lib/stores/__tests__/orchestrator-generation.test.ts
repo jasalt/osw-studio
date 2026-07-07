@@ -3,6 +3,7 @@ import { createTestStore, setupOrchestratorMocks } from './test-helpers';
 import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
 import { MultiAgentOrchestrator } from '@/lib/llm/multi-agent-orchestrator';
 import { interviewTemplatesService } from '@/lib/interview/templates-service';
+import { track } from '@/lib/telemetry';
 import type { GenerationTask } from '../types';
 
 const mockExecute = vi.fn().mockResolvedValue({
@@ -117,6 +118,27 @@ describe('orchestrator slice — generation lifecycle', () => {
     expect(mockStop).toHaveBeenCalled();
     // After stop, the task transitions to result: 'failed', so generating becomes false
     expect(store.getState().generating).toBe(false);
+    await promise;
+  });
+
+  it('stopGeneration tracks task_fail with duration_ms and task_id', async () => {
+    const projectId = store.getState().projectId || '';
+    const promise = store.getState().startGeneration('task');
+    await Promise.resolve(); // flush: assignment resolves + orchestrator is stored
+
+    const task = store.getState().generationTasks.get(projectId);
+    expect(task?.startedAt).toEqual(expect.any(Number));
+
+    store.getState().stopGeneration();
+
+    const failCalls = (track as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[0] === 'task_fail');
+    expect(failCalls).toHaveLength(1);
+    const payload = failCalls[0][1];
+    expect(payload.reason).toBe('stopped');
+    expect(payload.task_id).toBe(projectId);
+    expect(typeof payload.duration_ms).toBe('number');
+    expect(payload.duration_ms).toBeGreaterThanOrEqual(0);
+
     await promise;
   });
 

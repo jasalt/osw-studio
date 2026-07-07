@@ -10,7 +10,7 @@ import {
   buildCustomProviderConfig as buildCustomProviderConfigHelper,
 } from '@/lib/llm/providers/custom-providers';
 import { UsageInfo } from '@/lib/llm/types';
-import type { ModelTemplate } from '@/lib/llm/models/assignment';
+import type { ModelTemplate, ModelAssignment } from '@/lib/llm/models/assignment';
 import { BUILT_IN_MODEL_TEMPLATES, isBuiltInTemplateId } from '@/lib/llm/models/registry';
 import { logger } from '@/lib/utils';
 import type { PermissionMode, GateDecision } from '@/lib/llm/permissions';
@@ -65,6 +65,8 @@ export interface AppSettings {
   };
   hasSeenAboutModal?: boolean;
   hasSeenGuidedTour?: boolean;
+  /** When true, the large-file-write pacing notice is permanently dismissed. */
+  pacingNoticeDismissed?: boolean;
   modelCache?: Partial<Record<ProviderId, ModelCacheEntry>>;
   modelPricing?: Partial<Record<ProviderId, Record<string, ProviderPricingEntry>>>;
   reasoningEnabled?: Record<string, boolean>;  // Per-model reasoning toggle (model ID -> enabled)
@@ -79,6 +81,8 @@ export interface AppSettings {
   debugStreamEnabled?: boolean;
   modelTemplates?: Record<string, ModelTemplate>;
   defaultTemplateId?: string;
+  /** Global working/effective model selection. Unset falls back to the active template's assignment. */
+  activeAssignment?: ModelAssignment;
   permissionMode?: 'auto' | 'ask' | 'custom';
   permissionOverrides?: Record<string, 'ask' | 'allow'>;
   webSearch?: {
@@ -152,6 +156,14 @@ class ConfigManager {
     this.setSetting('hasSeenGuidedTour', seen);
   }
 
+  hasDismissedPacingNotice(): boolean {
+    return this.getSettings().pacingNoticeDismissed === true;
+  }
+
+  setPacingNoticeDismissed(): void {
+    this.setSetting('pacingNoticeDismissed', true);
+  }
+
   getApiKey(): string | null {
     const provider = this.getSelectedProvider();
     if (provider) {
@@ -192,6 +204,7 @@ class ConfigManager {
 
   setSelectedProvider(provider: ProviderId): void {
     this.setSetting('selectedProvider', provider);
+    this.emitModelConfigChanged();
   }
 
   getProviderApiKey(provider: ProviderId): string | null {
@@ -236,6 +249,7 @@ class ConfigManager {
     if (provider === 'openrouter') {
       this.setSetting('defaultModel', model);
     }
+    this.emitModelConfigChanged();
   }
 
   getModelPricing(provider: ProviderId, model: string): ProviderPricingEntry | null {
@@ -597,8 +611,13 @@ class ConfigManager {
     // A content edit — stamp updatedAt so sync can detect local changes.
     const saved: ModelTemplate = { ...t, builtin: false, updatedAt: new Date() };
     this.setSetting('modelTemplates', { ...stored, [t.id]: saved });
+    // If this IS the active template, an in-place edit must take effect on the effective
+    // model: reload the working selection to match. Direct setSetting (no dispatch) keeps
+    // exactly one modelConfigChanged below. Non-active templates leave working untouched.
+    if (t.id === this.getDefaultTemplateId()) this.setSetting('activeAssignment', t.assignment);
     if (typeof window !== 'undefined') {
       import('@/lib/vfs/auto-sync').then(({ autoSyncModelTemplate }) => autoSyncModelTemplate(saved)).catch((e) => logger.debug('[ConfigManager] model-template auto-sync trigger failed', e));
+      this.emitModelConfigChanged();
     }
   }
   deleteModelTemplate(id: string): void {
@@ -620,6 +639,11 @@ class ConfigManager {
       ...stored,
       [t.id]: { ...t, builtin: false, updatedAt: serverUpdated, lastSyncedAt: now, serverUpdatedAt: serverUpdated },
     });
+    // A sync pull can overwrite the active template's content; if it IS the active template,
+    // reload the working selection so re-resolution reflects the synced change (otherwise the
+    // dispatch below re-resolves against a stale working selection). Non-active: untouched.
+    if (t.id === this.getDefaultTemplateId()) this.setSetting('activeAssignment', t.assignment);
+    this.emitModelConfigChanged();
   }
   /** Record sync metadata after a push, without bumping updatedAt (not a content edit). */
   updateModelTemplateSyncMetadata(id: string, lastSyncedAt: Date, serverUpdatedAt: Date): void {
@@ -629,7 +653,52 @@ class ConfigManager {
     this.setSetting('modelTemplates', { ...stored, [id]: { ...t, lastSyncedAt, serverUpdatedAt } });
   }
   getDefaultTemplateId(): string { return this.getSettings().defaultTemplateId || 'default'; }
-  setDefaultTemplateId(id: string): void { this.setSetting('defaultTemplateId', id); }
+  setDefaultTemplateId(id: string): void {
+    this.setSetting('defaultTemplateId', id);
+    // Selecting a template loads it as the working selection, so switching templates
+    // changes the effective model. Write directly (not via setActiveAssignment) to keep
+    // exactly one modelConfigChanged dispatch per call.
+    const t = this.getModelTemplate(id);
+    if (t) this.setSetting('activeAssignment', t.assignment);
+    this.emitModelConfigChanged();
+  }
+
+  /** The event every global model-config write emits so React consumers re-resolve. */
+  private emitModelConfigChanged(): void {
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('modelConfigChanged'));
+  }
+
+  /**
+   * Resolve the active template: the one at defaultTemplateId, with a migrateModels()-then-retry
+   * step and a default -> or-recommended degrade so a dangling id never throws for callers. Single
+   * source of the fallback chain, shared by getActiveTemplate (template-store) and getActiveAssignment.
+   */
+  getActiveModelTemplate(): ModelTemplate {
+    const id = this.getDefaultTemplateId();
+    let t = this.getModelTemplate(id);
+    if (!t) {
+      this.migrateModels();
+      t = this.getModelTemplate(id);
+    }
+    if (!t) t = this.getModelTemplate('default') ?? this.getModelTemplate('or-recommended');
+    if (!t) throw new Error('No model template available (default and built-ins missing)');
+    return t;
+  }
+
+  /**
+   * The global working/effective model selection. Returns the persisted working selection if set,
+   * else the active template's assignment. Never returns undefined. Returns a deep copy so callers
+   * can't mutate stored state or the shared in-memory built-in template registry.
+   */
+  getActiveAssignment(): ModelAssignment {
+    const stored = this.getSettings().activeAssignment;
+    const assignment = stored ?? this.getActiveModelTemplate().assignment;
+    return JSON.parse(JSON.stringify(assignment)) as ModelAssignment;
+  }
+  setActiveAssignment(a: ModelAssignment): void {
+    this.setSetting('activeAssignment', a);
+    this.emitModelConfigChanged();
+  }
 
   // Permission mode and per-command overrides
   getPermissionMode(): PermissionMode {

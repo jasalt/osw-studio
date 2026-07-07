@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.84.0 - 2026-07-07
+
+### Onboarding
+- **Straight into a workspace**: A first-time visitor with no projects yet now lands directly in a workspace with a starter project already created, instead of the dashboard and a new-project form. Returning users still see the dashboard.
+- **Sign in with HuggingFace**: On a HuggingFace Space, when no provider is connected the model selector shows a "Sign in with HuggingFace" button. One click runs the OAuth sign-in and then selects a capable default model, so a new user can start building without pasting an API key. The chevron beside it still opens the full Connections screen for other providers.
+- **Your project survives sign-in and reload**: The open project is now kept in the page URL, so reloading the page (including the redirect during HuggingFace sign-in) returns you to the same project instead of the dashboard. The browser Back button also leaves a project as expected.
+- **Starter suggestions**: When a provider is connected and the conversation is empty, a small row of suggestion pills appears above the chat input. Clicking one fills the composer with a starter prompt you can edit before sending.
+
+### Model selection
+- **One model selection for every project**: Your model and template selection is now global and applies to every project, instead of being remembered separately per project. Switching between projects no longer changes which model is selected.
+- **Connecting a provider readies the chat**: Connecting a provider now selects a working model automatically (its recommended default if the provider serves it, otherwise the first model it offers), so the chat is ready to use immediately and every project, including newly created ones, inherits it instead of showing "Select provider".
+- **Pick a model and use it right away**: Choosing a model in the picker takes effect immediately. Save writes your selection into the current template and Reset reverts to the template's saved models, so you can try different models without changing your template unless you want to. Built-in recommended templates are read-only and marked with a lock icon.
+- **Model picking works in the describe step**: The model you select while describing a new project to get started is now the one actually used for generation, and that picker updates live the same way it does in the workspace.
+
+### Generation
+- **Reassurance on long file writes**: If a single file write runs longer than 30 seconds (common on slower models without live tool streaming), a small note explains the agent is still working and will continue once the write finishes. It can be dismissed for good.
+
 ## v1.83.1 - 2026-07-06
 
 ### Desktop

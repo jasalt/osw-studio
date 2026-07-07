@@ -1,5 +1,3 @@
-import type { ProjectModelConfig } from '@/lib/llm/models/assignment';
-
 export type ProjectRuntime = 'static' | 'handlebars' | 'react' | 'preact' | 'svelte' | 'vue' | 'python' | 'lua';
 
 export interface Project {
@@ -13,7 +11,6 @@ export interface Project {
     defaultTemplate?: string;
     globalStyles?: string;
     previewEntryPoint?: string;  // defaults to '/index.html' when absent
-    models?: ProjectModelConfig;
   };
   lastSavedCheckpointId?: string | null;
   lastSavedAt?: Date | null;

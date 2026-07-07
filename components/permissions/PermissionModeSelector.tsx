@@ -50,9 +50,13 @@ export function PermissionModeSelector() {
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-[240px]">
-            <p className="font-semibold">Command permissions</p>
+            <p className="font-semibold">Permission mode</p>
             <p className="mt-1 opacity-90">
-              When the agent should ask before running a consequential command.
+              Determines what commands require explicit user permission to be run.
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">(Server mode)</span>
+              <span className="opacity-90"> Background generation fails permission-gated commands immediately.</span>
             </p>
             <ul className="mt-1.5 space-y-0.5">
               <li><span className="font-semibold">Auto</span><span className="opacity-90">: run everything without asking.</span></li>

@@ -414,6 +414,18 @@ describe('MultiAgentOrchestrator result propagation and lifecycle', () => {
     expect(o.getProviderConfig()).toMatchObject({ provider: 'openai', model: 'gpt-x' });
   });
 
+  it('setAssignment updates the resolved agent on an already-constructed instance', () => {
+    const o = new MultiAgentOrchestrator('p1', 'orchestrator', () => {}, {
+      assignment: { agent: { provider: 'openai', model: 'gpt-x' }, imageGen: null, voiceInput: null, autoCompact: false, compactLimit: null },
+    } as any);
+    // @ts-expect-error private — exercised via the seam other tests in this file use
+    expect(o.getProviderConfig()).toMatchObject({ provider: 'openai', model: 'gpt-x' });
+    // Switching the working selection mid-session (describe-mode) must change the model used.
+    o.setAssignment({ agent: { provider: 'anthropic', model: 'claude-y' }, imageGen: null, voiceInput: null, autoCompact: false, compactLimit: null });
+    // @ts-expect-error private
+    expect(o.getProviderConfig()).toMatchObject({ provider: 'anthropic', model: 'claude-y' });
+  });
+
   it('resolveCompactionLimit prefers assignment.compactLimit over per-provider config', () => {
     const o = new MultiAgentOrchestrator('p1', 'orchestrator', () => {}, {
       assignment: { agent: { provider: 'openai', model: 'gpt-x' }, imageGen: null, voiceInput: null, autoCompact: true, compactLimit: 1234 },

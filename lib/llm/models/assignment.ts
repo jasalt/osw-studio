@@ -22,27 +22,4 @@ export interface ModelTemplate {
   serverUpdatedAt?: Date; // the server's updatedAt at last sync
 }
 
-export interface ProjectModelConfig {
-  templateId: string;
-  overrides?: Partial<ModelAssignment>;
-}
-
 export type ResolvedAssignment = ModelAssignment;
-
-// Pure: apply a project's per-slot overrides onto a template's assignment.
-// hasOwnProperty so an explicit null/sentinel override wins over the template.
-export function resolveAssignment(
-  template: ModelTemplate,
-  config: ProjectModelConfig | undefined,
-): ResolvedAssignment {
-  const base = template.assignment;
-  const ov = config?.overrides;
-  if (!ov) return { ...base };
-  const out = { ...base };
-  (Object.keys(ov) as Array<keyof ModelAssignment>).forEach((k) => {
-    if (Object.prototype.hasOwnProperty.call(ov, k)) {
-      (out as Record<string, unknown>)[k] = ov[k];
-    }
-  });
-  return out;
-}

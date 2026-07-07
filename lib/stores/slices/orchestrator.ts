@@ -469,7 +469,7 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     // "generating" if a guard then fails (cleanup dispatches no false event).
     let assignment;
     try {
-      assignment = await getProjectAssignment(projectId);
+      assignment = await getProjectAssignment();
     } catch (err) {
       // Resolution failed (e.g. no model template could be created) — clean up the
       // pre-created task so it doesn't leave the project stuck "generating".
@@ -754,6 +754,8 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
         provider: configManager.getSelectedProvider(),
         model: get().currentModel || configManager.getDefaultModel(),
         reason: 'stopped',
+        duration_ms: task ? Date.now() - task.startedAt : undefined,
+        task_id: targetId,
       });
     }
     if (task) {
@@ -997,11 +999,11 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
   },
 
   startServerGeneration: async (projectId: string, prompt: string, chatMode: boolean, images?: PendingImage[], options?: StartGenerationOptions) => {
-    // Resolve the agent model from the project's per-project config, mirroring
+    // Resolve the agent model from the global active template, mirroring
     // the browser-mode path.
     let assignment;
     try {
-      assignment = await getProjectAssignment(projectId);
+      assignment = await getProjectAssignment();
     } catch (err) {
       logger.error('[ServerGen] Failed to resolve project model assignment:', err);
       toast.error('Could not resolve this project\'s model configuration. Check your provider settings.');

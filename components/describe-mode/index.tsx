@@ -6,8 +6,10 @@ import { MultiAgentOrchestrator } from '@/lib/llm/multi-agent-orchestrator';
 import type { BriefState, ProjectBrief } from '@/lib/describe/types';
 import { createEmptyBriefState, isBriefReady } from '@/lib/describe/types';
 import { createProjectFromBrief } from '@/lib/describe/create-from-brief';
-import { configManager } from '@/lib/config/storage';
 import { getProvider } from '@/lib/llm/providers/registry';
+import { useWorkspaceStore } from '@/lib/stores/workspace';
+import { isProjectProviderReady } from '@/lib/llm/models/project-assignment';
+import { resolveActiveAssignment } from '@/lib/llm/models/template-store';
 import type { DebugEvent } from '@/lib/stores/types';
 import type { Project } from '@/lib/vfs/types';
 import { toast } from 'sonner';
@@ -33,8 +35,16 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
   ]);
   const [generating, setGenerating] = useState(false);
   const [briefState, setBriefState] = useState<BriefState>(createEmptyBriefState);
-  const [currentModel] = useState(() => configManager.getDefaultModel());
   const [creating, setCreating] = useState(false);
+
+  // Subscribe to the reactive model-config signal so readiness + the footer label recompute
+  // when the global working selection changes (bumped by the root-mounted useModelConfigSignal).
+  const modelConfigVersion = useWorkspaceStore(s => s.modelConfigVersion);
+  // Effective model of the global working selection (drives the footer picker label). Resolved
+  // once per render; modelConfigVersion forces a re-render on model picks / provider connects.
+  void modelConfigVersion;
+  const activeAgent = resolveActiveAssignment().agent;
+  const currentModel = activeAgent.model;
 
   // Pending creation confirmation — shown as composerOverlay
   const [pendingCreateBrief, setPendingCreateBrief] = useState<ProjectBrief | null>(null);
@@ -46,23 +56,20 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
   const idCounter = useRef(0);
 
   // ---- Provider readiness ----
-  const provider = configManager.getSelectedProvider();
-  const providerReady = !!configManager.getApiKey()
-    || provider === 'ollama'
-    || provider === 'lmstudio'
-    || provider === 'openai-codex';
+  // Global resolved-provider readiness; recomputed each render (re-runs on the modelConfigVersion
+  // re-render above, so it refreshes when a provider connects or the working selection changes).
+  const providerReady = isProjectProviderReady();
 
   // ---- Model display name ----
   const getModelDisplayName = useCallback((modelId: string): string => {
     if (!modelId) return 'Select Model';
-    const prov = configManager.getSelectedProvider();
-    const provConfig = getProvider(prov);
+    const provConfig = getProvider(activeAgent.provider);
     const found = provConfig?.models?.find(m => m.id === modelId);
     if (found) return found.name;
     const parts = modelId.split('/');
     const name = parts[parts.length - 1];
     return name.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-  }, []);
+  }, [activeAgent.provider]);
 
   // ---- Event coalescing (matches workspace pattern) ----
   const addEvent = useCallback((event: string, data: any) => {
@@ -272,7 +279,11 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
       describeDirtyRef.current = true;
       onDirtyChange?.(true);
     }
-    // Lazily create orchestrator
+    // Resolve the assignment FRESH here (at click time) so generation always uses the current
+    // global working selection. On the first generate we build the orchestrator with it; on
+    // later generates we update the cached instance's assignment (preserving the in-flight
+    // describe conversation) so the picked model tracks the working selection on every generate.
+    const assignment = resolveActiveAssignment();
     if (!orchestratorRef.current) {
       orchestratorRef.current = new MultiAgentOrchestrator(
         'describe-setup',
@@ -284,8 +295,10 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
           if (message === 'spec_update') applySpecUpdate(step);
           if (message === 'project_ready') applyProjectReady();
         },
-        { model: currentModel }
+        { model: assignment.agent.model, assignment }
       );
+    } else {
+      orchestratorRef.current.setAssignment(assignment);
     }
 
     // Prepend system note (e.g. "user declined creation") to the message
@@ -310,7 +323,7 @@ export function DescribeMode({ onProjectCreated, onDirtyChange }: DescribeModePr
     } finally {
       setGenerating(false);
     }
-  }, [addEvent, applyBriefUpdate, applySpecUpdate, applyProjectReady, currentModel, systemNote, onDirtyChange]);
+  }, [addEvent, applyBriefUpdate, applySpecUpdate, applyProjectReady, systemNote, onDirtyChange]);
 
   // ---- Stop handler ----
   const handleStop = useCallback(() => {

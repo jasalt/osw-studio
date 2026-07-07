@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { configManager } from '@/lib/config/storage';
-import { isProjectProviderReady } from '@/lib/llm/models/project-assignment';
-import type { ModelTemplate, ProjectModelConfig } from '@/lib/llm/models/assignment';
+import { isProjectProviderReady, shouldAutoAssignAgent } from '@/lib/llm/models/project-assignment';
+import type { ModelTemplate } from '@/lib/llm/models/assignment';
 import type { ProviderId } from '@/lib/llm/providers/types';
 
 function stubBrowserStorage() {
   const store = new Map<string, string>();
-  vi.stubGlobal('window', {} as unknown as Window);
+  vi.stubGlobal('window', { dispatchEvent: () => true } as unknown as Window);
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, String(v)); },
@@ -19,7 +19,9 @@ function stubBrowserStorage() {
 beforeEach(stubBrowserStorage);
 afterEach(() => vi.unstubAllGlobals());
 
-function seedTemplate(agentProvider: ProviderId, agentModel: string): ProjectModelConfig {
+// Seed the GLOBAL active template's agent. Selection is global now, so readiness
+// is checked against the global active template's provider (config args are ignored).
+function seedGlobalTemplate(agentProvider: ProviderId, agentModel: string): void {
   const tpl: ModelTemplate = {
     id: 'tpl1',
     name: 'T',
@@ -33,28 +35,49 @@ function seedTemplate(agentProvider: ProviderId, agentModel: string): ProjectMod
     },
   };
   configManager.saveModelTemplate(tpl);
-  return { templateId: 'tpl1', overrides: {} };
+  configManager.setDefaultTemplateId('tpl1');
 }
 
-describe('isProjectProviderReady', () => {
-  it('is ready when the project agent provider has a key, even if the global default is a different keyless provider (issue #4)', () => {
-    // Reproduces the HuggingFace Space case: global default is HuggingFace (no key),
-    // but the project's agent is OpenRouter, which does have a key. The old check
-    // keyed off the global provider and wrongly returned false.
+describe('isProjectProviderReady (global active template)', () => {
+  it('is ready when the global active template agent provider has a key, even if the selected provider is a different keyless one', () => {
     configManager.setSelectedProvider('huggingface');
     configManager.setProviderApiKey('openrouter', 'sk-test');
-    const config = seedTemplate('openrouter', 'deepseek/deepseek-v4-flash');
-    expect(isProjectProviderReady(config)).toBe(true);
+    seedGlobalTemplate('openrouter', 'deepseek/deepseek-v4-flash');
+    expect(isProjectProviderReady()).toBe(true);
   });
 
-  it('is not ready when the project agent provider has no key (a different provider having one does not count)', () => {
+  it('is not ready when the global active template agent provider has no key (a different provider having one does not count)', () => {
     configManager.setProviderApiKey('openrouter', 'sk-test');
-    const config = seedTemplate('anthropic', 'claude-x');
-    expect(isProjectProviderReady(config)).toBe(false);
+    seedGlobalTemplate('anthropic', 'claude-x');
+    expect(isProjectProviderReady()).toBe(false);
   });
 
   it('treats a local agent provider as ready without a key', () => {
-    const config = seedTemplate('ollama', 'llama3.2:latest');
-    expect(isProjectProviderReady(config)).toBe(true);
+    seedGlobalTemplate('ollama', 'llama3.2:latest');
+    expect(isProjectProviderReady()).toBe(true);
+  });
+
+  it('follows the global default set to the or-recommended built-in', () => {
+    configManager.setProviderApiKey('openrouter', 'sk-test');
+    configManager.setDefaultTemplateId('or-recommended');
+    expect(isProjectProviderReady()).toBe(true);
+  });
+});
+
+describe('shouldAutoAssignAgent (global active template)', () => {
+  it('returns true when the global active template agent provider has no key', () => {
+    seedGlobalTemplate('huggingface', 'deepseek-ai/DeepSeek-V4-Flash');
+    expect(shouldAutoAssignAgent()).toBe(true);
+  });
+
+  it('returns false when the global active template agent provider is ready', () => {
+    configManager.setProviderApiKey('anthropic', 'sk-test');
+    seedGlobalTemplate('anthropic', 'claude-x');
+    expect(shouldAutoAssignAgent()).toBe(false);
+  });
+
+  it('returns false for a local provider that is always ready', () => {
+    seedGlobalTemplate('ollama', 'llama3.2:latest');
+    expect(shouldAutoAssignAgent()).toBe(false);
   });
 });

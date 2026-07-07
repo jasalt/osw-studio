@@ -19,7 +19,8 @@ import { bucketInterviewTemplateId } from '@/lib/telemetry/tool-analytics';
 import { PANEL_MAP } from '@/lib/stores/slices/layout';
 import { useCostSettings } from '@/lib/hooks/use-cost-settings';
 import { getModelInputModalities } from '@/lib/llm/providers/registry';
-import { resolveProjectAssignment, isProjectProviderReady } from '@/lib/llm/models/project-assignment';
+import { isProjectProviderReady } from '@/lib/llm/models/project-assignment';
+import { resolveActiveAssignment } from '@/lib/llm/models/template-store';
 import { toast } from 'sonner';
 import { debugEventsState } from '@/lib/llm/debug-events-state';
 import {
@@ -71,7 +72,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const generating = useWorkspaceStore(s => s.generating);
   const debugEvents = useWorkspaceStore(s => s.debugEvents);
   const currentModel = useWorkspaceStore(s => s.currentModel);
-  const projectModelConfig = useWorkspaceStore(s => s.projectModelConfig);
+  const modelConfigVersion = useWorkspaceStore(s => s.modelConfigVersion);
   const projectCost = useWorkspaceStore(s => s.projectCost);
   const addDebugEvent = useWorkspaceStore(s => s.addDebugEvent);
   const isDirty = useWorkspaceStore(s => s.isDirty);
@@ -141,6 +142,11 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     return () => window.removeEventListener('runtimeErrorsChanged', handler);
   }, []);
 
+  // The reactive model-config signal bump (apiKeyUpdated + modelConfigChanged -> bumpModelConfig)
+  // lives in the useModelConfigSignal hook, mounted at the always-present mode roots (StudioInner
+  // and PageWrapperInner). Mounting it there (not here) makes modelConfigVersion bump globally so
+  // ChatPanels rendered outside the Workspace subtree (describe-mode, project-manager) also react.
+
   // Listen for runtime changes from the CLI (e.g., LLM runs `runtime handlebars`)
   useEffect(() => {
     const handler = (e: Event) => {
@@ -151,14 +157,19 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     return () => window.removeEventListener('runtimeChanged', handler);
   }, []);
 
+  // The GLOBAL model auto-assign on provider connect (apiKeyUpdated -> activateProviderAsGlobalDefault)
+  // lives in the useProviderAutoAssign hook, mounted at the always-present mode roots (StudioInner and
+  // PageWrapperInner). It cannot live here: the Connections UI is reachable outside a workspace
+  // (dashboard -> Settings -> Connections), where Workspace is not mounted.
+
   // Get cost settings for conditional display
   const { shouldShowCosts } = useCostSettings();
 
-  // Input modalities of the project's agent model (drives image/voice affordances).
-  // Resolve from the per-project assignment — post-overhaul the agent is per
-  // project, so keying off the global selectedProvider/currentModel misses.
+  // Input modalities of the active agent model (drives image/voice affordances).
+  // Resolve from the globally-resolved active assignment, falling back to the
+  // global selectedProvider/currentModel.
   const inputModalities = useMemo(() => {
-    const agent = resolveProjectAssignment(projectModelConfig)?.agent;
+    const agent = resolveActiveAssignment().agent;
     const currentProvider = agent?.provider ?? configManager.getSelectedProvider();
     const modelId = agent?.model || currentModel || configManager.getDefaultModel();
 
@@ -174,15 +185,15 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     }
 
     return getModelInputModalities(currentProvider, modelId);
-  }, [projectModelConfig, currentModel]);
+  }, [modelConfigVersion, currentModel]);
 
   const supportsVision = inputModalities.includes('image');
 
-  // Readiness keys off the project's agent provider (see isProjectProviderReady) —
-  // not the global selectedProvider, which misses for per-project models.
+  // Readiness keys off the globally-resolved active agent provider
+  // (see isProjectProviderReady), recomputed on modelConfigVersion bumps.
   const providerReady = useMemo(
-    () => isProjectProviderReady(projectModelConfig),
-    [projectModelConfig],
+    () => isProjectProviderReady(),
+    [modelConfigVersion],
   );
   
   // Console panel — visible by default for terminal-mode runtimes (Python, Lua), togglable for all

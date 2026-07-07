@@ -1,13 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Image as ImageIcon, Mic, Brain, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Image as ImageIcon, Mic, Brain, ChevronRight, ChevronDown, Lock, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { configManager } from '@/lib/config/storage';
-import { resolveAssignment } from '@/lib/llm/models/assignment';
-import type { ProjectModelConfig, ModelRef, ModelAssignment } from '@/lib/llm/models/assignment';
-import { setProjectTemplate, setProjectSlotOverride, clearProjectOverrides } from '@/lib/llm/models/project-overrides';
+import type { ModelRef, ModelAssignment } from '@/lib/llm/models/assignment';
+import { getActiveTemplate, resolveActiveAssignment } from '@/lib/llm/models/template-store';
 import { loadProviderModels } from '@/lib/llm/models/model-catalog';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
 import { ModelPicker } from './model-picker';
@@ -20,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,15 +28,10 @@ import {
 type DrawerSlot = 'agent' | 'imageGen' | 'voiceInput';
 
 interface ProjectModelsPanelProps {
-  projectId: string;
   onManageSettings: () => void;
-  /** When set (mobile dialog), the panel renders a footer "Done" row alongside Save. */
+  /** When set (mobile dialog), the panel renders a footer "Done" row. */
   onDone?: () => void;
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Hook: enrich a ModelRef with a friendly display name (best-effort async)
@@ -59,18 +54,6 @@ function useEnrichedName(ref: ModelRef | null): string {
   }, [ref?.provider, ref?.model]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return name;
-}
-
-// ---------------------------------------------------------------------------
-// "Changed for this project" chip
-// ---------------------------------------------------------------------------
-
-function ChangedChip() {
-  return (
-    <span className="inline-flex items-center gap-[3px] px-[6px] py-[1px] rounded-sm text-[10px] font-semibold border text-amber-400 bg-amber-400/10 border-amber-400/30">
-      changed for this project
-    </span>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +141,6 @@ function SlotValueDisplay({ slot, value, agentRef }: SlotValueDisplayProps) {
 interface SectionProps {
   icon: React.ReactNode;
   label: string;
-  isChanged: boolean;
   expanded: boolean;
   onToggle: () => void;
   slot: DrawerSlot;
@@ -171,7 +153,6 @@ interface SectionProps {
 function Section({
   icon,
   label,
-  isChanged,
   expanded,
   onToggle,
   slot,
@@ -200,7 +181,6 @@ function Section({
               <span className="text-muted-foreground">{icon}</span>
               {label}
             </span>
-            {isChanged && <ChangedChip />}
           </div>
           {/* Current model value */}
           <SlotValueDisplay slot={slot} value={value} agentRef={agentRef} />
@@ -232,33 +212,26 @@ function Section({
 // Main panel
 // ---------------------------------------------------------------------------
 
-export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: ProjectModelsPanelProps) {
-  // ---- Read config from the store mirror (set in Part A) ----
-  const storeConfig = useWorkspaceStore(s => s.projectModelConfig);
+export function ProjectModelsPanel({ onManageSettings, onDone }: ProjectModelsPanelProps) {
+  // Re-resolve whenever the global model config changes. The root-mounted useModelConfigSignal
+  // listens to the `modelConfigChanged` window event (dispatched by configManager writes) and
+  // bumps this counter, which re-renders this panel so the display stays in sync.
+  useWorkspaceStore(s => s.modelConfigVersion);
 
-  const getConfig = useCallback((): ProjectModelConfig => {
-    if (storeConfig) return storeConfig;
-    return { templateId: configManager.getDefaultTemplateId(), overrides: {} };
-  }, [storeConfig]);
+  // ---- Resolve the active TEMPLATE (name, builtin flag, saved assignment for the
+  // dirty diff) and the WORKING selection (what's actually effective right now). ----
+  // getActiveTemplate() self-heals: it runs migrateModels() when the active id is
+  // missing, so the "Default" template is always seeded before we read it.
+  const active = getActiveTemplate();
+  // The displayed per-slot values reflect the WORKING selection, not the template's
+  // saved assignment. resolveActiveAssignment() returns the persisted working selection
+  // (or the active template's assignment when unset). Both recompute on modelConfigVersion.
+  const working = resolveActiveAssignment();
+  const effective = working;
 
-  const config = getConfig();
-
-  // First mount: ensure the migration that seeds the "Default" template has run.
-  // Without it the template lookups below stay null and the panel is stuck on
-  // "Loading…" — which on the mobile full-screen dialog has no way to dismiss.
-  const [, setMigrated] = useState(false);
-  useEffect(() => {
-    configManager.migrateModels();
-    setMigrated(true);
-  }, []);
-
-  // ---- Resolve effective values synchronously ----
-  const template =
-    configManager.getModelTemplate(config.templateId) ??
-    configManager.getModelTemplate(configManager.getDefaultTemplateId());
-
-  // Guard: if template is still null (first-render before migration), show nothing meaningful
-  const effective = template ? resolveAssignment(template, config) : null;
+  const isBuiltin = !!active.builtin;
+  // Working selection differs from the loaded template's saved assignment.
+  const isDirty = JSON.stringify(working) !== JSON.stringify(active.assignment);
 
   // ---- Templates list for the selector ----
   const templates = configManager.getModelTemplates();
@@ -268,131 +241,131 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
     return a.name.localeCompare(b.name);
   });
 
-  const hasOverrides = Object.keys(config.overrides ?? {}).length > 0;
-
   // ---- Accordion: at most one section open (agent by default; all may be closed) ----
   const [openSlot, setOpenSlot] = useState<DrawerSlot | null>('agent');
   const toggleSlot = (s: DrawerSlot) => setOpenSlot((prev) => (prev === s ? null : s));
 
-  // ---- Mirror helper ----
-  function mirror(newConfig: ProjectModelConfig) {
-    useWorkspaceStore.getState().updateProjectSettings({ models: newConfig });
+  // ---- Template selector: switch the global active template ----
+  // setDefaultTemplateId also loads the template's assignment into the working
+  // selection (WT1), so switching clears dirty and re-renders via the dispatch.
+  function handleTemplateSelect(id: string) {
+    configManager.setDefaultTemplateId(id);
   }
 
-  // ---- Template selector ----
-  async function handleTemplateSelect(id: string) {
-    if (id === config.templateId && !hasOverrides) return;
-    // Switching discards this project's per-slot overrides — confirm first.
-    if (hasOverrides) {
-      const name = configManager.getModelTemplate(id)?.name ?? 'this template';
-      if (!window.confirm(`Switching to ${name} will discard this project's custom model selections. Continue?`)) return;
-    }
-    const newConfig = await setProjectTemplate(projectId, id);
-    mirror(newConfig);
+  // Apply a slot edit to the WORKING selection. Immediate, global and reactive
+  // (the dispatch bumps modelConfigVersion). This does NOT touch any template and
+  // does NOT fork built-ins. The working selection simply diverges until the user
+  // Saves it into the loaded template or Resets it back.
+  function writeSlot(mutate: (a: ModelAssignment) => ModelAssignment) {
+    configManager.setActiveAssignment(mutate(configManager.getActiveAssignment()));
   }
 
-  // ---- Reset ----
-  async function handleReset() {
-    const newConfig = await clearProjectOverrides(projectId);
-    mirror(newConfig);
+  // Persist the working selection into the loaded (editable) template. Built-ins are
+  // read-only, and there's nothing to save when the working selection matches.
+  function handleSave() {
+    if (isBuiltin || !isDirty) return;
+    configManager.saveModelTemplate({ ...active, assignment: working });
   }
 
-  // ---- Save the project's effective selections back into its template ----
-  // Promotes the per-project overrides into the (non-builtin) template shared by
-  // any project using it, then clears the now-redundant overrides.
-  async function handleSaveToTemplate() {
-    if (!template || template.builtin || !effective || !hasOverrides) return;
-    configManager.saveModelTemplate({ ...template, assignment: effective });
-    const newConfig = await clearProjectOverrides(projectId);
-    mirror(newConfig);
+  // Revert the working selection back to the loaded template's saved assignment.
+  function handleReset() {
+    configManager.setActiveAssignment(active.assignment);
   }
 
   // ---- Picker onPick (takes slot explicitly) ----
-  async function handlePick(slot: DrawerSlot, value: ModelPickValue) {
-    let newConfig: ProjectModelConfig;
+  function handlePick(slot: DrawerSlot, value: ModelPickValue) {
     if (slot === 'agent') {
       if (value && typeof value === 'object') {
-        newConfig = await setProjectSlotOverride(projectId, 'agent', value);
-        mirror(newConfig);
+        const ref = value;
+        writeSlot((a) => ({ ...a, agent: ref }));
       }
     } else if (slot === 'imageGen') {
       const v = value === 'browser' ? null : (value as ModelAssignment['imageGen']);
-      newConfig = await setProjectSlotOverride(projectId, 'imageGen', v);
-      mirror(newConfig);
+      writeSlot((a) => ({ ...a, imageGen: v }));
     } else if (slot === 'voiceInput') {
       const v = value as ModelAssignment['voiceInput'];
-      newConfig = await setProjectSlotOverride(projectId, 'voiceInput', v);
-      mirror(newConfig);
+      writeSlot((a) => ({ ...a, voiceInput: v }));
     }
   }
 
   // ---- Per-slot picker current value ----
   function pickerCurrentValue(slot: DrawerSlot): ModelPickValue {
-    if (!effective) return null;
     if (slot === 'agent') return effective.agent;
     if (slot === 'imageGen') return effective.imageGen;
     if (slot === 'voiceInput') return effective.voiceInput;
     return null;
   }
 
-  // Guard: if there are no templates yet (migration hasn't run), show loading state
-  if (!template || !effective) {
-    return (
-      <div className="flex items-center justify-center py-8 text-[13px] text-muted-foreground">
-        Loading…
-      </div>
-    );
-  }
-
-  // The selector always shows the active template. Per-project overrides are
-  // surfaced by the per-slot "changed" chips and the Save / Reset buttons — no
-  // separate "custom" pseudo-entry needed.
   return (
     <div className="flex flex-col min-h-0">
-      {/* ---- Header: label + template selector + Reset ---- */}
+      {/* ---- Header: label + template selector + save/reset ---- */}
       <div className="flex-shrink-0 p-3 border-b border-border">
         <div className="flex items-center gap-2.5">
           <p className="text-xs font-semibold tracking-[0.08em] uppercase text-muted-foreground shrink-0">
             Models
           </p>
-          <Select value={template.id} onValueChange={handleTemplateSelect}>
+          <Select value={active.id} onValueChange={handleTemplateSelect}>
             <SelectTrigger size="sm" className="rounded-full gap-1.5 text-[13px] font-medium text-foreground min-w-0 max-w-[220px]">
+              {/* SelectValue mirrors the selected option's content (incl. its lock for built-ins),
+                  so the trigger must not render its own lock or it shows twice. */}
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {sortedTemplates.map((t) => (
                 <SelectItem key={t.id} value={t.id}>
-                  {t.name}
-                  {t.id === configManager.getDefaultTemplateId() ? ' (your default)' : ''}
+                  <span className="flex items-center gap-1.5">
+                    {t.builtin && <Lock size={12} className="text-muted-foreground shrink-0" />}
+                    {t.name}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          <div className="ml-auto flex items-center gap-2">
-            {/* On mobile the Save button moves to the footer, next to Done. */}
-            {!onDone && hasOverrides && !template.builtin && (
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleSaveToTemplate}
-                title={`Save these selections into the "${template.name}" template`}
-              >
-                Save to &ldquo;{template.name}&rdquo;
-              </Button>
-            )}
-            {(hasOverrides || config.templateId !== configManager.getDefaultTemplateId()) && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleReset}
-                className="text-muted-foreground"
-              >
-                <RotateCcw className="size-3.5" strokeWidth={2} />
-                Reset
-              </Button>
-            )}
-          </div>
+          <div className="flex-1" />
+
+          {/* Reset: revert working selection to the loaded template. */}
+          {isDirty && (
+            <button
+              type="button"
+              onClick={handleReset}
+              className={cn(
+                'flex items-center gap-1 text-[11px] font-medium shrink-0',
+                'text-muted-foreground hover:text-foreground',
+                'bg-transparent border-none cursor-pointer transition-colors',
+              )}
+            >
+              <RotateCcw size={12} strokeWidth={2} />
+              Reset
+            </button>
+          )}
+
+          {/* Save: persist working selection into the loaded template. Disabled with a
+              tooltip for built-ins (read-only) and when there's nothing to save. */}
+          {isBuiltin ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="shrink-0" tabIndex={0}>
+                  <Button variant="default" size="sm" disabled className="h-7 text-xs pointer-events-none">
+                    Save
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                Built-in templates cannot be changed
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <Button
+              variant="default"
+              size="sm"
+              disabled={!isDirty}
+              onClick={handleSave}
+              className="h-7 text-xs shrink-0"
+            >
+              Save
+            </Button>
+          )}
         </div>
       </div>
 
@@ -402,7 +375,6 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
           <Section
             icon={<Brain size={11} strokeWidth={2} />}
             label="Agent"
-            isChanged={Object.prototype.hasOwnProperty.call(config.overrides ?? {}, 'agent')}
             expanded={openSlot === 'agent'}
             onToggle={() => toggleSlot('agent')}
             slot="agent"
@@ -414,7 +386,6 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
           <Section
             icon={<ImageIcon size={11} strokeWidth={2} />}
             label="Image generation"
-            isChanged={Object.prototype.hasOwnProperty.call(config.overrides ?? {}, 'imageGen')}
             expanded={openSlot === 'imageGen'}
             onToggle={() => toggleSlot('imageGen')}
             slot="imageGen"
@@ -426,7 +397,6 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
           <Section
             icon={<Mic size={11} strokeWidth={2} />}
             label="Voice input"
-            isChanged={Object.prototype.hasOwnProperty.call(config.overrides ?? {}, 'voiceInput')}
             expanded={openSlot === 'voiceInput'}
             onToggle={() => toggleSlot('voiceInput')}
             slot="voiceInput"
@@ -441,8 +411,8 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
       {/* ---- Footer ---- */}
       <div className="flex-shrink-0 border-t border-border px-[18px] py-[10px] space-y-[6px]">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Changes apply to{' '}
-          <strong className="text-muted-foreground font-semibold">this project only</strong>.
+          Applies to{' '}
+          <strong className="text-muted-foreground font-semibold">all projects</strong>.
         </p>
         <button
           type="button"
@@ -458,14 +428,9 @@ export function ProjectModelsPanel({ projectId, onManageSettings, onDone }: Proj
           <ChevronRight size={13} strokeWidth={2} />
         </button>
 
-        {/* Mobile action row: Save (when applicable) next to Done */}
+        {/* Mobile action row: Done */}
         {onDone && (
           <div className="flex items-center gap-2 pt-1.5">
-            {hasOverrides && !template.builtin && (
-              <Button variant="outline" size="sm" className="flex-1" onClick={handleSaveToTemplate}>
-                Save to &ldquo;{template.name}&rdquo;
-              </Button>
-            )}
             <Button variant="default" size="sm" className="flex-1" onClick={onDone}>
               Done
             </Button>

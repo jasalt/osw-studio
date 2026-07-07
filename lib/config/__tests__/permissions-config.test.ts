@@ -3,7 +3,7 @@ import { configManager } from '@/lib/config/storage';
 
 function stubBrowserStorage() {
   const store = new Map<string, string>();
-  vi.stubGlobal('window', {} as unknown as Window);
+  vi.stubGlobal('window', { dispatchEvent: () => true } as unknown as Window);
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, String(v)); },

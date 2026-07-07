@@ -1,19 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('@/lib/vfs', () => ({
-  vfs: { getProject: vi.fn(async (id: string) =>
-    id === 'with-override'
-      ? { settings: { models: { templateId: 'default', overrides: { agent: { provider: 'openai', model: 'gpt' } } } } }
-      : { settings: {} }) },
-}));
-
 import { configManager } from '@/lib/config/storage';
-import { getProjectAssignment, resolveProjectAssignment } from '@/lib/llm/models/project-assignment';
+import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
+import { resolveActiveAssignment, getActiveTemplate } from '@/lib/llm/models/template-store';
 import type { ModelTemplate } from '@/lib/llm/models/assignment';
 
 function stubBrowserStorage() {
   const store = new Map<string, string>();
-  vi.stubGlobal('window', {} as unknown as Window);
+  vi.stubGlobal('window', { dispatchEvent: () => true } as unknown as Window);
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, String(v)); },
@@ -30,37 +24,38 @@ const tpl: ModelTemplate = { id: 'default', name: 'Default',
 beforeEach(() => { stubBrowserStorage(); configManager.saveModelTemplate(tpl); configManager.setDefaultTemplateId('default'); });
 afterEach(() => vi.unstubAllGlobals());
 
-describe('getProjectAssignment', () => {
-  it('falls back to the default template when the project has no models config', async () => {
-    expect((await getProjectAssignment('plain')).agent).toEqual({ provider: 'openrouter', model: 'x/y' });
+describe('getProjectAssignment (global)', () => {
+  it('resolves the global active template', async () => {
+    expect((await getProjectAssignment()).agent).toEqual({ provider: 'openrouter', model: 'x/y' });
   });
-  it('applies the project override', async () => {
-    expect((await getProjectAssignment('with-override')).agent).toEqual({ provider: 'openai', model: 'gpt' });
+
+  it('follows the global default template when it changes to a built-in', async () => {
+    configManager.setDefaultTemplateId('or-recommended');
+    expect((await getProjectAssignment()).agent)
+      .toEqual({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' });
   });
 });
 
-describe('resolveProjectAssignment', () => {
-  it('falls back to the default template when config is undefined', () => {
-    expect(resolveProjectAssignment(undefined)?.agent).toEqual({ provider: 'openrouter', model: 'x/y' });
+describe('resolveActiveAssignment', () => {
+  it('returns the global active template assignment', () => {
+    expect(resolveActiveAssignment().agent).toEqual({ provider: 'openrouter', model: 'x/y' });
   });
 
-  it('applies an in-hand override onto the template', () => {
-    const resolved = resolveProjectAssignment({
-      templateId: 'default',
-      overrides: { agent: { provider: 'openai', model: 'gpt' } },
-    });
-    expect(resolved?.agent).toEqual({ provider: 'openai', model: 'gpt' });
-    // Untouched slots still come from the template.
-    expect(resolved?.voiceInput).toBe('browser');
+  it('returns a new object, not the template live assignment (callers cannot mutate a shared built-in)', () => {
+    expect(resolveActiveAssignment()).not.toBe(getActiveTemplate().assignment);
   });
 
-  it('falls back to the default template when the config points at a missing template', () => {
-    expect(resolveProjectAssignment({ templateId: 'does-not-exist' })?.agent)
-      .toEqual({ provider: 'openrouter', model: 'x/y' });
+  it('follows setDefaultTemplateId to a built-in template', () => {
+    configManager.setDefaultTemplateId('or-recommended');
+    expect(resolveActiveAssignment().agent)
+      .toEqual({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' });
   });
 
-  it('returns null when no template exists at all (migration never ran)', () => {
-    stubBrowserStorage(); // reset to empty storage — no templates saved
-    expect(resolveProjectAssignment(undefined)).toBeNull();
+  it('does not throw on a dangling defaultTemplateId, falling back to a guaranteed template', () => {
+    configManager.setDefaultTemplateId('does-not-exist');
+    let resolved: ReturnType<typeof resolveActiveAssignment> | undefined;
+    expect(() => { resolved = resolveActiveAssignment(); }).not.toThrow();
+    // Falls back to the migrated "default" (agent x/y) or a built-in — a real template's agent.
+    expect(resolved?.agent).toEqual({ provider: 'openrouter', model: 'x/y' });
   });
 });

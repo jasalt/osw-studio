@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { LayoutGrid, FileText, Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { configManager } from '@/lib/config/storage';
+import { hasAnyConnectedProvider } from '@/lib/llm/providers/connection-status';
 import { ModelsPane } from './models-pane';
 import { ConnectionsPane } from './connections-pane';
 import { TemplatesPane } from './templates-pane';
@@ -40,7 +41,11 @@ interface ProvidersModelsViewProps {
 }
 
 export function ProvidersModelsView({ initialTab = 'models' }: ProvidersModelsViewProps = {}) {
-  const [activePane, setActivePane] = useState<ActivePane>(initialTab);
+  // With nothing connected, the Models and Templates panes have nothing to act on, so open
+  // straight on Connections where "Add a provider" lives.
+  const [activePane, setActivePane] = useState<ActivePane>(
+    hasAnyConnectedProvider() ? initialTab : 'connections'
+  );
 
   // Ensure the Default template exists before panes read config.
   useEffect(() => {

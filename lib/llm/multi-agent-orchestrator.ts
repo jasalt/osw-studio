@@ -198,6 +198,14 @@ export class MultiAgentOrchestrator {
     this.currentConversationId = this.createConversation(agentType);
   }
 
+  // Update the resolved assignment (and derived model) on an already-constructed instance so a
+  // long-lived orchestrator tracks the current global working selection without discarding its
+  // in-flight conversation. execute()/model resolution read these instance fields (~:899-903).
+  setAssignment(assignment: ResolvedAssignment): void {
+    this.assignment = assignment;
+    if (assignment?.agent?.model) this.model = assignment.agent.model;
+  }
+
   continue(): void {
     if (this.pauseResolve) {
       // Note: do NOT replace abortController here. It was not aborted on pause,

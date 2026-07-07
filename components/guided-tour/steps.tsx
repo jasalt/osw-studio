@@ -155,8 +155,8 @@ export const GUIDED_TOUR_STEPS: GuidedTourStepContent[] = [
     title: 'Connect Your Provider',
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p>Set your API key under Settings → Provider. I recommend trying OpenRouter with the <code>gpt-oss-120b</code> model, but you can use any supported provider.</p>
-        <p>You can return here anytime from the header menu.</p>
+        <p>On a HuggingFace Space, the quickest start is the <strong>Sign in with HuggingFace</strong> button on the model selector below. One click and a capable default model is ready.</p>
+        <p>Otherwise, add any supported provider under Connections and pick a model. You can return here anytime from the header menu.</p>
         <p className="text-xs text-orange-500/90">
           Privacy note: Remote LLM providers (OpenAI, Anthropic, etc.) will receive your code when generating. For complete privacy, use local models with Ollama or LM Studio.
         </p>

@@ -448,7 +448,7 @@ export function getDefaultModel(provider: ProviderId): string {
 
   switch (provider) {
     case 'openrouter':
-      return 'minimax/minimax-m2.7';
+      return 'deepseek/deepseek-v4-flash';
     case 'openai':
       return 'gpt-4o-mini';
     case 'openai-codex':
@@ -460,7 +460,8 @@ export function getDefaultModel(provider: ProviderId): string {
     case 'gemini':
       return 'gemini-2.5-flash';
     case 'huggingface':
-      return 'Qwen/Qwen2.5-Coder-32B-Instruct';
+      // Recommended onboarding default (confirmed live on router.huggingface.co).
+      return 'deepseek-ai/DeepSeek-V4-Flash';
     case 'ollama':
       return 'llama3.2:latest';
     case 'lmstudio':

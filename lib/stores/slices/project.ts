@@ -1,6 +1,5 @@
 import { StateCreator } from 'zustand';
 import type { ProjectRuntime } from '@/lib/vfs/types';
-import type { ProjectModelConfig } from '@/lib/llm/models/assignment';
 import type { FocusContextPayload } from '@/lib/preview/types';
 import { track } from '@/lib/telemetry';
 
@@ -21,7 +20,7 @@ export interface ProjectSlice {
   lastSavedAt: Date | null;
   entryPoint: string | undefined;
   projectRuntime: ProjectRuntime | undefined;
-  projectModelConfig: ProjectModelConfig | undefined;
+  modelConfigVersion: number;
   focusContext: FocusTarget | null;
   mode: WorkspaceMode;
   activeInterview: ActiveInterview | null;
@@ -37,8 +36,9 @@ export interface ProjectSlice {
   markDirty: () => void;
   markClean: () => void;
   bumpRefreshTrigger: () => void;
+  bumpModelConfig: () => void;
   incrementCheckpointRefresh: () => void;
-  updateProjectSettings: (settings: { runtime?: ProjectRuntime; previewEntryPoint?: string; models?: ProjectModelConfig }) => void;
+  updateProjectSettings: (settings: { runtime?: ProjectRuntime; previewEntryPoint?: string }) => void;
   setMode: (mode: WorkspaceMode) => void;
   setActiveInterview: (interview: ActiveInterview | null) => void;
   setBackendEnabled: (enabled: boolean) => void;
@@ -58,7 +58,7 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
   lastSavedAt: null,
   entryPoint: undefined,
   projectRuntime: undefined,
-  projectModelConfig: undefined,
+  modelConfigVersion: 0,
   focusContext: null,
   mode: 'code',
   activeInterview: null,
@@ -76,7 +76,6 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
       projectName: project.name,
       entryPoint: project.settings?.previewEntryPoint,
       projectRuntime: project.settings?.runtime,
-      projectModelConfig: project.settings?.models,
       lastSavedAt: project.lastSavedAt ?? null,
       isDirty: false,
     });
@@ -86,13 +85,13 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
   markClean: () => set({ isDirty: false }),
 
   bumpRefreshTrigger: () => set(s => ({ refreshTrigger: s.refreshTrigger + 1 })),
+  bumpModelConfig: () => set(s => ({ modelConfigVersion: s.modelConfigVersion + 1 })),
   incrementCheckpointRefresh: () => set(s => ({ checkpointRefreshKey: s.checkpointRefreshKey + 1 })),
 
   updateProjectSettings: (settings) => {
     set(s => ({
       projectRuntime: settings.runtime ?? s.projectRuntime,
       entryPoint: settings.previewEntryPoint ?? s.entryPoint,
-      projectModelConfig: settings.models ?? s.projectModelConfig,
       refreshTrigger: s.refreshTrigger + 1,
     }));
   },
@@ -146,7 +145,6 @@ export const createProjectSlice: StateCreator<CombinedState, [], [], ProjectSlic
       lastSavedAt: null,
       entryPoint: undefined,
       projectRuntime: undefined,
-      projectModelConfig: undefined,
       focusContext: null,
       activeInterview: null,
       backendEnabled: false,

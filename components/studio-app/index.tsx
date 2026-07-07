@@ -12,18 +12,30 @@ import { ContentArea } from '@/components/views/content-area';
 import { AboutModal } from '@/components/about-modal';
 import { oauthHandleRedirectIfPresent } from '@/lib/auth/hf-auth';
 import { configManager } from '@/lib/config/storage';
+import { activateProviderAsGlobalDefault } from '@/lib/llm/models/global-auto-assign';
+import { shouldAutoAssignAgent } from '@/lib/llm/models/project-assignment';
 import { toast } from 'sonner';
 import { track } from '@/lib/telemetry';
 import { TelemetryBootstrap } from '@/components/telemetry-bootstrap';
 import { GenerationShelf } from '@/components/generation-shelf';
+import { shouldAutoCreateFirstProject } from '@/lib/first-run';
+import { useProviderAutoAssign } from '@/lib/hooks/use-provider-auto-assign';
+import { useModelConfigSignal } from '@/lib/hooks/use-model-config-signal';
+import { createProjectFromTemplate } from '@/lib/vfs/templates/utils';
+import { BAREBONES_PROJECT_TEMPLATE } from '@/lib/vfs/templates/barebones';
 
 // Module-level guard: prevents double token exchange when React strict mode
 // re-runs the effect, or if the component remounts before URL cleanup.
 let oauthExchangeInFlight = false;
 
+// Module-level guard: the first-run auto-create check runs at most once per page load,
+// even if React strict mode re-runs the effect or the component remounts.
+let firstRunCheckDone = false;
+
 function StudioInner() {
   const searchParams = useSearchParams();
   const docParam = searchParams.get('doc');
+  const projectParam = searchParams.get('project');
 
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [currentView, setCurrentView] = useState<'dashboard' | 'projects' | 'deployments' | 'templates' | 'skills' | 'interviews' | 'docs' | 'settings'>('dashboard');
@@ -32,6 +44,25 @@ function StudioInner() {
   const { state, setActiveProjectId, start: startTour } = useGuidedTour();
 
   const settingsParam = searchParams.get('settings');
+
+  // Global model auto-assign on provider connect. Mounted here (always-present root) so the
+  // Connections UI works both inside and outside a workspace (dashboard -> Settings -> Connections).
+  useProviderAutoAssign();
+
+  // Reactive model-config signal + one-time model migration. Mounted here (always-present root)
+  // so ANY ChatPanel (workspace, describe-mode, project-manager) reacts to model picks.
+  useModelConfigSignal();
+
+  function writeProjectParam(id: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('project', id);
+    window.history.pushState({}, '', url.toString());
+  }
+  function clearProjectParam() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('project');
+    window.history.replaceState({}, '', url.toString());
+  }
 
   // Sync URL params with view state
   useEffect(() => {
@@ -65,6 +96,7 @@ function StudioInner() {
     oauthExchangeInFlight = true;
 
     (async () => {
+      let returnProjectId: string | null = null;
       try {
         const oauthResult = await oauthHandleRedirectIfPresent();
         if (oauthResult) {
@@ -80,17 +112,106 @@ function StudioInner() {
           window.dispatchEvent(new CustomEvent('apiKeyUpdated', {
             detail: { provider: 'huggingface', hasKey: true }
           }));
+
+          // The redirect returned us to the app root (no ?project=), so restore the project that
+          // was open when the user kicked off OAuth, from the stash set by the sign-in button.
+          // Read once here; the finally block clears the stash regardless of success/failure.
+          returnProjectId = sessionStorage.getItem('hf_oauth_return_project')
+            || new URLSearchParams(window.location.search).get('project');
+          // Auto-select the HF Recommended template globally only if no working model exists yet.
+          // Do not clobber an existing user's choice when they merely re-auth HuggingFace. This is
+          // global (not per-project), so it applies even without a returnProjectId to restore.
+          if (shouldAutoAssignAgent()) {
+            await activateProviderAsGlobalDefault('huggingface');
+          }
+          if (returnProjectId) {
+            await vfs.init(); // vfs.getProject throws if VFS uninitialized
+            const project = await vfs.getProject(returnProjectId).catch(() => null);
+            if (project) {
+              setSelectedProject(project);
+              // Use replaceState (not writeProjectParam's pushState) so the spent ?code= landing
+              // entry is replaced by ?project=, keeping the Back button clean after OAuth. The
+              // finally block then strips the OAuth params, leaving /?project=id in one entry.
+              const restoredUrl = new URL(window.location.href);
+              restoredUrl.searchParams.set('project', project.id);
+              window.history.replaceState({}, '', restoredUrl.toString());
+            }
+          }
         }
       } catch (err) {
         console.warn('[HF OAuth] Redirect handling failed:', err);
       } finally {
-        // Always clean OAuth params from URL
+        // Clear the project stash once, whether restore succeeded or threw, so a failed restore
+        // cannot leak the id into a later OAuth return in the same tab.
+        if (returnProjectId !== null) sessionStorage.removeItem('hf_oauth_return_project');
+        // Clean only OAuth params from URL, preserve everything else (e.g. ?project=, ?doc=)
         const url = new URL(window.location.href);
-        url.search = '';
+        for (const p of ['code', 'state', 'error', 'error_description', 'error_uri', 'iss']) url.searchParams.delete(p);
         window.history.replaceState({}, '', url.toString());
       }
     })();
   }, []);
+
+  // First-run: drop a brand-new visitor (zero projects) straight into a workspace with an
+  // auto-created starter project, instead of the empty dashboard. Skipped when a URL param
+  // points at an existing destination (?project=, ?code= OAuth return, ?doc=, ?settings=),
+  // so this never fights the restore or OAuth effects. Runs at most once per page load.
+  // Note: StudioApp only renders in SPA/browser/HF mode (see app/page.tsx), so no server-mode
+  // guard is needed here by construction.
+  useEffect(() => {
+    if (firstRunCheckDone) return;
+    firstRunCheckDone = true; // deliberately NOT reset on failure: a transient error should
+                              // not cause a retry loop within a page load; a full reload recovers.
+    (async () => {
+      let createdId: string | null = null;
+      try {
+        await vfs.init();
+        const projects = await vfs.listProjects();
+        if (!shouldAutoCreateFirstProject({ search: window.location.search, projectCount: projects.length })) return;
+        const project = await vfs.createProject('My First Site', '');
+        createdId = project.id;
+        project.settings = { ...(project.settings ?? {}), runtime: 'static' };
+        await vfs.updateProject(project);
+        await createProjectFromTemplate(vfs, project.id, BAREBONES_PROJECT_TEMPLATE);
+        // template reported as 'blank' deliberately: quick-create's 'blank' path also applies
+        // BAREBONES_PROJECT_TEMPLATE and reports 'blank', so telemetry stays continuous.
+        track('project_create', { method: 'first_run_auto', runtime: 'static', template: 'blank' });
+        setSelectedProject(project);
+        // writeProjectParam uses history.pushState, which intentionally does NOT re-trigger
+        // Next's useSearchParams, so the restore effect below does not re-run and fight this
+        // freshly-set project. (A future refactor to router.replace WOULD re-run it, so keep pushState.)
+        writeProjectParam(project.id);
+      } catch (err) {
+        console.warn('[FirstRun] auto-create failed, falling back to dashboard:', err);
+        // Roll back a half-created project so a reload retries instead of being permanently
+        // suppressed by listProjects().length === 1. Best-effort; ignore delete failures.
+        if (createdId) { try { await vfs.deleteProject(createdId); } catch {} }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Restore the open project from ?project=<id> on load (survives reload and OAuth).
+  // Also honors browser Back: when the param goes to null, close the workspace.
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectParam) {
+      if (selectedProject) setSelectedProject(null); // honor browser Back
+      return;
+    }
+    if (selectedProject?.id === projectParam) return;
+    (async () => {
+      try {
+        await vfs.init();
+        const project = await vfs.getProject(projectParam);
+        if (cancelled) return;
+        if (project) setSelectedProject(project);
+        else clearProjectParam();
+      } catch { if (!cancelled) clearProjectParam(); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectParam]);
 
   const stepId = state.currentStep?.id;
   const isTourRunning = state.status === 'running';
@@ -106,6 +227,7 @@ function StudioInner() {
   useEffect(() => {
     const handleTourNavigateHome = () => {
       setSelectedProject(null);
+      clearProjectParam();
     };
     window.addEventListener('tour-navigate-home', handleTourNavigateHome);
     return () => {
@@ -118,6 +240,7 @@ function StudioInner() {
     const handleNavToView = (e: CustomEvent<{ view: string }>) => {
       setCurrentView(e.detail.view as typeof currentView);
       setSelectedProject(null);
+      clearProjectParam();
     };
 
     window.addEventListener('nav-to-view', handleNavToView as EventListener);
@@ -189,6 +312,7 @@ function StudioInner() {
 
   const handleProjectOpen = useCallback((project: Project) => {
     setSelectedProject(project);
+    writeProjectParam(project.id);
     track('project_open');
   }, []);
 
@@ -208,7 +332,7 @@ function StudioInner() {
       return (
         <Workspace
           project={selectedProject}
-          onBack={() => setSelectedProject(null)}
+          onBack={() => { setSelectedProject(null); clearProjectParam(); }}
         />
       );
     }

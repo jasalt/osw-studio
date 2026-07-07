@@ -6,6 +6,21 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.84.0 - Onboarding & Model Selection (2026-07-07)
+
+This release is about getting started faster and making model selection simpler. A first-time visitor now lands straight in a workspace with a starter project instead of an empty dashboard, and on a HuggingFace Space you can connect with a single "Sign in with HuggingFace" button that picks a capable model for you. Model selection is now global across all projects rather than remembered per project, it takes effect the moment you pick it, and Save and Reset decide whether a change is kept in your template.
+
+### Getting started
+- **Straight into a workspace**: New visitors land in a workspace with a starter project ready to edit, instead of the dashboard and a new-project form
+- **Sign in with HuggingFace**: On a HuggingFace Space, one click connects your account and selects a working model, with no API key to paste
+- **Starter suggestions**: A row of prompt suggestions appears above the chat once you are connected and haven't started yet; clicking one fills the composer so you can edit before sending
+
+### Model selection
+- **One selection for every project**: Your model and template choice is global, so switching projects no longer changes which model is selected
+- **Pick and use it right away**: Choosing a model takes effect immediately; Save stores it in the current template and Reset reverts, and built-in recommended templates are read-only
+
+---
+
 ## v1.83.0 - Web Access & Permissions (2026-07-05)
 
 The agent can now reach the internet: it can fetch external pages with `curl` and, once you connect a search provider, search the web with a new `search` command. Because letting the agent make outbound requests, generate images, and delete files is more consequential than editing your project, a new permission control lets you decide when it should ask first. By default it asks before web access, image generation, and deletion, and runs everything else without interruption.

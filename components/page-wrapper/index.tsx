@@ -15,6 +15,8 @@ import { vfs } from '@/lib/vfs';
 import { toast } from 'sonner';
 import { track } from '@/lib/telemetry';
 import { TelemetryBootstrap } from '@/components/telemetry-bootstrap';
+import { useProviderAutoAssign } from '@/lib/hooks/use-provider-auto-assign';
+import { useModelConfigSignal } from '@/lib/hooks/use-model-config-signal';
 
 type View = 'dashboard' | 'projects' | 'templates' | 'skills' | 'interviews' | 'deployments' | 'users' | 'workspaces' | 'docs' | 'settings';
 
@@ -47,6 +49,14 @@ function PageWrapperInner({ view, workspaceId, settingsTab, autoCreateProject }:
   const router = useRouter();
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showAboutModal, setShowAboutModal] = useState(false);
+
+  // Global model auto-assign on provider connect. Mounted here (always-present root) so the
+  // Connections UI works both inside and outside a workspace (dashboard -> Settings -> Connections).
+  useProviderAutoAssign();
+
+  // Reactive model-config signal + one-time model migration. Mounted here (always-present root)
+  // so ANY ChatPanel (workspace, describe-mode, project-manager) reacts to model picks.
+  useModelConfigSignal();
 
   useEffect(() => {
     useWorkspaceStore.getState().reattachServerTasks();

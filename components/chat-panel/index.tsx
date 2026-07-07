@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback, DragEvent, ClipboardEvent } from 'react';
-import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, Brain, Image as ImageIcon, Type, Mic, Square, Plus, FileText } from 'lucide-react';
+import { MessageSquare, Loader2, CheckCircle, XCircle, ChevronRight, FileCode, ClipboardList, Bot, RotateCcw, RefreshCw, Send, ChevronUp, ChevronDown, Code, Trash2, Brain, Image as ImageIcon, Type, Mic, Square, Plus, FileText, LogIn } from 'lucide-react';
 import type { WorkspaceMode, ActiveInterview } from '@/lib/stores/slices/project';
 import { InterviewPicker } from './interview-picker';
 import { InterviewTemplatesManager } from '@/components/interview/InterviewTemplatesManager';
@@ -10,6 +10,9 @@ import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { DebugEvent } from '@/lib/stores/types';
 import { EventProcessor, classifyBashCommand, type Turn, type ToolCall } from './event-processor';
+import { shouldShowPacingNotice, type PacingToolItem } from '@/lib/pacing-notice';
+import { configManager } from '@/lib/config/storage';
+import { X } from 'lucide-react';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { ChipsBlock } from './chips';
 import { PanelContainer, PanelHeader } from '@/components/ui/panel';
@@ -21,6 +24,9 @@ import { ProvidersModelsView } from '@/components/providers-models';
 import { createPortal } from 'react-dom';
 import { ProjectModelsPanel } from '@/components/providers-models/project-models-panel';
 import { hasAnyConnectedProvider } from '@/lib/llm/providers/connection-status';
+import { SUGGESTION_PILLS } from '@/lib/constants/suggestion-pills';
+import { checkHFCapabilities, loginHF } from '@/lib/auth/hf-auth';
+import { detectDeploymentType } from '@/lib/telemetry/config';
 import { FocusContextPayload } from '@/lib/preview/types';
 import { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-orchestrator';
 import { useAudioRecorder } from '@/lib/audio/use-audio-recorder';
@@ -35,7 +41,7 @@ import { ApprovalCard } from '@/components/permissions/ApprovalCard';
 import { track } from '@/lib/telemetry';
 import { toast } from 'sonner';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
-import { resolveProjectAssignment } from '@/lib/llm/models/project-assignment';
+import { resolveActiveAssignment } from '@/lib/llm/models/template-store';
 
 type FocusTarget = FocusContextPayload & { timestamp: number };
 
@@ -195,8 +201,7 @@ export function ChatPanel({
   systemNote,
 }: ChatPanelProps) {
   const workspaceReady = useWorkspaceStore(s => s.workspaceReady);
-  const projectId = useWorkspaceStore(s => s.projectId);
-  const projectModelConfig = useWorkspaceStore(s => s.projectModelConfig);
+  const modelConfigVersion = useWorkspaceStore(s => s.modelConfigVersion);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
@@ -206,6 +211,35 @@ export function ChatPanel({
     setProvidersManageTab(tab);
     setShowProvidersManage(true);
   }, []);
+  // HF Space one-click sign-in: when no provider is connected and we're on an HF
+  // Space, offer "Sign in with HuggingFace" OAuth in place of the "Select provider"
+  // button. Probed once on mount, only on HF Spaces.
+  const [hfOAuth, setHfOAuth] = useState<{ oauthAvailable: boolean; clientId: string | null; scopes: string } | null>(null);
+  useEffect(() => {
+    if (providerReady) return;
+    if (detectDeploymentType() !== 'hf_space') return;
+    let cancelled = false;
+    checkHFCapabilities()
+      .then((caps) => {
+        if (!cancelled) setHfOAuth({ oauthAvailable: caps.oauthAvailable, clientId: caps.clientId, scopes: caps.scopes });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [providerReady]);
+  const handleHFSignIn = useCallback(async () => {
+    if (!hfOAuth?.clientId) return;
+    // Stash the current project id so we can restore it after the OAuth round-trip
+    // even if the redirect URL does not preserve query params.
+    try {
+      const pid = new URLSearchParams(window.location.search).get('project');
+      if (pid) sessionStorage.setItem('hf_oauth_return_project', pid);
+    } catch {}
+    try {
+      await loginHF(hfOAuth.clientId, hfOAuth.scopes);
+    } catch {
+      toast.error('Could not start HuggingFace sign-in. Please try again.');
+    }
+  }, [hfOAuth]);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [interviewTemplates, setInterviewTemplates] = useState<InterviewTemplate[]>([]);
   const [interviewManagerOpen, setInterviewManagerOpen] = useState(false);
@@ -227,9 +261,16 @@ export function ChatPanel({
   }, []);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
-  // Resolve the per-project assignment once — drives the trigger label and the
-  // voice-input (mic) gating below.
-  const resolvedAssignment = resolveProjectAssignment(projectModelConfig);
+  // Resolve the single global active assignment: drives the trigger label and the
+  // voice-input (mic) gating below. Keyed off modelConfigVersion so it recomputes when a
+  // provider connects (apiKeyUpdated) or the global template/default/provider-model changes.
+  // modelConfigVersion is bumped by the root-mounted useModelConfigSignal, so this reacts for
+  // any ChatPanel host, including describe-mode outside the Workspace.
+  const resolvedAssignment = useMemo(
+    () => resolveActiveAssignment(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modelConfigVersion],
+  );
   const effectiveAgentModel = resolvedAssignment?.agent.model ?? currentModel;
   // The mic is gated on the project's dedicated voice-input slot (STT model /
   // browser / off), not the agent model's input modalities.
@@ -249,6 +290,11 @@ export function ChatPanel({
 
   // Prompt state — owned by ChatPanel, never leaves this component until submit
   const [prompt, setPrompt] = useState('');
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Connection/model-config changes re-render this panel via the store's modelConfigVersion
+  // (bumped on apiKeyUpdated + modelConfigChanged by the root-mounted useModelConfigSignal), so
+  // the pills' hasAnyConnectedProvider() is re-evaluated without a second local counter.
 
   // Clear prompt when generation starts
   const prevGenerating = useRef(generating);
@@ -489,6 +535,55 @@ export function ChatPanel({
   // Transform events into turns with chronologically ordered items (incremental)
   const turns = useMemo(() => processorRef.current.process(events), [events]);
 
+  // Pacing notice: reassure the user when a large single-file WRITE has been
+  // running for a while (common on models without tool streaming).
+  const [showPacingNotice, setShowPacingNotice] = useState(false);
+  const isWritePacingItem = useCallback((it: PacingToolItem): boolean => {
+    const cat = (it.name === 'bash' || it.name === 'shell')
+      ? classifyBashCommand(it.command)
+      : it.name;
+    return cat === 'write';
+  }, []);
+  const pacingItems = useMemo<PacingToolItem[]>(() =>
+    turns.flatMap(t => t.items)
+      .filter(i => i.type === 'tool')
+      .map(i => {
+        const tool = i.data as ToolCall;
+        return {
+          type: 'tool',
+          timestamp: i.timestamp,
+          status: tool?.status,
+          name: tool?.name,
+          command: tool?.parameters?.command ?? tool?.parameters?.cmd,
+        };
+      }),
+    [turns]);
+
+  useEffect(() => {
+    if (!generating) {
+      setShowPacingNotice(false);
+      return;
+    }
+    let mounted = true;
+    const recompute = () => {
+      if (!mounted) return;
+      setShowPacingNotice(
+        shouldShowPacingNotice(pacingItems, Date.now(), configManager.hasDismissedPacingNotice(), isWritePacingItem)
+      );
+    };
+    recompute();
+    const intervalId = setInterval(recompute, 1000);
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, [generating, pacingItems, isWritePacingItem]);
+
+  const dismissPacingNotice = useCallback(() => {
+    configManager.setPacingNoticeDismissed();
+    setShowPacingNotice(false);
+  }, []);
+
   // Auto-scroll when turns change (throttled with requestAnimationFrame)
   useEffect(() => {
     if (!autoScroll || !scrollRef.current) return;
@@ -627,6 +722,22 @@ export function ChatPanel({
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+        {showPacingNotice && (
+          <div role="status" aria-live="polite" className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 aria-hidden="true" className="h-3 w-3 mt-0.5 shrink-0 animate-spin opacity-60" />
+            <span className="flex-1">
+              Large file writes can take a while. The agent is still working and will continue as soon as the write finishes.
+            </span>
+            <button
+              type="button"
+              onClick={dismissPacingNotice}
+              aria-label="Dismiss notice"
+              className="shrink-0 rounded p-0.5 hover:bg-muted-foreground/10"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         {!workspaceReady && turns.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 p-4">
             <Loader2 className="h-5 w-5 animate-spin opacity-40" />
@@ -714,6 +825,29 @@ export function ChatPanel({
           className="hidden"
           onChange={(e) => { addTextFiles(e.target.files); e.target.value = ''; }}
         />
+        {/* Quick-start suggestions live in the context area above the input. Adding context
+            (focus, images, files) grows MessageContext below and bumps these up. Shown only for
+            a fresh, connected, idle composer (not interview or recording). */}
+        {((providerReady || hasAnyConnectedProvider()) && turns.length === 0 && !generating && mode !== 'interview' && !isRecording && !speech.isListening) && (
+          <div>
+            <div className="text-xs text-muted-foreground mb-1.5">Try one of these:</div>
+            <div className="flex flex-wrap gap-1.5">
+              {SUGGESTION_PILLS.map((pill) => (
+                <button
+                  key={pill.id}
+                  type="button"
+                  onClick={() => {
+                    setPrompt(pill.prompt);
+                    composerTextareaRef.current?.focus();
+                  }}
+                  className="text-xs px-3 py-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 cursor-pointer transition-all"
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {/* Unified context component — focus, blocks, images, files, voice */}
         <MessageContext
           focusContext={focusContextData}
@@ -808,6 +942,7 @@ export function ChatPanel({
           ) : (
           <div className="relative flex bg-card rounded-lg transition-all">
               <Textarea
+                ref={composerTextareaRef}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={(e) => {
@@ -904,6 +1039,34 @@ export function ChatPanel({
                 />,
                 document.body,
               )}
+              {!providerReady && hfOAuth?.oauthAvailable && hfOAuth.clientId ? (
+                /* HF Space, no provider connected: one-click "Sign in with HuggingFace"
+                   OAuth (primary) with a chevron that opens the Connections tab (the
+                   default unconnected behavior). Not wrapped in the model-picker
+                   Popover, since it has its own two actions. */
+                <div
+                  className="flex items-center h-7 rounded-md overflow-hidden ring-2 ring-primary/70 animate-ring-opacity border border-primary"
+                  data-tour-id="provider-settings-trigger"
+                >
+                  <button
+                    type="button"
+                    onClick={handleHFSignIn}
+                    aria-label="Sign in with HuggingFace"
+                    className="flex items-center gap-1.5 h-full px-2 bg-orange-500 text-white text-xs font-medium"
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    Sign in with HuggingFace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openProvidersManage('connections')}
+                    aria-label="Connection options"
+                    className="h-full px-1.5 bg-zinc-800 text-white border-l border-white/20 flex items-center"
+                  >
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
               <Popover
                 open={!isMobile && showMobileSettings}
                 onOpenChange={(open) => {
@@ -946,7 +1109,6 @@ export function ChatPanel({
                   }}
                 >
                   <ProjectModelsPanel
-                    projectId={projectId}
                     onManageSettings={() => {
                       setShowMobileSettings(false);
                       openProvidersManage('models');
@@ -954,6 +1116,7 @@ export function ChatPanel({
                   />
                 </PopoverContent>
               </Popover>
+              )}
 
               {/* Mobile: the per-project picker as a full-screen dialog (the anchored
                   popover can't fill a phone screen). */}
@@ -962,7 +1125,6 @@ export function ChatPanel({
                   <DialogContent showCloseButton className="p-0 gap-0 w-[calc(100vw-1.5rem)] max-w-none h-[calc(100dvh-1.5rem)] max-h-none overflow-hidden flex flex-col">
                     <DialogTitle className="sr-only">Models · this project</DialogTitle>
                     <ProjectModelsPanel
-                      projectId={projectId}
                       onManageSettings={() => {
                         setShowMobileSettings(false);
                         openProvidersManage('models');

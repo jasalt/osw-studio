@@ -1036,7 +1036,12 @@ export function ConnectionsPane() {
           <Button
             variant="default"
             size="sm"
-            className="gap-1.5 shrink-0"
+            autoFocus={connectedProviders.length === 0}
+            className={cn(
+              'gap-1.5 shrink-0',
+              // Nothing connected yet: make the primary next step obvious.
+              connectedProviders.length === 0 && 'ring-2 ring-primary/70 animate-ring-opacity',
+            )}
             onClick={openAddDrawer}
           >
             <Plus className="h-3.5 w-3.5" />
