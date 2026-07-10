@@ -281,10 +281,10 @@ export function ChatPanel({
   // to audio or transcribed text only when the message is sent.
   const voiceIsBrowser = voiceInput === 'browser';
 
-  const MODE_CONFIG: Record<WorkspaceMode, { label: string; Icon: typeof Code; accent: string; iconColor: string }> = {
-    code: { label: 'Code', Icon: Code, accent: 'bg-orange-500', iconColor: 'text-orange-500' },
-    chat: { label: 'Chat', Icon: MessageSquare, accent: 'bg-green-500', iconColor: 'text-green-500' },
-    interview: { label: 'Interview', Icon: ClipboardList, accent: 'bg-blue-500', iconColor: 'text-blue-500' },
+  const MODE_CONFIG: Record<WorkspaceMode, { label: string; Icon: typeof Code; iconColor: string }> = {
+    code: { label: 'Code', Icon: Code, iconColor: 'text-orange-500' },
+    chat: { label: 'Chat', Icon: MessageSquare, iconColor: 'text-green-500' },
+    interview: { label: 'Interview', Icon: ClipboardList, iconColor: 'text-blue-500' },
   };
   const isScrollingProgrammatically = useRef(false);
 
@@ -1083,15 +1083,15 @@ export function ChatPanel({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={`h-7 text-xs ${!providerReady ? 'ring-2 ring-primary/70 animate-ring-opacity border-primary' : ''} ${!isMobile && showMobileSettings ? 'relative z-50' : ''}`}
+                    className={`h-7 p-0 gap-0 overflow-hidden text-xs ${!providerReady ? 'ring-2 ring-primary/70 animate-ring-opacity border-primary' : ''} ${!isMobile && showMobileSettings ? 'relative z-50' : ''}`}
                     data-tour-id="provider-settings-trigger"
                   >
-                    <span>{providerReady ? getModelDisplayName(effectiveAgentModel) : 'Select provider'}</span>
-                    {showMobileSettings ? (
-                      <ChevronDown className="h-3 w-3 ml-1" />
-                    ) : (
-                      <ChevronUp className="h-3 w-3 ml-1" />
-                    )}
+                    <span className="flex items-center h-full px-2">
+                      {providerReady ? getModelDisplayName(effectiveAgentModel) : 'Select provider'}
+                    </span>
+                    <span className="flex items-center h-full px-1.5 border-l border-border">
+                      {showMobileSettings ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                    </span>
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
@@ -1184,11 +1184,11 @@ export function ChatPanel({
                   <Popover open={showModeMenu} onOpenChange={setShowModeMenu}>
                     <PopoverTrigger asChild>
                       <Button variant="outline" size="sm" className="h-7 p-0 gap-0 overflow-hidden text-xs">
-                        <span className={`flex items-center gap-1 h-full px-2 ${active.accent} text-white`}>
-                          <ActiveIcon className="h-3 w-3" />
+                        <span className="flex items-center gap-2 h-full px-2">
+                          <ActiveIcon className={`h-3 w-3 ${active.iconColor}`} />
                           {active.label}
                         </span>
-                        <span className="flex items-center h-full px-1.5 bg-zinc-800 text-white border-l border-white/20">
+                        <span className="flex items-center h-full px-1.5 border-l border-border">
                           {showModeMenu ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
                         </span>
                       </Button>

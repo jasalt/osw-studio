@@ -1,6 +1,7 @@
 import { configManager } from '@/lib/config/storage';
 import { getDefaultModel } from '@/lib/llm/providers/registry';
 import type { ProviderId } from '@/lib/llm/providers/types';
+import { isProviderConnected, getConnectedProviders } from '@/lib/llm/providers/connection-status';
 import { BUILT_IN_MODEL_TEMPLATES } from './registry';
 import { loadProviderModels } from './model-catalog';
 import { pickModelForProvider, shouldAutoAssignAgent } from './project-assignment';
@@ -45,4 +46,25 @@ export async function activateProviderAsGlobalDefault(provider: ProviderId): Pro
     assignment: { ...base.assignment, agent: { provider, model } },
   });
   configManager.setDefaultTemplateId('default');
+}
+
+/**
+ * Load-time counterpart to the connect-time auto-assign. The connect-time path only fires on the
+ * `apiKeyUpdated` event, so a user who is ALREADY connected when the app loads is never reconciled.
+ * That leaves a real gap: the pre-global migration seeds the Default template's agent from
+ * `getSelectedProvider()` (a keyless default when the user's real provider was stored per-project),
+ * so `isProjectProviderReady()` is false even though a provider is genuinely connected. The onboarding
+ * UI then keys off that — showing the HF "Sign in" button and disabling the composer — until the user
+ * deletes and re-adds the connection (which fires `apiKeyUpdated`). See issue #17.
+ *
+ * When the active agent provider is unready but a provider IS connected, point the global default at a
+ * connected provider (preferring the globally selected one). No-op when the active agent is already
+ * ready, or when nothing is connected (a genuine new user, whose onboarding UI must stay as-is).
+ */
+export async function reconcileActiveProviderIfConnected(): Promise<void> {
+  if (!shouldAutoAssignAgent()) return; // active agent already ready — don't clobber the user's choice
+  const selected = configManager.getSelectedProvider();
+  const target = isProviderConnected(selected) ? selected : getConnectedProviders()[0];
+  if (!target) return; // genuine new user: leave onboarding as-is
+  await activateProviderAsGlobalDefault(target);
 }

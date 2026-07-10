@@ -63,10 +63,12 @@ export function ProvidersModelsView({ initialTab = 'models' }: ProvidersModelsVi
               key={item.id}
               type="button"
               onClick={() => setActivePane(item.id)}
+              // Active item: neutral selected-surface + heavier weight (matches the main sidebar) instead of orange.
+              style={activePane === item.id ? { backgroundColor: 'var(--sidebar-active-surface)' } : undefined}
               className={cn(
                 'flex items-center gap-2.5 px-3 py-2 rounded-full text-[13px] font-medium transition-colors select-none whitespace-nowrap shrink-0 md:w-full text-left',
                 activePane === item.id
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  ? 'text-foreground font-semibold'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >

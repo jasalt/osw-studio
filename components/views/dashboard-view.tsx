@@ -248,9 +248,9 @@ function QuickActionsBar({
   };
 
   return (
-    <div className="bg-card rounded-xl border border-zinc-800 p-4 mb-6">
+    <div className="bg-card rounded-xl border border-border p-4 mb-6">
       <div className="flex flex-wrap gap-2">
-        <Button variant="default" size="sm" asChild className="gap-1.5">
+        <Button variant="outline" size="sm" asChild className="gap-1.5">
           <Link href={projectsHref} onClick={handleNewProjectClick}>
             <Plus className="w-4 h-4" />
             New Project
@@ -318,11 +318,11 @@ function WhatsNewCard({
   const docsHref = isServerMode ? '/admin/docs?doc=whats-new' : '#';
 
   return (
-    <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+    <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="flex items-center gap-2">
           <Newspaper className="w-4 h-4 text-orange-500" />
-          <h3 className="text-sm font-medium text-zinc-200">
+          <h3 className="text-sm font-medium text-foreground">
             What&apos;s New in v{whatsNew.version}
           </h3>
         </div>
@@ -335,11 +335,11 @@ function WhatsNewCard({
           <ExternalLink className="w-3 h-3" />
         </Link>
       </div>
-      <p className="text-sm font-medium text-zinc-200 mb-2">{whatsNew.title}</p>
+      <p className="text-sm font-medium text-foreground mb-2">{whatsNew.title}</p>
       {whatsNew.highlights && whatsNew.highlights.length > 0 && (
         <ul className="space-y-1 flex-1">
           {whatsNew.highlights.map((highlight, i) => (
-            <li key={i} className="text-xs text-zinc-300 flex items-start gap-2">
+            <li key={i} className="text-xs text-foreground flex items-start gap-2">
               <span className="text-orange-500/70 mt-0.5">•</span>
               <span>{highlight}</span>
             </li>
@@ -376,9 +376,9 @@ function CompactOverview({
   const rightColumn = stats.slice(half);
 
   return (
-    <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+    <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-zinc-300">System Overview</h3>
+        <h3 className="text-sm font-medium text-foreground">System Overview</h3>
         <Button
           variant="ghost"
           size="sm"
@@ -393,8 +393,8 @@ function CompactOverview({
         <div className="space-y-1.5">
           {leftColumn.map((stat) => (
             <div key={stat.label} className="flex items-center justify-between">
-              <span className="text-xs text-zinc-500">{stat.label}</span>
-              <span className={`text-sm font-medium ${stat.highlight ? 'text-yellow-500' : 'text-zinc-200'}`}>
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
+              <span className={`text-sm font-medium ${stat.highlight ? 'text-yellow-500' : 'text-foreground'}`}>
                 {stat.value}
               </span>
             </div>
@@ -403,8 +403,8 @@ function CompactOverview({
         <div className="space-y-1.5">
           {rightColumn.map((stat) => (
             <div key={stat.label} className="flex items-center justify-between">
-              <span className="text-xs text-zinc-500">{stat.label}</span>
-              <span className={`text-sm font-medium ${stat.highlight ? 'text-yellow-500' : 'text-zinc-200'}`}>
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
+              <span className={`text-sm font-medium ${stat.highlight ? 'text-yellow-500' : 'text-foreground'}`}>
                 {stat.value}
               </span>
             </div>
@@ -437,9 +437,9 @@ function BrowserOverview({
   const rightColumn = stats.slice(half);
 
   return (
-    <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+    <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-zinc-300">Content Overview</h3>
+        <h3 className="text-sm font-medium text-foreground">Content Overview</h3>
         <Button
           variant="ghost"
           size="sm"
@@ -454,16 +454,16 @@ function BrowserOverview({
         <div className="space-y-1.5">
           {leftColumn.map((stat) => (
             <div key={stat.label} className="flex items-center justify-between">
-              <span className="text-xs text-zinc-500">{stat.label}</span>
-              <span className="text-sm font-medium text-zinc-200">{stat.value}</span>
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
+              <span className="text-sm font-medium text-foreground">{stat.value}</span>
             </div>
           ))}
         </div>
         <div className="space-y-1.5">
           {rightColumn.map((stat) => (
             <div key={stat.label} className="flex items-center justify-between">
-              <span className="text-xs text-zinc-500">{stat.label}</span>
-              <span className="text-sm font-medium text-zinc-200">{stat.value}</span>
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
+              <span className="text-sm font-medium text-foreground">{stat.value}</span>
             </div>
           ))}
         </div>
@@ -499,23 +499,23 @@ function RecentProjectsCard({
   const viewAllHref = isServerMode ? '/admin/projects' : '#';
 
   return (
-    <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+    <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-4 h-4 text-orange-500" />
-          <h3 className="text-sm font-medium text-zinc-300">Recent Projects</h3>
+          <h3 className="text-sm font-medium text-foreground">Recent Projects</h3>
         </div>
         <Link
           href={viewAllHref}
           onClick={handleViewAll}
-          className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5"
+          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5"
         >
           View all
           <ChevronRight className="w-3 h-3" />
         </Link>
       </div>
       {projects.length === 0 ? (
-        <p className="text-xs text-zinc-500 text-center py-2 flex-1 flex items-center justify-center">
+        <p className="text-xs text-muted-foreground text-center py-2 flex-1 flex items-center justify-center">
           No projects yet
         </p>
       ) : (
@@ -525,10 +525,10 @@ function RecentProjectsCard({
               key={project.id}
               href={isServerMode ? `/admin/projects?open=${project.id}` : '#'}
               onClick={(e) => handleProjectClick(e, project.id)}
-              className="flex items-center justify-between text-xs py-1.5 px-2 bg-zinc-900/50 rounded hover:bg-zinc-800/50 transition-colors"
+              className="flex items-center justify-between text-xs py-1.5 px-2 bg-muted/50 rounded hover:bg-muted transition-colors"
             >
-              <span className="text-zinc-300 truncate flex-1 mr-2">{project.name}</span>
-              <span className="text-zinc-500 shrink-0 flex items-center gap-1">
+              <span className="text-foreground truncate flex-1 mr-2">{project.name}</span>
+              <span className="text-muted-foreground shrink-0 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 {formatRelativeTime(project.updatedAt)}
               </span>
@@ -543,22 +543,22 @@ function RecentProjectsCard({
 // Recent Deployments Card
 function RecentDeploymentsCard({ deployments }: { deployments: DashboardData['recentDeployments'] }) {
   return (
-    <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+    <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Globe className="w-4 h-4 text-orange-500" />
-          <h3 className="text-sm font-medium text-zinc-300">Recent Deployments</h3>
+          <h3 className="text-sm font-medium text-foreground">Recent Deployments</h3>
         </div>
         <Link
           href="/admin/deployments"
-          className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5"
+          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5"
         >
           View all
           <ChevronRight className="w-3 h-3" />
         </Link>
       </div>
       {deployments.length === 0 ? (
-        <p className="text-xs text-zinc-500 text-center py-2 flex-1 flex items-center justify-center">
+        <p className="text-xs text-muted-foreground text-center py-2 flex-1 flex items-center justify-center">
           No deployments yet
         </p>
       ) : (
@@ -567,17 +567,17 @@ function RecentDeploymentsCard({ deployments }: { deployments: DashboardData['re
             <Link
               key={deployment.id}
               href={`/admin/deployments?open=${deployment.id}`}
-              className="flex items-center justify-between text-xs py-1.5 px-2 bg-zinc-900/50 rounded hover:bg-zinc-800/50 transition-colors"
+              className="flex items-center justify-between text-xs py-1.5 px-2 bg-muted/50 rounded hover:bg-muted transition-colors"
             >
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    deployment.enabled ? 'bg-green-500' : 'bg-zinc-500'
+                    deployment.enabled ? 'bg-green-500' : 'bg-muted-foreground'
                   }`}
                 />
-                <span className="text-zinc-300 truncate">{deployment.name}</span>
+                <span className="text-foreground truncate">{deployment.name}</span>
               </div>
-              <span className="text-zinc-500 shrink-0 flex items-center gap-1">
+              <span className="text-muted-foreground shrink-0 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 {formatRelativeTime(deployment.updatedAt)}
               </span>
@@ -594,13 +594,13 @@ function TrafficLists({ data }: { data: DashboardData }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {/* Top Deployments */}
-      <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+      <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-3">
           <Globe className="w-4 h-4 text-orange-500" />
-          <h3 className="text-sm font-medium text-zinc-300">Top Deployments (24h)</h3>
+          <h3 className="text-sm font-medium text-foreground">Top Deployments (24h)</h3>
         </div>
         {data.traffic.topDeployments.length === 0 ? (
-          <p className="text-xs text-zinc-500 text-center py-2 flex-1 flex items-center justify-center">
+          <p className="text-xs text-muted-foreground text-center py-2 flex-1 flex items-center justify-center">
             No traffic recorded yet
           </p>
         ) : (
@@ -608,13 +608,13 @@ function TrafficLists({ data }: { data: DashboardData }) {
             {data.traffic.topDeployments.slice(0, 5).map((deployment, i) => (
               <div
                 key={deployment.deploymentId}
-                className="flex items-center justify-between text-xs py-1 px-2 bg-zinc-900/50 rounded"
+                className="flex items-center justify-between text-xs py-1 px-2 bg-muted/50 rounded"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-zinc-500 w-4">{i + 1}.</span>
-                  <span className="text-zinc-300 truncate">{deployment.deploymentName}</span>
+                  <span className="text-muted-foreground w-4">{i + 1}.</span>
+                  <span className="text-foreground truncate">{deployment.deploymentName}</span>
                 </div>
-                <span className="text-zinc-500 shrink-0">{formatNumber(deployment.count)}</span>
+                <span className="text-muted-foreground shrink-0">{formatNumber(deployment.count)}</span>
               </div>
             ))}
           </div>
@@ -622,13 +622,13 @@ function TrafficLists({ data }: { data: DashboardData }) {
       </div>
 
       {/* Recent Errors */}
-      <div className="bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col">
+      <div className="bg-card rounded-xl border border-border p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 text-orange-500" />
-          <h3 className="text-sm font-medium text-zinc-300">Recent Errors</h3>
+          <h3 className="text-sm font-medium text-foreground">Recent Errors</h3>
         </div>
         {data.traffic.recentErrors.length === 0 ? (
-          <p className="text-xs text-zinc-500 text-center py-2 flex-1 flex items-center justify-center">
+          <p className="text-xs text-muted-foreground text-center py-2 flex-1 flex items-center justify-center">
             No errors recorded
           </p>
         ) : (
@@ -636,7 +636,7 @@ function TrafficLists({ data }: { data: DashboardData }) {
             {data.traffic.recentErrors.slice(0, 5).map((error, i) => (
               <div
                 key={`${error.deploymentId}-${error.path}-${i}`}
-                className="flex items-center justify-between text-xs py-1 px-2 bg-zinc-900/50 rounded"
+                className="flex items-center justify-between text-xs py-1 px-2 bg-muted/50 rounded"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span
@@ -648,9 +648,9 @@ function TrafficLists({ data }: { data: DashboardData }) {
                   >
                     {error.statusCode}
                   </span>
-                  <span className="text-zinc-400 truncate max-w-[140px]">{error.path}</span>
+                  <span className="text-muted-foreground truncate max-w-[140px]">{error.path}</span>
                 </div>
-                <span className="text-zinc-500 shrink-0 text-[10px]">
+                <span className="text-muted-foreground shrink-0 text-[10px]">
                   {new Date(error.timestamp).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -761,7 +761,7 @@ export function DashboardView({ workspaceId, onNavigate, onProjectSelect, onStar
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <Spinner size={32} color="#f97316" className="mx-auto" />
-          <p className="mt-3 text-sm text-zinc-400">Loading dashboard...</p>
+          <p className="mt-3 text-sm text-muted-foreground">Loading dashboard...</p>
         </div>
       </div>
     );
@@ -773,7 +773,7 @@ export function DashboardView({ workspaceId, onNavigate, onProjectSelect, onStar
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
           <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-          <p className="text-zinc-400 text-sm">{error}</p>
+          <p className="text-muted-foreground text-sm">{error}</p>
           <Button variant="outline" size="sm" onClick={fetchData} className="mt-4">
             Retry
           </Button>

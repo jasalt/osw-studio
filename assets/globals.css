@@ -88,7 +88,6 @@
   --panel-preview-rgb: 251, 146, 60; /* Orange */
   
   /* Project page tint colors - Light mode */
-  --project-card-tint: oklch(0.65 0.18 40 / 0.03); /* Subtle orange tint */
   --project-background-tint: oklch(0.65 0.18 40 / 0.015); /* Very subtle orange tint */
   
   /* Sidebar button active colors - Light mode */
@@ -97,6 +96,26 @@
   --button-editor-active: oklch(0.55 0.18 285); /* Purple */
   --button-preview-active: oklch(0.7 0.2 45); /* Orange */
   --button-checkpoint-active: oklch(0.65 0.15 55); /* Warm amber */
+
+  /* Sidebar toggle active surface (theme-aware): solid panel color fill + white glyph in light mode.
+     Skills/Console have no base color token (they use inline fallbacks elsewhere), so their fills are literal. */
+  --button-assistant-active-bg: var(--button-assistant-active);
+  --button-files-active-bg: var(--button-files-active);
+  --button-editor-active-bg: var(--button-editor-active);
+  --button-preview-active-bg: var(--button-preview-active);
+  --button-skills-active-bg: #a855f7;
+  --button-terminal-active-bg: #22c55e;
+  --button-checkpoint-active-bg: var(--button-checkpoint-active);
+  --button-assistant-active-fg: #fff;
+  --button-files-active-fg: #fff;
+  --button-editor-active-fg: #fff;
+  --button-preview-active-fg: #fff;
+  --button-skills-active-fg: #fff;
+  --button-terminal-active-fg: #fff;
+  --button-checkpoint-active-fg: #fff;
+
+  /* Active nav/menu surface (light): a neutral selected-item background, not the --border variable. */
+  --sidebar-active-surface: oklch(0.92 0 0);
 
   /* Checkpoint panel */
   --panel-checkpoint-rgb: 217, 119, 6; /* Amber */
@@ -147,7 +166,6 @@
   --panel-preview-rgb: 251, 146, 60; /* Orange */
   
   /* Project page tint colors - Dark mode */
-  --project-card-tint: oklch(0.65 0.18 40 / 0.04); /* Subtle orange tint */
   --project-background-tint: oklch(0.65 0.18 40 / 0.02); /* Very subtle orange tint */
   
   /* Sidebar button active colors - Dark mode */
@@ -156,6 +174,24 @@
   --button-editor-active: oklch(0.55 0.18 285); /* Purple */
   --button-preview-active: oklch(0.7 0.2 45); /* Orange */
   --button-checkpoint-active: oklch(0.65 0.15 55); /* Warm amber */
+
+  /* Sidebar toggle active surface (theme-aware): neutral fill + panel-colored glyph in dark mode.
+     Dedicated surface token — a background, not the --border variable, though it matches that gray. */
+  --sidebar-active-surface: oklch(0.30 0 0);
+  --button-assistant-active-bg: var(--sidebar-active-surface);
+  --button-files-active-bg: var(--sidebar-active-surface);
+  --button-editor-active-bg: var(--sidebar-active-surface);
+  --button-preview-active-bg: var(--sidebar-active-surface);
+  --button-skills-active-bg: var(--sidebar-active-surface);
+  --button-terminal-active-bg: var(--sidebar-active-surface);
+  --button-checkpoint-active-bg: var(--sidebar-active-surface);
+  --button-assistant-active-fg: var(--button-assistant-active);
+  --button-files-active-fg: var(--button-files-active);
+  --button-editor-active-fg: var(--button-editor-active);
+  --button-preview-active-fg: var(--button-preview-active);
+  --button-skills-active-fg: #a855f7;
+  --button-terminal-active-fg: #22c55e;
+  --button-checkpoint-active-fg: var(--button-checkpoint-active);
 
   /* Checkpoint panel */
   --panel-checkpoint-rgb: 217, 119, 6; /* Amber */

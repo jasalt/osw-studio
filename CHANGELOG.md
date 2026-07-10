@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.85.0 - 2026-07-11
+
+### Fixes
+- **"Sign in with HuggingFace" no longer blocks the chat for already-connected users**: On a HuggingFace Space, a user who already had a provider connected could see the "Sign in with HuggingFace" button take over the model selector and disable the composer. The chat is now usable on load, without deleting and re-adding the connection. (#17)
+- **Dashboard cards in light mode**: The dashboard cards (Content Overview, What's New, Recent Projects) rendered with a dark background on the light dashboard. They now follow the theme in both light and dark modes.
+- **Docs showing the wrong page**: Switching documentation pages quickly could briefly show the previous page's content. Only the most recently selected page is shown now.
+- **Docs table-of-contents highlighting**: On pages with repeated section names (like the changelog), the "on this page" outline highlighted the wrong entries and clicking one could scroll to the wrong place. Both now track the correct heading.
+
+### UI
+- **Neutral by default, orange as an accent**: Primary buttons, active items in the sidebar and settings, project cards, and the workspace's dark-mode panel toggles now use a neutral style instead of a solid orange fill. Orange is kept for accents and active highlights, such as the Built-in/Custom source filters on the Skills and Interviews pages. Destructive actions remain red.
+- **Consistent chat controls**: The model selector and the Chat/Code/Interview selector now share the same neutral split-button style, with the mode's color shown on its icon.
+
 ## v1.84.0 - 2026-07-07
 
 ### Onboarding

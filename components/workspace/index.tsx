@@ -1470,14 +1470,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showChat
                       ? 'shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showChat ? 'var(--button-assistant-active)' : undefined,
-                    color: showChat ? 'white' : undefined
+                    backgroundColor: showChat ? 'var(--button-assistant-active-bg)' : undefined,
+                    color: showChat ? 'var(--button-assistant-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('chat')}
                   onMouseEnter={() => handleSidebarHover('chat')}
@@ -1505,14 +1505,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showFiles
                       ? 'shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showFiles ? 'var(--button-files-active)' : undefined,
-                    color: showFiles ? 'white' : undefined
+                    backgroundColor: showFiles ? 'var(--button-files-active-bg)' : undefined,
+                    color: showFiles ? 'var(--button-files-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('files')}
                   onMouseEnter={() => handleSidebarHover('files')}
@@ -1540,14 +1540,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showEditor 
                       ? 'shadow-sm' 
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showEditor ? 'var(--button-editor-active)' : undefined,
-                    color: showEditor ? 'white' : undefined
+                    backgroundColor: showEditor ? 'var(--button-editor-active-bg)' : undefined,
+                    color: showEditor ? 'var(--button-editor-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('editor')}
                   onMouseEnter={() => handleSidebarHover('editor')}
@@ -1575,14 +1575,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 mx-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 mx-1 rounded-sm flex items-center justify-center transition-all ${
                     showPreview
                       ? 'shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showPreview ? 'var(--button-preview-active)' : undefined,
-                    color: showPreview ? 'white' : undefined
+                    backgroundColor: showPreview ? 'var(--button-preview-active-bg)' : undefined,
+                    color: showPreview ? 'var(--button-preview-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('preview')}
                   onMouseEnter={() => handleSidebarHover('preview')}
@@ -1610,14 +1610,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showSkillsPanel
                       ? 'shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showSkillsPanel ? 'var(--button-skills-active, #a855f7)' : undefined,
-                    color: showSkillsPanel ? 'white' : undefined
+                    backgroundColor: showSkillsPanel ? 'var(--button-skills-active-bg)' : undefined,
+                    color: showSkillsPanel ? 'var(--button-skills-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('skills')}
                   onMouseEnter={() => handleSidebarHover('skills')}
@@ -1645,14 +1645,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`relative h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`relative h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showConsole
                       ? 'shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showConsole ? 'var(--button-terminal-active, #22c55e)' : undefined,
-                    color: showConsole ? 'white' : undefined
+                    backgroundColor: showConsole ? 'var(--button-terminal-active-bg)' : undefined,
+                    color: showConsole ? 'var(--button-terminal-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('console')}
                   onMouseEnter={() => handleSidebarHover('console')}
@@ -1683,14 +1683,14 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showCheckpoints
                       ? 'shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'
                   }`}
                   style={{
-                    backgroundColor: showCheckpoints ? 'var(--button-checkpoint-active)' : undefined,
-                    color: showCheckpoints ? 'white' : undefined
+                    backgroundColor: showCheckpoints ? 'var(--button-checkpoint-active-bg)' : undefined,
+                    color: showCheckpoints ? 'var(--button-checkpoint-active-fg)' : undefined
                   }}
                   onClick={() => togglePanel('checkpoints')}
                   onMouseEnter={() => handleSidebarHover('checkpoints')}
@@ -1718,7 +1718,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className={`h-5 w-5 px-1 rounded-sm flex items-center justify-center transition-all ${
+                  className={`h-6 w-6 px-1 rounded-sm flex items-center justify-center transition-all ${
                     showDebugPanel
                       ? 'bg-foreground shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground'

@@ -29,7 +29,16 @@ export function useTableOfContents(markdown: string): TocItem[] {
     const headings: { level: number; text: string; id: string; index: number }[] = [];
 
     let headingIndex = 0;
+    let inFencedCode = false;
     for (const line of lines) {
+      // Skip fenced code blocks so `##`-style lines inside code samples aren't counted as
+      // headings — they aren't rendered as headings, so counting them would offset the index
+      // mapping against the DOM (and add phantom TOC entries).
+      if (/^\s*```/.test(line)) {
+        inFencedCode = !inFencedCode;
+        continue;
+      }
+      if (inFencedCode) continue;
       // Match markdown headings (##, ###, etc.) but skip # (h1 - title only)
       const match = line.match(/^(#{2,4})\s+(.+)$/);
       if (match) {

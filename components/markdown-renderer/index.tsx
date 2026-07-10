@@ -33,42 +33,23 @@ export function MarkdownRenderer({ content, className, skipNormalization = false
   // Normalize content to fix common LLM formatting issues
   const processedContent = skipNormalization ? content : normalizeContent(content);
 
-  // Pre-calculate all heading data from the markdown
-  // This runs once per content change and is stable across re-renders
-  const headingData = React.useMemo(() => {
-    const lines = processedContent.split('\n');
-    const headings: Array<{ level: number; text: string; index: number }> = [];
-    let index = 0;
-
-    for (const line of lines) {
-      // Match H2, H3, H4 (skip H1 as it's not in TOC)
-      const match = line.match(/^(#{2,4})\s+(.+)$/);
-      if (match) {
-        headings.push({
-          level: match[1].length,
-          text: match[2].trim(),
-          index: index++,
-        });
-      }
-    }
-
-    return headings;
-  }, [processedContent]);
-
-  // Create a map from heading text to index for quick lookup during render
-  const headingIndexMap = React.useMemo(() => {
-    const map = new Map<string, number>();
-    headingData.forEach(h => {
-      const key = `${h.level}-${h.text}`;
-      if (!map.has(key)) {
-        map.set(key, h.index);
-      }
+  // Assign each rendered heading a unique data-heading-index by document order, so the docs TOC and
+  // scroll tracking can map DOM headings back to TOC entries. This is done as a post-render DOM walk
+  // (not in JSX) because order-based indexing is required — headings can repeat (many "Fixes"/
+  // "Desktop" in the changelog) and can contain inline markup (e.g. `code`), making their rendered
+  // text an unreliable key — and a render-time counter is corrupted by StrictMode's double-invoke.
+  // Runs on every commit (cheap) so the indices survive re-renders that reuse the heading nodes.
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll('h2, h3, h4').forEach((h, i) => {
+      h.setAttribute('data-heading-index', String(i));
     });
-    return map;
-  }, [headingData]);
+  });
 
   return (
-    <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
+    <div ref={containerRef} className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -80,12 +61,9 @@ export function MarkdownRenderer({ content, className, skipNormalization = false
         h2: ({ children }) => {
           const text = children?.toString() || '';
           const id = slugify(text);
-          const key = `2-${text}`;
-          const index = headingIndexMap.get(key);
           return (
             <h2
               id={id}
-              data-heading-index={index}
               className="text-2xl font-bold mb-3 mt-8 pb-2 border-b border-border/50 first:mt-0"
             >
               {children}
@@ -95,12 +73,9 @@ export function MarkdownRenderer({ content, className, skipNormalization = false
         h3: ({ children }) => {
           const text = children?.toString() || '';
           const id = slugify(text);
-          const key = `3-${text}`;
-          const index = headingIndexMap.get(key);
           return (
             <h3
               id={id}
-              data-heading-index={index}
               className="text-xl font-semibold mb-2 mt-6"
             >
               {children}
@@ -110,12 +85,9 @@ export function MarkdownRenderer({ content, className, skipNormalization = false
         h4: ({ children }) => {
           const text = children?.toString() || '';
           const id = slugify(text);
-          const key = `4-${text}`;
-          const index = headingIndexMap.get(key);
           return (
             <h4
               id={id}
-              data-heading-index={index}
               className="text-lg font-semibold mb-2 mt-4"
             >
               {children}

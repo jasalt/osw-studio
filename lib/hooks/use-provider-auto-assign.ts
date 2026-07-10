@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import type { ProviderId } from '@/lib/llm/providers/types';
 import { shouldAutoAssignAgent } from '@/lib/llm/models/project-assignment';
-import { activateProviderAsGlobalDefault } from '@/lib/llm/models/global-auto-assign';
+import { activateProviderAsGlobalDefault, reconcileActiveProviderIfConnected } from '@/lib/llm/models/global-auto-assign';
 
 /**
  * Auto-assign the GLOBAL active model to a freshly connected provider when no working
@@ -22,6 +22,16 @@ import { activateProviderAsGlobalDefault } from '@/lib/llm/models/global-auto-as
  * listener must not live inside Workspace, which mounts only while a project is open.
  */
 export function useProviderAutoAssign(): void {
+  // Load-time reconciliation: the event handler below only fixes the active model on a fresh
+  // connect. A user who is ALREADY connected on load (e.g. after the pre-global migration seeded
+  // the Default template with a keyless provider) would otherwise be stuck showing onboarding UI —
+  // the HF "Sign in" button and a disabled composer — until they re-add the connection. See issue #17.
+  useEffect(() => {
+    reconcileActiveProviderIfConnected().catch((err) => {
+      console.warn('[useProviderAutoAssign] load-time provider reconcile failed:', err);
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const handler = async (e: Event) => {

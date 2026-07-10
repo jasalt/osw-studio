@@ -184,6 +184,9 @@ function SidebarContent({
     if (currentView === 'projects') {
       setExpandedItems(prev => new Set(prev).add('projects'));
     }
+    if (currentView === 'settings') {
+      setExpandedItems(prev => new Set(prev).add('settings'));
+    }
   }, [currentView]);
 
   // Load recent projects
@@ -433,11 +436,15 @@ function SidebarContent({
               )}>
                 <div className="relative">
                   <Button
-                    variant={isActive && !hasSubItems ? 'default' : 'ghost'}
+                    variant="ghost"
+                    // Active item: neutral selected-surface + heavier weight instead of the orange primary fill.
+                    // Applied inline (not an arbitrary bg-[] class) so the CSS var always resolves.
+                    style={isActive && !hasSubItems ? { backgroundColor: 'var(--sidebar-active-surface)' } : undefined}
                     className={cn(
                       'w-full',
                       collapsed ? 'justify-center px-2' : 'justify-start',
-                      !collapsed && hasSubItems && 'pr-8' // Make room for chevron
+                      !collapsed && hasSubItems && 'pr-8', // Make room for chevron
+                      isActive && !hasSubItems && 'font-semibold'
                     )}
                     onClick={() => {
                       // Navigate if item has path (or other action)

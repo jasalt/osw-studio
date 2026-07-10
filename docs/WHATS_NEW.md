@@ -6,6 +6,20 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.85.0 - Neutral Interface & Fixes (2026-07-11)
+
+This release changes how the interface uses color. Primary buttons and the active items in the sidebars used to be filled solid orange; now they use a neutral treatment, and orange is kept for accents and highlights. Alongside that are a few fixes: the "Sign in with HuggingFace" button no longer takes over the chat for people who were already connected, the dashboard cards render correctly in light mode, and the docs pages behave when you switch between them quickly.
+
+### Interface
+- **Neutral by default**: Primary buttons, the active items in the sidebar and settings, and project cards use a neutral style instead of a solid orange fill; orange is kept for accents, and destructive actions stay red
+
+### Fixes
+- **HuggingFace sign-in**: On a HuggingFace Space, the sign-in button no longer blocks the chat when a provider is already connected
+- **Light mode dashboard**: The dashboard cards follow the theme instead of staying dark on a light page
+- **Documentation pages**: Switching docs quickly no longer shows the previous page, and the "on this page" outline now highlights and scrolls to the correct section
+
+---
+
 ## v1.84.0 - Onboarding & Model Selection (2026-07-07)
 
 This release is about getting started faster and making model selection simpler. A first-time visitor now lands straight in a workspace with a starter project instead of an empty dashboard, and on a HuggingFace Space you can connect with a single "Sign in with HuggingFace" button that picks a capable model for you. Model selection is now global across all projects rather than remembered per project, it takes effect the moment you pick it, and Save and Reset decide whether a change is kept in your template.

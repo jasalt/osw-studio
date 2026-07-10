@@ -479,9 +479,12 @@ export function SkillsManager() {
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-muted-foreground">Show:</span>
                     <Button
-                      variant={showBuiltIn ? 'default' : 'outline'}
+                      variant="outline"
                       size="sm"
                       className="h-7 px-2 gap-1.5"
+                      // Active: mild orange fill + border (matches the enabled-skill card). Inline so it wins
+                      // over the outline variant's dark bg/border in both themes.
+                      style={showBuiltIn ? { backgroundColor: 'color-mix(in oklab, var(--primary) 5%, transparent)', borderColor: 'color-mix(in oklab, var(--primary) 30%, transparent)' } : undefined}
                       onClick={() => setShowBuiltIn(v => !v)}
                       aria-pressed={showBuiltIn}
                     >
@@ -489,9 +492,10 @@ export function SkillsManager() {
                       Built-in
                     </Button>
                     <Button
-                      variant={showCustom ? 'default' : 'outline'}
+                      variant="outline"
                       size="sm"
                       className="h-7 px-2 gap-1.5"
+                      style={showCustom ? { backgroundColor: 'color-mix(in oklab, var(--primary) 5%, transparent)', borderColor: 'color-mix(in oklab, var(--primary) 30%, transparent)' } : undefined}
                       onClick={() => setShowCustom(v => !v)}
                       aria-pressed={showCustom}
                     >

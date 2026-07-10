@@ -221,11 +221,7 @@ export function DeploymentCard({
               <Button
                 variant={hasPendingChanges ? undefined : 'outline'}
                 size="sm"
-                className={
-                  hasPendingChanges
-                    ? 'flex-1 !bg-orange-500 hover:!bg-orange-600 !text-white'
-                    : 'flex-1'
-                }
+                className="flex-1"
                 onClick={() => onPublish(deployment.id)}
                 disabled={isPublishing}
               >

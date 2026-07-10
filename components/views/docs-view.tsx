@@ -26,20 +26,28 @@ function DocsViewContent() {
   const tocItems = useTableOfContents(content);
 
   useEffect(() => {
+    // Guard against out-of-order responses: if the user switches docs while a fetch is
+    // in flight, an earlier request resolving later must not overwrite the newer doc's
+    // content (which showed the wrong doc's body under the current title).
+    let cancelled = false;
+
     async function loadDoc() {
       setLoading(true);
       setError(null);
 
       try {
         const response = await fetch(`/api/docs/${selectedDoc.file}`);
+        if (cancelled) return;
         if (!response.ok) {
           throw new Error(`Failed to load document: ${response.statusText}`);
         }
         const text = await response.text();
+        if (cancelled) return;
         setContent(text);
 
         // Scroll to hash if present in URL
         setTimeout(() => {
+          if (cancelled) return;
           if (window.location.hash) {
             const element = document.getElementById(window.location.hash.slice(1));
             if (element) {
@@ -54,15 +62,18 @@ function DocsViewContent() {
           }
         }, 100);
       } catch (err) {
+        if (cancelled) return;
         console.error('Failed to load doc:', err);
         setError(err instanceof Error ? err.message : 'Failed to load document');
         setContent('');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     loadDoc();
+
+    return () => { cancelled = true; };
   }, [selectedDoc]);
 
   // Handle TOC item clicks
