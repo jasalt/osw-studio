@@ -155,6 +155,13 @@ export class MultiAgentOrchestrator {
   private permissionMode?: PermissionMode;
   private permissionOverrides?: Record<string, GateDecision>;
 
+  /** Conversation-scoped baseline for the read-before-edit guard:
+   *  path → updatedAt epoch-ms at the agent's last full read or overwrite. Lives
+   *  on the orchestrator so it survives across messages (the instance is reused
+   *  via persistedInstance), letting a task-1 write be compared against a task-2
+   *  overwrite to detect edits the user made in between. */
+  private readVersions = new Map<string, number>();
+
   private stopped = false;
   private abortController = new AbortController();
   private pauseResolve: (() => void) | null = null;
@@ -597,6 +604,7 @@ export class MultiAgentOrchestrator {
         onApprovalNeeded: this.onApprovalNeeded,
         permissionMode: this.permissionMode,
         permissionOverrides: this.permissionOverrides,
+        readVersions: this.readVersions,
       });
       executor.onAfterExecute = async (toolCall, result, durationMs) => {
         track('tool_call', {

@@ -9,6 +9,7 @@
  */
 
 import { oauthLoginUrl, oauthHandleRedirectIfPresent } from '@huggingface/hub';
+import { configManager } from '@/lib/config/storage';
 
 export interface HFCapabilities {
   oauthAvailable: boolean;
@@ -50,3 +51,19 @@ export async function loginHF(clientId: string, scopes: string): Promise<void> {
  * Call on page load — returns OAuthResult if we just came back from HF auth, false otherwise.
  */
 export { oauthHandleRedirectIfPresent };
+
+export const PUBLISH_SCOPE = 'contribute-repos';
+
+/**
+ * Whether the stored HF connection is allowed to create/push Spaces.
+ * - OAuth tokens record their granted `scopes`; they must include the publish scope, otherwise the
+ *   caller should prompt a re-consent (the scopes are known, and it's missing).
+ * - Pasted tokens record no `scopes`; we can't introspect them, so we assume the token carries the
+ *   needed permission and let a 403 at publish time surface if it doesn't.
+ */
+export function hasPublishScope(): boolean {
+  const auth = configManager.getHFAuth();
+  if (!auth?.access_token) return false;
+  if (!auth.scopes) return true;
+  return auth.scopes.split(/\s+/).includes(PUBLISH_SCOPE);
+}

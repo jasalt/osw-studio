@@ -15,6 +15,10 @@ export interface ShellContext {
   /** Generates an image from the project's image model. Absent when no image
    *  model is configured for the project. Injected from ToolExecutionContext. */
   generateImage?: (prompt: string, opts: { aspectRatio?: string; imageSize?: string }) => Promise<{ base64: string; mimeType: string }>;
+  /** Conversation-scoped map of path → updatedAt epoch-ms at the agent's last full
+   *  read (or whole-chunk write) of that file. Powers the read-before-edit staleness
+   *  guard. Absent for direct/test callers, which disables the guard. */
+  readVersions?: Map<string, number>;
 }
 
 type ShellResult = {
@@ -112,7 +116,7 @@ function extractRedirect(args: string[]): { cleanArgs: string[]; redirect?: { fi
 /**
  * Apply redirect: write stdout to file (> = overwrite, >> = append)
  */
-async function applyRedirect(
+async function writeRedirect(
   vfs: VirtualFileSystem,
   projectId: string,
   content: string,
@@ -144,6 +148,102 @@ async function applyRedirect(
   } catch (e: any) {
     return { stdout: '', stderr: `redirect: ${path}: ${e?.message || 'cannot write file'}`, exitCode: 1 };
   }
+}
+
+// ─── read-before-edit staleness guard ───────────────────────────────────────
+// Prevents a whole-chunk write from silently clobbering a file that changed since
+// the agent last saw it — e.g. edited by the user between tasks while the agent
+// works from stale conversation history. "Whole-chunk" = full-file overwrites
+// (`cat >`, any `> file`) and `ss --entity` (replaces an entire entity with
+// agent-supplied text); these carry stale content and can revert a user edit.
+// Surgical writes (literal/fuzzy/regex `ss`, `sed`) are self-protecting — they
+// key on the content itself, so a user edit either misses the search (fail-safe)
+// or is spliced around — and are NOT gated, only tracked. Keyed on updatedAt
+// epoch-ms; disabled when no readVersions map is present (direct/test callers).
+//
+// KNOWN GAP: a broad-regex `ss` (e.g. `<h1>.*</h1>`) is not truly self-protecting —
+// a wide pattern still matches after a user edit — yet regex is ungated (only
+// --entity is). Left ungated to avoid blocking the common specific-pattern case;
+// characterized in cli-shell-overwrite-guard.test.ts ("KNOWN GAP: broad-regex ss").
+
+function versionMs(file: { updatedAt: Date }): number {
+  return new Date(file.updatedAt).getTime();
+}
+
+/** Record that the agent now has a current, full view of `path` at its version. */
+function recordFileVersion(ctx: ShellContext | undefined, path: string, file: { updatedAt: Date }): void {
+  ctx?.readVersions?.set(path, versionMs(file));
+}
+
+/**
+ * Decide whether a write to `path` may proceed and whether it should update the
+ * baseline afterward.
+ *
+ * - `block`: non-null only for a `wholeChunk` write when the agent has a baseline
+ *   for the file AND it changed since — a confirmed conflict. Surgical writes
+ *   (wholeChunk=false) never block. New files, matching baselines, and untracked
+ *   callers never block.
+ * - `wasCurrent`: true when the agent's view is accurate (no baseline yet, matching
+ *   baseline, or new file). Only then should a successful write record the new
+ *   version — otherwise a surgical edit applied to a stale file would "launder" the
+ *   baseline and let a later whole-chunk write slip past the guard.
+ */
+async function checkWrite(
+  vfs: VirtualFileSystem,
+  projectId: string,
+  ctx: ShellContext | undefined,
+  path: string,
+  wholeChunk: boolean,
+): Promise<{ block: ShellResult | null; wasCurrent: boolean }> {
+  if (!ctx?.readVersions) return { block: null, wasCurrent: false };
+  const known = ctx.readVersions.get(path);
+  let current: { updatedAt: Date };
+  try {
+    current = await vfs.readFile(projectId, path);
+  } catch {
+    return { block: null, wasCurrent: true }; // new file — the agent's write defines it
+  }
+  const cur = versionMs(current);
+  const wasCurrent = known === undefined || known === cur;
+  if (wholeChunk && known !== undefined && known !== cur) {
+    return {
+      block: {
+        stdout: '',
+        stderr: `refusing to edit ${path}: it changed since you last read it (edited outside this conversation). Run \`cat ${path}\` to see the current content, then redo your edit.`,
+        exitCode: 1,
+      },
+      wasCurrent,
+    };
+  }
+  return { block: null, wasCurrent };
+}
+
+/**
+ * Like applyRedirect, but for full-file overwrites (`>`, not `>>`) it first runs
+ * the whole-chunk staleness guard and, on success, records the new version so the
+ * agent can overwrite its own write again without re-reading.
+ */
+async function applyRedirectGuarded(
+  vfs: VirtualFileSystem,
+  projectId: string,
+  content: string,
+  redirect: { file: string; append: boolean },
+  ctx: ShellContext | undefined,
+): Promise<ShellResult> {
+  const path = normalizePath(redirect.file);
+  let wasCurrent = false;
+  if (!redirect.append && path) {
+    const chk = await checkWrite(vfs, projectId, ctx, path, true);
+    if (chk.block) return chk.block;
+    wasCurrent = chk.wasCurrent;
+  }
+  const result = await writeRedirect(vfs, projectId, content, redirect);
+  if (result.exitCode === 0 && !redirect.append && path && wasCurrent) {
+    try {
+      recordFileVersion(ctx, path, await vfs.readFile(projectId, path));
+    } catch { /* best-effort version record */ }
+  }
+  return result;
 }
 
 /**
@@ -974,7 +1074,7 @@ async function vfsShellExecuteSingle(
           }
           const lsOutput = lines.join('\n');
           const lsResult: ShellResult = { stdout: truncate(lsOutput), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, lsResult.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, lsResult.stdout, redirect, ctx);
           return lsResult;
         }
 
@@ -998,7 +1098,7 @@ async function vfsShellExecuteSingle(
             : filtered.map((e: any) => e.path).join('\n');
         }
         const lsResult: ShellResult = { stdout: truncate(lsOutput), stderr: '', exitCode: 0 };
-        if (redirect) return applyRedirect(vfs, projectId, lsResult.stdout, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, lsResult.stdout, redirect, ctx);
         return lsResult;
       }
       case 'tree': {
@@ -1117,7 +1217,7 @@ async function vfsShellExecuteSingle(
         renderNode(root, '', true, true);
 
         const treeResult: ShellResult = { stdout: truncate(lines.join('\n')), stderr: '', exitCode: 0 };
-        if (redirect) return applyRedirect(vfs, projectId, treeResult.stdout, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, treeResult.stdout, redirect, ctx);
         return treeResult;
       }
       case 'cat': {
@@ -1128,7 +1228,7 @@ async function vfsShellExecuteSingle(
         // If no file args but stdin is available, pass through stdin
         if (filePaths.length === 0 && stdin !== undefined) {
           const result: ShellResult = { stdout: truncate(stdin), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, result.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, result.stdout, redirect, ctx);
           return result;
         }
 
@@ -1179,6 +1279,9 @@ async function vfsShellExecuteSingle(
               } else {
                 outputs.push(file.content);
               }
+              // A full `cat` gives the agent a current, complete view of the file —
+              // this is what qualifies a later overwrite of it.
+              recordFileVersion(ctx, path, file);
             }
           } catch (error) {
             const errMsg = error instanceof Error ? error.message : String(error);
@@ -1191,7 +1294,7 @@ async function vfsShellExecuteSingle(
         const stderr = errorMessages.join('\n');
 
         const catResult: ShellResult = { stdout: truncate(stdout), stderr, exitCode: hadError ? 1 : 0 };
-        if (redirect && !hadError) return applyRedirect(vfs, projectId, catResult.stdout, redirect);
+        if (redirect && !hadError) return applyRedirectGuarded(vfs, projectId, catResult.stdout, redirect, ctx);
         return catResult;
       }
       case 'head': {
@@ -1216,7 +1319,7 @@ async function vfsShellExecuteSingle(
           const lines = stdin.split(/\r?\n/);
           const output = lines.slice(0, numLines).join('\n');
           const result: ShellResult = { stdout: truncate(output), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, result.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, result.stdout, redirect, ctx);
           return result;
         }
 
@@ -1232,7 +1335,7 @@ async function vfsShellExecuteSingle(
           const lines = file.content.split(/\r?\n/);
           const output = lines.slice(0, numLines).join('\n');
           const result: ShellResult = { stdout: truncate(output), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, result.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, result.stdout, redirect, ctx);
           return result;
         } catch (e: any) {
           return { stdout: '', stderr: `head: ${path}: ${e?.message || 'file not found'}`, exitCode: 1 };
@@ -1260,7 +1363,7 @@ async function vfsShellExecuteSingle(
           const lines = stdin.split(/\r?\n/);
           const output = lines.slice(-numLines).join('\n');
           const result: ShellResult = { stdout: truncate(output), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, result.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, result.stdout, redirect, ctx);
           return result;
         }
 
@@ -1276,7 +1379,7 @@ async function vfsShellExecuteSingle(
           const lines = file.content.split(/\r?\n/);
           const output = lines.slice(-numLines).join('\n');
           const result: ShellResult = { stdout: truncate(output), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, result.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, result.stdout, redirect, ctx);
           return result;
         } catch (e: any) {
           return { stdout: '', stderr: `tail: ${path}: ${e?.message || 'file not found'}`, exitCode: 1 };
@@ -1439,7 +1542,7 @@ Note: grep always searches recursively. rg (ripgrep) is also available.`,
           return { stdout: '', stderr: '', exitCode: 0 };
         }
         const grepResult: ShellResult = { stdout: truncate(output), stderr: '', exitCode: 0 };
-        if (redirect) return applyRedirect(vfs, projectId, grepResult.stdout, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, grepResult.stdout, redirect, ctx);
         return grepResult;
       }
       case 'rg': {
@@ -1563,7 +1666,7 @@ Tip: Use -C for balanced context. PATH defaults to / if omitted.`,
           return { stdout: '', stderr: '', exitCode: 0 };
         }
         const rgResult: ShellResult = { stdout: truncate(outLines.join('\n')), stderr: '', exitCode: 0 };
-        if (redirect) return applyRedirect(vfs, projectId, rgResult.stdout, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, rgResult.stdout, redirect, ctx);
         return rgResult;
       }
       case 'find': {
@@ -1618,7 +1721,7 @@ Tip: Use -C for balanced context. PATH defaults to / if omitted.`,
           .sort();
 
         const findResult: ShellResult = { stdout: truncate(res.join('\n')), stderr: '', exitCode: 0 };
-        if (redirect) return applyRedirect(vfs, projectId, findResult.stdout, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, findResult.stdout, redirect, ctx);
         return findResult;
       }
       case 'mkdir': {
@@ -1865,7 +1968,7 @@ Tip: Use -C for balanced context. PATH defaults to / if omitted.`,
         // suppressNewline: our shell doesn't auto-append newlines so it's effectively a no-op,
         // but the flag is consumed so it doesn't appear in output.
 
-        if (redirect) return applyRedirect(vfs, projectId, output, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, output, redirect, ctx);
         return { stdout: truncate(output), stderr: '', exitCode: 0 };
       }
       case 'sed': {
@@ -2146,7 +2249,11 @@ Examples:
             if (hasSubstitutions && substitutionCount === 0) {
               return { stdout: `(0 substitutions — pattern did not match any line in ${sedPath})`, stderr: '', exitCode: 0 };
             }
+            // sed is surgical (self-protecting): not gated, only tracked so the baseline
+            // stays accurate after the agent's own edit (but not when its view was stale).
+            const sedChk = await checkWrite(vfs, projectId, ctx, sedPath, false);
             await vfs.updateFile(projectId, sedPath, outputContent);
+            if (sedChk.wasCurrent) { try { recordFileVersion(ctx, sedPath, await vfs.readFile(projectId, sedPath)); } catch { /* best-effort version record */ } }
             const note = hasSubstitutions ? ` (${substitutionCount} substitution${substitutionCount !== 1 ? 's' : ''})` : '';
             return { stdout: note, stderr: '', exitCode: 0 };
           } catch (e: any) {
@@ -2155,7 +2262,7 @@ Examples:
         }
 
         // Output to stdout (redirect handled generically)
-        if (redirect) return applyRedirect(vfs, projectId, outputContent, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, outputContent, redirect, ctx);
         return { stdout: truncate(outputContent), stderr: '', exitCode: 0 };
       }
       case 'wc': {
@@ -2201,7 +2308,7 @@ Examples:
             return { stdout: '', stderr: 'wc: no input file or stdin', exitCode: 2 };
           }
           const wcOutput = wcFormatLine(wcCount(stdin));
-          if (redirect) return applyRedirect(vfs, projectId, wcOutput, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, wcOutput, redirect, ctx);
           return { stdout: truncate(wcOutput), stderr: '', exitCode: 0 };
         }
 
@@ -2234,7 +2341,7 @@ Examples:
         }
 
         const wcOutput = wcLines.join('\n');
-        if (redirect) return applyRedirect(vfs, projectId, wcOutput, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, wcOutput, redirect, ctx);
         return { stdout: truncate(wcOutput), stderr: '', exitCode: 0 };
       }
       case 'sort': {
@@ -2287,7 +2394,7 @@ Examples:
         if (sortFlags.u) lines = lines.filter((line, i, arr) => i === 0 || line !== arr[i - 1]);
 
         const sortOutput = lines.join('\n');
-        if (redirect) return applyRedirect(vfs, projectId, sortOutput, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, sortOutput, redirect, ctx);
         return { stdout: truncate(sortOutput), stderr: '', exitCode: 0 };
       }
       case 'uniq': {
@@ -2330,7 +2437,7 @@ Examples:
         }
 
         const uniqOutput = resultLines.join('\n');
-        if (redirect) return applyRedirect(vfs, projectId, uniqOutput, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, uniqOutput, redirect, ctx);
         return { stdout: truncate(uniqOutput), stderr: '', exitCode: 0 };
       }
       case 'tr': {
@@ -2375,7 +2482,7 @@ Examples:
         if (deleteMode) {
           const deleteChars = new Set(expandedSet1.split(''));
           const trOutput = stdin.split('').filter(ch => !deleteChars.has(ch)).join('');
-          if (redirect) return applyRedirect(vfs, projectId, trOutput, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, trOutput, redirect, ctx);
           return { stdout: truncate(trOutput), stderr: '', exitCode: 0 };
         }
 
@@ -2386,7 +2493,7 @@ Examples:
         }
 
         const trOutput = stdin.split('').map(ch => charMap.get(ch) ?? ch).join('');
-        if (redirect) return applyRedirect(vfs, projectId, trOutput, redirect);
+        if (redirect) return applyRedirectGuarded(vfs, projectId, trOutput, redirect, ctx);
         return { stdout: truncate(trOutput), stderr: '', exitCode: 0 };
       }
       case 'curl': {
@@ -2484,7 +2591,7 @@ Localhost URLs fetch compiled HTML from the preview engine; external URLs are fe
             // Headers only (-I / HEAD)
             if (curlFlags.head) {
               const headers = [`HTTP/1.1 ${data.status} OK`, `Content-Type: ${data.contentType}`, ''].join('\n');
-              if (redirect) return applyRedirect(vfs, projectId, headers, redirect);
+              if (redirect) return applyRedirectGuarded(vfs, projectId, headers, redirect, ctx);
               return { stdout: headers, stderr: '', exitCode: 0 };
             }
 
@@ -2499,7 +2606,7 @@ Localhost URLs fetch compiled HTML from the preview engine; external URLs are fe
               }
             }
             const curlResult: ShellResult = { stdout: truncate(out), stderr: '', exitCode: 0 };
-            if (redirect) return applyRedirect(vfs, projectId, curlResult.stdout, redirect);
+            if (redirect) return applyRedirectGuarded(vfs, projectId, curlResult.stdout, redirect, ctx);
             return curlResult;
           } catch (e: any) {
             return { stdout: '', stderr: `curl: request failed: ${e?.message || 'network error'}`, exitCode: 1 };
@@ -2562,7 +2669,7 @@ Localhost URLs fetch compiled HTML from the preview engine; external URLs are fe
               ''
             ].join('\n');
             const headResult: ShellResult = { stdout: headers, stderr: '', exitCode: 0 };
-            if (redirect) return applyRedirect(vfs, projectId, headResult.stdout, redirect);
+            if (redirect) return applyRedirectGuarded(vfs, projectId, headResult.stdout, redirect, ctx);
             return headResult;
           }
 
@@ -2580,7 +2687,7 @@ Localhost URLs fetch compiled HTML from the preview engine; external URLs are fe
 
           // Default: return compiled HTML
           const curlResult: ShellResult = { stdout: truncate(content), stderr: '', exitCode: 0 };
-          if (redirect) return applyRedirect(vfs, projectId, curlResult.stdout, redirect);
+          if (redirect) return applyRedirectGuarded(vfs, projectId, curlResult.stdout, redirect, ctx);
           return curlResult;
         } catch (e: any) {
           // Compilation errors from Handlebars are still useful for the LLM
@@ -3057,6 +3164,12 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
           return { stdout: '', stderr: `ss: ${ssPath}: ${e?.message || 'file not found'}`, exitCode: 1 };
         }
 
+        // Only --entity is a whole-chunk replace (keys on a selector, replaces the whole
+        // entity with agent-supplied text) — gate it. Literal/fuzzy/regex are surgical and
+        // self-protecting, so they aren't blocked, only tracked for baseline accuracy.
+        const ssChk = await checkWrite(vfs, projectId, ctx, ssPath, ssMode === 'entity');
+        if (ssChk.block) return ssChk.block;
+
         let ssResult: string;
 
         switch (ssMode) {
@@ -3117,9 +3230,9 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
           }
         }
 
-        // Write result
         try {
           await vfs.updateFile(projectId, ssPath, ssResult);
+          if (ssChk.wasCurrent) { try { recordFileVersion(ctx, ssPath, await vfs.readFile(projectId, ssPath)); } catch { /* best-effort version record */ } }
           return { stdout: `(1 replacement in ${ssPath})`, stderr: '', exitCode: 0 };
         } catch (e: any) {
           return { stdout: '', stderr: `ss: ${ssPath}: ${e?.message || 'cannot write file'}`, exitCode: 1 };

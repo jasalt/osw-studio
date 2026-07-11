@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { vfs } from '@/lib/vfs';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SettingsPanel } from '@/components/settings';
 import { FunctionsManager } from '@/components/database-manager/functions-manager';
 import { ServerFunctionsManager } from '@/components/database-manager/server-functions-manager';
 import { SecretsManager } from '@/components/database-manager/secrets-manager';
 import { ScheduledFunctionsManager } from '@/components/database-manager/scheduled-functions-manager';
-import { Code2, Wrench, Key, Clock, Lock, Settings2, PowerOff, Database, AlertTriangle } from 'lucide-react';
+import { Code2, Wrench, Key, Clock, Lock, Settings, Settings2, PowerOff, Database, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
@@ -369,8 +370,97 @@ function GeneralTab({ project, onProjectUpdate }: { project: Project; onProjectU
   );
 }
 
+interface TabDef {
+  value: string;
+  icon: React.ReactNode;
+  label: string;
+}
+
+/**
+ * Renders the settings tabs as a normal tab row, collapsing to a Select dropdown when the row
+ * would not fit the available width (measured with a ResizeObserver against a hidden natural-width
+ * copy of the tabs). Must be rendered inside a <Tabs> — both branches drive the same active value.
+ */
+function ResponsiveTabBar({
+  tabs,
+  activeTab,
+  onChange,
+}: {
+  tabs: TabDef[];
+  activeTab: string;
+  onChange: (v: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const c = containerRef.current;
+      const m = measureRef.current;
+      if (!c || !m) return;
+      // +8px buffer for rounding / the tab row's own gaps
+      setCollapsed(m.scrollWidth + 8 > c.clientWidth);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [tabs]);
+
+  const active = tabs.find((t) => t.value === activeTab) ?? tabs[0];
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      {/* Hidden measurer — natural width of the tabs at their content size. */}
+      <div
+        ref={measureRef}
+        aria-hidden
+        className="pointer-events-none invisible absolute left-0 top-0 flex whitespace-nowrap"
+      >
+        {tabs.map((t) => (
+          <span key={t.value} className="flex items-center gap-1 px-3 py-1.5 text-xs">
+            {t.icon}
+            {t.label}
+          </span>
+        ))}
+      </div>
+
+      {collapsed ? (
+        <Select value={activeTab} onValueChange={onChange}>
+          <SelectTrigger className="w-full">
+            <span className="flex items-center gap-1.5 text-xs">
+              {active?.icon}
+              {active?.label}
+            </span>
+          </SelectTrigger>
+          <SelectContent>
+            {tabs.map((t) => (
+              <SelectItem key={t.value} value={t.value}>
+                <span className="flex items-center gap-1.5">
+                  {t.icon}
+                  {t.label}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <TabsList className="flex w-full">
+          {tabs.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} className="flex-1 flex items-center gap-1 text-xs">
+              {t.icon}
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      )}
+    </div>
+  );
+}
+
 export function ProjectSettingsPanel({ project, onProjectUpdate, enabled, workspaceId }: ProjectSettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState('settings');
   const isServerMode = process.env.NEXT_PUBLIC_SERVER_MODE === 'true';
 
   const functionsProvider = useMemo(() => createFunctionsProvider(project.id), [project.id]);
@@ -382,48 +472,29 @@ export function ProjectSettingsPanel({ project, onProjectUpdate, enabled, worksp
   // fire backend_feature_enabled on the empty -> has-schema transition.
   const hadDbSchemaRef = useRef(!!getProjectSchema(project.id));
 
-  const backendTabTrigger = (value: string, icon: React.ReactNode, label: string) => (
-    <TabsTrigger
-      value={value}
-      className="flex items-center gap-1 text-xs"
-    >
-      {icon}
-      {label}
-    </TabsTrigger>
-  );
+  const tabs: TabDef[] = [
+    { value: 'settings', icon: <Settings className="h-3 w-3" />, label: 'General' },
+    { value: 'general', icon: <Settings2 className="h-3 w-3" />, label: 'Project' },
+    { value: 'functions', icon: <Code2 className="h-3 w-3" />, label: 'Functions' },
+    { value: 'helpers', icon: <Wrench className="h-3 w-3" />, label: 'Helpers' },
+    { value: 'secrets', icon: <Key className="h-3 w-3" />, label: 'Secrets' },
+    { value: 'schedules', icon: <Clock className="h-3 w-3" />, label: 'Schedules' },
+    { value: 'schema', icon: <Database className="h-3 w-3" />, label: 'Schema' },
+  ];
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-hidden p-3">
+      <div className="flex-1 overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="grid w-full grid-cols-6">
-            <TabsTrigger value="general" className="flex items-center gap-1 text-xs">
-              <Settings2 className="h-3 w-3" />
-              General
-            </TabsTrigger>
-            {backendTabTrigger('functions', <Code2 className="h-3 w-3" />, 'Functions')}
-            {backendTabTrigger('helpers', <Wrench className="h-3 w-3" />, 'Helpers')}
-            {backendTabTrigger('secrets', <Key className="h-3 w-3" />, 'Secrets')}
-            {backendTabTrigger('schedules', <Clock className="h-3 w-3" />, 'Schedules')}
-            {backendTabTrigger('schema', <Database className="h-3 w-3" />, 'Schema')}
-          </TabsList>
+          <ResponsiveTabBar tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
-          {!isServerMode && (
-            <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
-              <Lock className="h-3 w-3 shrink-0" />
-              Backend features require Server Mode.{' '}
-              <a
-                href="https://github.com/o-stahl/osw-studio"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                Learn more
-              </a>
-            </p>
-          )}
-
-          <div className="flex-1 overflow-hidden mt-3">
+          {/* Framed content area — every tab renders its content inside this one wrapper. */}
+          <div className="flex-1 overflow-hidden mt-3 rounded-lg border border-border bg-muted/20">
+            <TabsContent value="settings" className="h-full m-0 overflow-hidden">
+              <div className="h-full flex flex-col overflow-hidden p-3">
+                <SettingsPanel hideHeader hideFooter />
+              </div>
+            </TabsContent>
             <TabsContent value="general" className="h-full m-0 overflow-auto">
               <GeneralTab project={project} onProjectUpdate={onProjectUpdate} />
             </TabsContent>
@@ -531,8 +602,8 @@ export function ProjectSettingsModal({ project, isOpen, onClose, onProjectUpdate
           <div className="flex items-center justify-between pr-6">
             <div>
               <DialogTitle className="flex items-center gap-2">
-                <Settings2 className="h-4 w-4" />
-                Project Settings
+                <Settings className="h-4 w-4" />
+                Settings
               </DialogTitle>
               <p className="text-sm text-muted-foreground mt-1">
                 {project.name}

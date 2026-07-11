@@ -6,6 +6,24 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.86.0 - Deploy (2026-07-12)
+
+You can now publish a project as a static Hugging Face Space under your own account, straight from the workspace and live as soon as it finishes, with no manual export. It's one of three targets behind a new Deploy button: a Hugging Face Space, this OSW Studio instance in Server Mode, or a ZIP you can upload anywhere. The separate Project and settings buttons in the workspace header have also been merged into a single Settings dialog.
+
+### Deploy
+- **Hugging Face Space**: With HuggingFace connected, publish a project as a static Space under your account, live as soon as it finishes; re-deploying updates the same Space, and each one credits OSW Studio with an optional footer you can turn off
+- **Deploy button**: Pick where a project goes — a Hugging Face Space, this OSW Studio instance in Server Mode, or a ZIP — without the manual export step, with a link to the docs for each target
+- **Connect with a token**: Outside a HuggingFace Space, where the one-click sign-in isn't available, connect HuggingFace by pasting a write-access token under Connections — enough to publish a Space from a self-hosted or local instance
+
+### Interface
+- **Consolidated Settings**: The header's Project and settings buttons are now a single Settings dialog with tabs, which collapse into a dropdown when they don't fit
+
+### Fixes
+- **Broken images surface as errors**: Images that fail to load now show up as console errors the agent can catch and fix, instead of a silent blank; on failure it falls back to a reliable placeholder
+- **Your edits aren't reverted**: If you change a file between tasks, the agent won't overwrite it (or replace a whole element) from an older, remembered version — it re-reads your current version first
+
+---
+
 ## v1.85.0 - Neutral Interface & Fixes (2026-07-11)
 
 This release changes how the interface uses color. Primary buttons and the active items in the sidebars used to be filled solid orange; now they use a neutral treatment, and orange is kept for accents and highlights. Alongside that are a few fixes: the "Sign in with HuggingFace" button no longer takes over the chat for people who were already connected, the dashboard cards render correctly in light mode, and the docs pages behave when you switch between them quickly.

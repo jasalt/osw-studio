@@ -23,6 +23,29 @@ Most platforms offer free tiers for static sites, automatic HTTPS, and custom do
 
 ---
 
+## Deploy from OSW Studio
+
+When available, the workspace header has a **Deploy** button that publishes the current project directly, without a manual export. It opens a dialog where you pick a **deployment target**. Only static-serveable projects can be deployed this way (Python and Lua projects run in a terminal and can't be served as a static site — use ZIP export instead).
+
+### Hugging Face Space
+
+Publishes the project as a **static Hugging Face Space** under your own HuggingFace account. Available when HuggingFace is connected (on a HuggingFace Space you can "Sign in with HuggingFace"; elsewhere, paste an HF access token with write access in Settings → Connections).
+
+- Pick a name (suggested from the project), an optional description, and public/private.
+- The Space is **live as soon as it finishes** — no separate step. You get the link in the dialog.
+- Re-deploying updates the same Space; you can also publish it as a new Space.
+- Each published Space's README credits OSW Studio, and the site gets an optional "Built with OSW Studio" footer you can turn off.
+
+### Open Source Web Studio (this instance)
+
+Available in **Server Mode**. Publishes to this OSW Studio instance as a managed **deployment** with its own publish settings, custom domain, and analytics. Selecting this target takes you to the **Deployments** page to create, enable, and publish. See [Server Mode](?doc=server-mode) and [Deployment Publishing](?doc=site-publishing) for details.
+
+### Download as ZIP
+
+Always available, for every project type. Downloads the compiled project as a ZIP you can upload to any static host — Netlify, GitHub Pages, Cloudflare Pages, Vercel, or a traditional web host. This is the same export described below, offered directly from the Deploy dialog.
+
+---
+
 ## Export Your Project
 
 ### ZIP Export (For Deployment)

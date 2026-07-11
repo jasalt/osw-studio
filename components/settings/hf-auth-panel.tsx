@@ -9,6 +9,7 @@ import { ConnectionBadge } from '@/components/settings/connection-badge';
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
 import { validateApiKey } from '@/lib/llm/llm-client';
+import { whoAmI } from '@huggingface/hub';
 import { checkHFCapabilities, loginHF } from '@/lib/auth/hf-auth';
 import type { HFCapabilities } from '@/lib/auth/hf-auth';
 import { track } from '@/lib/telemetry';
@@ -107,7 +108,14 @@ export function HFAuthPanel({ onAuthChange }: HFAuthPanelProps) {
     try {
       const isValid = await validateApiKey(key, 'huggingface');
       if (isValid) {
-        configManager.setHFAuth({ access_token: key });
+        // Capture the username so token-paste connections can also deploy to a Space
+        // (which needs <username>/<slug>). Best-effort: connection still succeeds if this fails.
+        let username: string | undefined;
+        try {
+          const me = await whoAmI({ accessToken: key });
+          username = me?.name;
+        } catch { /* leave undefined */ }
+        configManager.setHFAuth({ access_token: key, username });
         setIsConnected(true);
         setTokenInput('');
         toast.success('Connected to HuggingFace');

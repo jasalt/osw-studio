@@ -15,8 +15,7 @@ import { StorageAdapter } from './adapters/types';
 import { createClientAdapter } from './adapters/factory';
 import { IndexedDBAdapter } from './adapters/indexeddb-adapter';
 import { getRuntimeConfig } from '@/lib/runtimes/registry';
-import { stripPreviewScripts } from '@/lib/preview/strip-preview-scripts';
-import { replaceBlobUrlsWithPaths } from '@/lib/publishing/rewrite-asset-urls';
+import { compileStaticSite } from '@/lib/publishing/compile-static-site';
 import { arrayBufferToBase64, base64ToArrayBuffer } from './binary-encoding';
 
 /**
@@ -1867,40 +1866,11 @@ export class VirtualFileSystem {
         return zip.generateAsync({ type: 'blob' });
       }
 
-      // Create VirtualServer instance and compile the project
-      const { VirtualServer } = await import('@/lib/preview/virtual-server');
-      const server = new VirtualServer(this, projectId, { runtime: project?.settings?.runtime });
-      const compiledProject = await server.compileProject();
-
-      // compileProject() rewrites internal asset references into instance-local
-      // blob: URLs for the live preview. Build a reverse map so the export can
-      // restore the real root-relative paths — otherwise the exported HTML/CSS
-      // points at blob URLs from the machine that ran the export and fails to
-      // load anywhere else.
-      const blobUrlToPath = new Map<string, string>();
-      for (const [filePath, blobUrl] of compiledProject.blobUrls) {
-        blobUrlToPath.set(blobUrl, filePath);
-      }
-
-      // Add compiled files to ZIP, filtering out template-related files
-      for (const file of compiledProject.files) {
-        const zipPath = file.path.startsWith('/') ? file.path.slice(1) : file.path;
-
-        // Skip template files, data files, and template directories
-        if (this.shouldExcludeFromExport(file.path)) {
-          continue;
-        }
-
-        let content = file.content;
-        if (typeof content === 'string') {
-          content = replaceBlobUrlsWithPaths(content, blobUrlToPath);
-          // Strip the preview-only instrumentation (VFS interceptor, console capture)
-          if (file.path.endsWith('.html')) {
-            content = stripPreviewScripts(content);
-          }
-        }
-
-        zip.file(zipPath, content);
+      // Compile the project into the static files a static host would serve.
+      // Shared with the HuggingFace Space publish path.
+      const compiled = await compileStaticSite(this, projectId);
+      for (const file of compiled.files) {
+        zip.file(file.path, file.content);
       }
 
       // For bundled projects: also include raw source files (.tsx/.ts/.jsx)
@@ -1939,9 +1909,6 @@ export class VirtualFileSystem {
           `import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\nexport default defineConfig({ plugins: [react()] });\n`
         );
       }
-
-      // Clean up VirtualServer resources
-      server.cleanupBlobUrls();
 
     } catch (error) {
       logger.warn('Failed to compile Handlebars templates during export, falling back to raw files:', error);
@@ -1995,6 +1962,15 @@ export class VirtualFileSystem {
     }
 
     return false;
+  }
+
+  /**
+   * Public wrapper around {@link shouldExcludeFromExport} for callers outside
+   * this class (e.g. lib/publishing/compile-static-site.ts) that need to
+   * apply the same export-exclusion rules.
+   */
+  shouldExcludeFromExportPublic(filePath: string): boolean {
+    return this.shouldExcludeFromExport(filePath);
   }
 
   async duplicateProject(projectId: string): Promise<Project> {

@@ -786,6 +786,21 @@ export class VirtualServer {
     queue.push({ type: 'console', level: 'error', args: ['Unhandled rejection: ' + msg] });
     if (!timer) timer = setTimeout(flush, 100);
   });
+
+  // Capture failed resource loads (images, scripts, stylesheets). These fire an
+  // 'error' event on the element that does NOT bubble to window.onerror, so listen
+  // in the capture phase. Cross-origin failures (e.g. broken Unsplash URLs) report here.
+  window.addEventListener('error', function(e) {
+    var t = e.target;
+    if (!t || t === window) return;
+    var tag = t.tagName;
+    if (tag === 'IMG' || tag === 'SCRIPT' || tag === 'LINK') {
+      var url = t.src || t.href || '';
+      if (!url) return;
+      queue.push({ type: 'console', level: 'error', args: ['Failed to load ' + tag.toLowerCase() + ': ' + url] });
+      if (!timer) timer = setTimeout(flush, 100);
+    }
+  }, true);
 })();
 </script>`;
 

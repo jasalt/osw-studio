@@ -31,6 +31,10 @@ export interface OswsToolExecutorConfig {
   onApprovalNeeded?: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
   permissionMode?: PermissionMode;
   permissionOverrides?: Record<string, GateDecision>;
+  /** Conversation-scoped file-version map for the read-before-edit guard.
+   *  Owned by the orchestrator (persists across messages) and shared with child
+   *  executors, so a baseline recorded in one task survives into the next. */
+  readVersions?: Map<string, number>;
 }
 
 export class OswsToolExecutor implements ToolExecutor {
@@ -101,6 +105,7 @@ export class OswsToolExecutor implements ToolExecutor {
       onApprovalNeeded: this.config.onApprovalNeeded,
       permissionMode: this.config.permissionMode,
       permissionOverrides: this.config.permissionOverrides,
+      readVersions: this.config.readVersions,
     };
 
     try {

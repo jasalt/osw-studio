@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.86.0 - 2026-07-12
+
+### Deploy
+- **Publish to a Hugging Face Space**: With HuggingFace connected, a new Deploy button in the workspace header lets you publish a project as a static Space under your own account, live as soon as it finishes. Pick a name (suggested from the project), an optional description, and public or private. Re-deploying updates the same Space, or you can publish it as a new one. Each Space's README credits OSW Studio, and the site gets an optional "Built with OSW Studio" footer you can turn off. Python and Lua projects run in a terminal and can't be served as a static Space; use ZIP export for those.
+- **Deploy target picker**: The Deploy button opens a picker with three targets: a Hugging Face Space, this OSW Studio instance (Server Mode), or a ZIP download you can upload to any static host. Targets that aren't available in your setup are shown with how to enable them, and each links to the deployment docs.
+- **Connect HuggingFace with a token**: Outside the HuggingFace Space demo, where the one-click sign-in isn't available, you can connect HuggingFace by pasting an access token with write access under Connections. This will enable publishing a Space from a self-hosted or local instance.
+
+### UI
+- **Consolidated Settings**: The workspace header's separate Project and settings buttons are now a single Settings button that opens one dialog with tabs for your general preferences (app settings, cost tracking, permissions) and the project's own settings and backend features. When the tabs don't fit the width, they collapse into a dropdown.
+
+### Fixes
+- **Broken images are caught instead of silently blank**: When a generated page references an image (or script or stylesheet) that fails to load — common with fabricated stock-photo URLs — it now surfaces as a console error the agent can see and fix, rather than leaving a blank spot it assumes is working. On a load failure the agent falls back to a reliable placeholder image.
+- **Manual edits are no longer reverted**: If you edit and save a file between tasks, the agent can no longer silently revert it by rewriting the whole file (or replacing a whole element) from an older version held in its conversation history — when it detects the file changed under it, it's prompted to re-read your current version and reconcile instead. Surgical edits that leave your changes in place still work, and files it hasn't changed are unaffected, so it never interrupts normal writing.
+
 ## v1.85.0 - 2026-07-11
 
 ### Fixes

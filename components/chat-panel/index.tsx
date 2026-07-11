@@ -895,7 +895,7 @@ export function ChatPanel({
           </div>
         </div>
         <div
-          className={`bg-card border rounded-lg shadow-sm overflow-hidden transition-all rounded-tl-none ${
+          className={`bg-card border shadow-sm overflow-hidden transition-all ${
             isDragging ? 'border-primary border-2 bg-primary/5' : 'border-border'
           }`}
           onDrop={handleDrop}
@@ -1045,14 +1045,14 @@ export function ChatPanel({
                    default unconnected behavior). Not wrapped in the model-picker
                    Popover, since it has its own two actions. */
                 <div
-                  className="flex items-center h-7 rounded-md overflow-hidden ring-2 ring-primary/70 animate-ring-opacity border border-primary"
+                  className="flex items-center h-7 rounded-full overflow-hidden bg-background dark:bg-input/30 border border-primary ring-2 ring-primary/70 animate-ring-opacity"
                   data-tour-id="provider-settings-trigger"
                 >
                   <button
                     type="button"
                     onClick={handleHFSignIn}
                     aria-label="Sign in with HuggingFace"
-                    className="flex items-center gap-1.5 h-full px-2 bg-orange-500 text-white text-xs font-medium"
+                    className="flex items-center gap-1.5 h-full px-2 text-foreground text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-input/50"
                   >
                     <LogIn className="h-3.5 w-3.5" />
                     Sign in with HuggingFace
@@ -1061,9 +1061,9 @@ export function ChatPanel({
                     type="button"
                     onClick={() => openProvidersManage('connections')}
                     aria-label="Connection options"
-                    className="h-full px-1.5 bg-zinc-800 text-white border-l border-white/20 flex items-center"
+                    className="h-full px-1.5 border-l border-border text-foreground transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-input/50 flex items-center group/chev"
                   >
-                    <ChevronUp className="h-3.5 w-3.5" />
+                    <ChevronUp className="h-3.5 w-3.5 transition-transform group-hover/chev:-translate-y-0.5" />
                   </button>
                 </div>
               ) : (
@@ -1089,8 +1089,10 @@ export function ChatPanel({
                     <span className="flex items-center h-full px-2">
                       {providerReady ? getModelDisplayName(effectiveAgentModel) : 'Select provider'}
                     </span>
-                    <span className="flex items-center h-full px-1.5 border-l border-border">
-                      {showMobileSettings ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                    <span className="flex items-center h-full px-1.5 border-l border-border group/chev">
+                      {showMobileSettings
+                        ? <ChevronDown className="h-3 w-3 transition-transform group-hover/chev:translate-y-0.5" />
+                        : <ChevronUp className="h-3 w-3 transition-transform group-hover/chev:-translate-y-0.5" />}
                     </span>
                   </Button>
                 </PopoverTrigger>
@@ -1188,8 +1190,10 @@ export function ChatPanel({
                           <ActiveIcon className={`h-3 w-3 ${active.iconColor}`} />
                           {active.label}
                         </span>
-                        <span className="flex items-center h-full px-1.5 border-l border-border">
-                          {showModeMenu ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                        <span className="flex items-center h-full px-1.5 border-l border-border group/chev">
+                          {showModeMenu
+                            ? <ChevronDown className="h-3 w-3 transition-transform group-hover/chev:translate-y-0.5" />
+                            : <ChevronUp className="h-3 w-3 transition-transform group-hover/chev:-translate-y-0.5" />}
                         </span>
                       </Button>
                     </PopoverTrigger>

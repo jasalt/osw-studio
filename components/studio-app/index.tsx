@@ -106,6 +106,7 @@ function StudioInner() {
           configManager.setHFAuth({
             access_token: oauthResult.accessToken,
             username: username || undefined,
+            scopes: oauthResult.scope,
           });
           toast.success(`Connected to HuggingFace${username ? ` as ${username}` : ''}`);
           track('connection_added', { provider: 'huggingface' });

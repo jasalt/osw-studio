@@ -45,8 +45,10 @@ export function PermissionModeSelector() {
                   <ActiveIcon className="h-3 w-3" />
                   {MODE_CONFIG[mode].label}
                 </span>
-                <span className="flex items-center h-full px-1.5 bg-muted border-l border-border">
-                  {open ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+                <span className="flex items-center h-full px-1.5 border-l border-border group/chev">
+                  {open
+                    ? <ChevronDown className="h-3 w-3 transition-transform group-hover/chev:translate-y-0.5" />
+                    : <ChevronUp className="h-3 w-3 transition-transform group-hover/chev:-translate-y-0.5" />}
                 </span>
               </Button>
             </PopoverTrigger>

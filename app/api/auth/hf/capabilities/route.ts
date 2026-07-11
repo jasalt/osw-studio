@@ -6,7 +6,7 @@ export async function GET() {
     oauthAvailable: !!process.env.OAUTH_CLIENT_ID,
     // OAuth client IDs are public by design — they're visible in the auth URL
     clientId: process.env.OAUTH_CLIENT_ID || null,
-    scopes: process.env.OAUTH_SCOPES || 'openid profile inference-api',
+    scopes: process.env.OAUTH_SCOPES || 'openid profile inference-api contribute-repos',
     // Codex uses HttpOnly cookies for refresh tokens — blocked on HF Spaces (iframe/proxy)
     codexAvailable: !isHFSpaces,
   });

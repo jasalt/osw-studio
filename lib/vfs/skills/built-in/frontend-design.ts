@@ -97,6 +97,7 @@ When using stock photography (Unsplash URLs work without API keys: \`https://ima
 - All images: \`object-fit: cover\`, border-radius matching the chosen aesthetic.
 - Dark overlay on hero images for text readability.
 - Image strips (3 side-by-side, 35–45vh) provide visual breathing room between content sections.
+- If an image fails to load — it shows as a \`Failed to load img: <url>\` console error — replace that URL with a Picsum image (\`https://picsum.photos/{width}/{height}\`) or a local placeholder. Do not guess another Unsplash ID; a fabricated \`photo-{id}\` will fail the same way.
 
 ### Interaction
 

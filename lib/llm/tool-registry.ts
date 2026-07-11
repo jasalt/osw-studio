@@ -77,6 +77,10 @@ export interface ToolExecutionContext {
    *  Set on server runs where localStorage is unavailable. */
   permissionMode?: import('./permissions').PermissionMode;
   permissionOverrides?: Record<string, import('./permissions').GateDecision>;
+  /** Conversation-scoped map backing the read-before-edit guard (path → updatedAt ms).
+   *  Threaded to the shell so whole-chunk writes can be checked against the agent's
+   *  last full read. Absent on callers that don't track it (guard disabled). */
+  readVersions?: Map<string, number>;
 }
 
 interface RegisteredTool {
@@ -585,6 +589,7 @@ async function executeShellSegment(
   const result = await vfsShell.execute(projectId, cmdArray, heredocStdin, {
     onProgress: context.onProgress,
     generateImage: context.generateImage,
+    readVersions: context.readVersions,
   });
 
   // Refresh server context if shell command modified .server/ files

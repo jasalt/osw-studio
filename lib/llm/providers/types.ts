@@ -72,5 +72,6 @@ export interface HFAuthData {
   access_token: string;
   username?: string;
   expires_at?: number;  // OAuth tokens expire, API keys don't
+  scopes?: string; // space-separated granted OAuth scopes
 }
 

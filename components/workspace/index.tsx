@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useMemo, useState } from 'react';
 import { Project, VirtualFile } from '@/lib/vfs/types';
 import { vfs } from '@/lib/vfs';
 import { logger } from '@/lib/utils';
@@ -8,10 +8,11 @@ import { FileExplorer } from '@/components/file-explorer';
 import { MultiTabEditor, openFileInEditor } from '@/components/editor/multi-tab-editor';
 import { MultipagePreview, MultipagePreviewHandle } from '@/components/preview/multipage-preview';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, MessageSquare, FolderTree, Code2, Eye, Settings, Save, Bug, RotateCcw, History, Settings2, Terminal as TerminalIcon, Sparkles, ChevronDown, ChevronUp, EllipsisVertical } from 'lucide-react';
+import { ArrowLeft, MessageSquare, FolderTree, Code2, Eye, Settings, Save, Bug, RotateCcw, History, Terminal as TerminalIcon, Sparkles, ChevronDown, ChevronUp, EllipsisVertical, Upload } from 'lucide-react';
 import { AppHeader, HeaderAction } from '@/components/ui/app-header';
 import { PendingImage, PendingAudio, PendingFile } from '@/lib/llm/multi-agent-orchestrator';
 import { configManager, migrateBackendKey } from '@/lib/config/storage';
+import { DeployDialog } from '@/components/deploy-dialog';
 import { useWorkspaceStore } from '@/lib/stores/workspace';
 import type { InterviewTemplate, InterviewHandoff } from '@/lib/interview/types';
 import { track } from '@/lib/telemetry';
@@ -36,12 +37,6 @@ import {
 } from '@/components/ui/tooltip';
 import { checkpointManager } from '@/lib/vfs/checkpoint';
 import { saveManager } from '@/lib/vfs/save-manager';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { SettingsPanel } from '@/components/settings';
 import { GuidedTourOverlay } from '@/components/guided-tour/overlay';
 import { useGuidedTour } from '@/components/guided-tour/context';
 import { GuidedTourTranscriptEvent } from '@/components/guided-tour/types';
@@ -91,6 +86,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const mobileOverflowOpen = useWorkspaceStore(s => s.mobileOverflowOpen);
   const placedBlocks = useWorkspaceStore(s => s.placedBlocks);
   const paletteOpen = useWorkspaceStore(s => s.paletteOpen);
+  const [publishOpen, setPublishOpen] = useState(false);
   const lastFocusSignatureRef = useRef<{ signature: string; timestamp: number } | null>(null);
   const previewRef = useRef<MultipagePreviewHandle>(null);
   const generatingRef = useRef(false);
@@ -1351,10 +1347,12 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
                   useWorkspaceStore.getState().setPanelInsertPreview(null);
                 }}
                 disabled={saveInProgress}
-                className="rounded-l-none px-2"
+                className="rounded-l-none px-2 group/chev"
                 aria-label={showCheckpoints ? 'Close checkpoints panel' : 'Open checkpoints panel'}
               >
-                {showCheckpoints ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {showCheckpoints
+                  ? <ChevronUp className="h-4 w-4 transition-transform group-hover/chev:-translate-y-0.5" />
+                  : <ChevronDown className="h-4 w-4 transition-transform group-hover/chev:translate-y-0.5" />}
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
@@ -1365,6 +1363,10 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
       )
     });
   }
+
+  // Deploy is always available — every project can at least be exported as a ZIP. The modal's
+  // target picker handles per-target availability (HuggingFace Space, this OSW Studio instance,
+  // ZIP) and shows connection/enable paths for the ones that aren't ready.
 
   // Desktop header content: Deployment selector + Settings
   const desktopHeaderContent = (
@@ -1377,39 +1379,31 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
         workspaceId={workspaceId}
       />
 
-      {/* Project settings button */}
+      {/* Deploy (HuggingFace Space, OSW Studio instance, or ZIP) */}
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 px-3 flex items-center gap-2"
+        onClick={() => setPublishOpen(true)}
+        title="Deploy this project"
+      >
+        <Upload className="h-4 w-4" />
+        <span className="text-sm hidden lg:inline">Deploy</span>
+      </Button>
+
+      {/* Settings — cost + all settings (app + project) in one modal */}
       <Button
         variant="outline"
         size="sm"
         className="h-8 px-3 flex items-center gap-2"
         onClick={() => useWorkspaceStore.getState().setShowProjectSettingsModal(true)}
-        title="Project Settings"
+        title="Settings"
       >
-        <Settings2 className="h-4 w-4" />
-        <span className="text-sm hidden lg:inline">Project</span>
+        {shouldShowCosts && (
+          <span className="text-sm font-medium">${projectCost.toFixed(3)}</span>
+        )}
+        <Settings className="h-4 w-4" />
       </Button>
-
-      {/* Settings popover */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 px-3 flex items-center gap-2"
-            title="Project cost and settings"
-          >
-            {shouldShowCosts && (
-              <span className="text-sm font-medium">
-                ${projectCost.toFixed(3)}
-              </span>
-            )}
-            <Settings className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[460px] max-h-[min(720px,calc(100vh-5rem))] overflow-hidden flex flex-col" align="end">
-          <SettingsPanel />
-        </PopoverContent>
-      </Popover>
     </div>
   );
 
@@ -1428,24 +1422,9 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
         className="w-full justify-start"
         onClick={() => useWorkspaceStore.getState().setShowProjectSettingsModal(true)}
       >
-        <Settings2 className="h-4 w-4 mr-2" />
-        Project Settings
+        <Settings className="h-4 w-4 mr-2" />
+        Settings
       </Button>
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full justify-start"
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Settings
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[460px] max-w-[calc(100vw-2rem)] max-h-[min(720px,calc(100vh-5rem))] overflow-hidden flex flex-col" align="start">
-          <SettingsPanel />
-        </PopoverContent>
-      </Popover>
     </div>
   );
 
@@ -1461,6 +1440,12 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
           mobileMenuContent={mobileMenuContent}
           desktopOnlyContent={desktopHeaderContent}
           mobileVisibleActions={isDirty ? ['save'] : []}
+        />
+
+        <DeployDialog
+          open={publishOpen}
+          projectId={project.id}
+          onOpenChange={setPublishOpen}
         />
 
         {/* Desktop Workspace */}

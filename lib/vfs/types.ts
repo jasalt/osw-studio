@@ -11,6 +11,12 @@ export interface Project {
     defaultTemplate?: string;
     globalStyles?: string;
     previewEntryPoint?: string;  // defaults to '/index.html' when absent
+    hfSpace?: {
+      repoId: string;        // "<username>/<slug>"
+      url: string;           // https://huggingface.co/spaces/<repoId>
+      isPrivate: boolean;
+      lastPublishedAt: string; // ISO timestamp
+    };
   };
   lastSavedCheckpointId?: string | null;
   lastSavedAt?: Date | null;

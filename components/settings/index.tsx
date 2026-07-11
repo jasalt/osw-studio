@@ -17,7 +17,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { PermissionMatrix } from '@/components/permissions/PermissionMatrix';
 
-export function SettingsPanel() {
+export function SettingsPanel({ hideHeader = false, hideFooter = false }: { hideHeader?: boolean; hideFooter?: boolean } = {}) {
   const [, setSettings] = useState<AppSettings>({});
   const [costSettings, setCostSettings] = useState<CostSettings>({});
   const { theme, setTheme } = useTheme();
@@ -30,11 +30,12 @@ export function SettingsPanel() {
   const [telemetryOptIn, setTelemetryOptInState] = useState(() =>
     configManager.getSettings().telemetryOptIn !== false
   );
+  // Only the first section is expanded by default; the rest start collapsed.
   const [openSections, setOpenSections] = useState({
     application: true,
     permissions: false,
-    costTracking: true,
-    dataManagement: true
+    costTracking: false,
+    dataManagement: false
   });
 
   useEffect(() => {
@@ -128,13 +129,15 @@ export function SettingsPanel() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 pb-3 mb-1 border-b">
-        <h3 className="font-semibold text-base tracking-tight">Settings</h3>
-        <p className="text-muted-foreground text-xs mt-1">
-          Application preferences and data management
-        </p>
-      </div>
+      {/* Header — suppressed when the surrounding surface already titles the panel (e.g. the workspace Settings modal). */}
+      {!hideHeader && (
+        <div className="shrink-0 pb-3 mb-1 border-b">
+          <h3 className="font-semibold text-base tracking-tight">Settings</h3>
+          <p className="text-muted-foreground text-xs mt-1">
+            Application preferences and data management
+          </p>
+        </div>
+      )}
 
       {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -199,27 +202,6 @@ export function SettingsPanel() {
                 />
               </div>
             </div>
-          </CollapsibleContent>
-        </Collapsible>
-
-        {/* Permissions Section */}
-        <Collapsible
-          open={openSections.permissions}
-          onOpenChange={() => toggleSection('permissions')}
-        >
-          <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg hover:bg-muted/50 transition-colors">
-            <div className="flex items-center gap-2">
-              <Shield className="h-4 w-4" />
-              <h4 className="font-medium text-sm">Permissions</h4>
-            </div>
-            <ChevronDown
-              className={`h-4 w-4 transition-transform duration-200 ${
-                openSections.permissions ? 'rotate-180' : ''
-              }`}
-            />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="px-3 pt-2 pb-3">
-            <PermissionMatrix />
           </CollapsibleContent>
         </Collapsible>
 
@@ -351,6 +333,27 @@ export function SettingsPanel() {
           </CollapsibleContent>
         </Collapsible>
 
+        {/* Permissions Section */}
+        <Collapsible
+          open={openSections.permissions}
+          onOpenChange={() => toggleSection('permissions')}
+        >
+          <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg hover:bg-muted/50 transition-colors">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              <h4 className="font-medium text-sm">Permissions</h4>
+            </div>
+            <ChevronDown
+              className={`h-4 w-4 transition-transform duration-200 ${
+                openSections.permissions ? 'rotate-180' : ''
+              }`}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="px-3 pt-2 pb-3">
+            <PermissionMatrix />
+          </CollapsibleContent>
+        </Collapsible>
+
         {/* Data Management Section */}
         <Collapsible
           open={openSections.dataManagement}
@@ -433,24 +436,26 @@ export function SettingsPanel() {
       </div>{/* end scrollable content */}
 
       {/* Footer */}
-      <div className="shrink-0 flex items-center justify-between pt-4 px-3 border-t">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-destructive hover:text-destructive"
-          onClick={clearSettings}
-        >
-          Clear All Settings
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setAboutModalOpen(true)}
-        >
-          <Info className="mr-1.5 h-3.5 w-3.5" />
-          About OSW Studio
-        </Button>
-      </div>
+      {!hideFooter && (
+        <div className="shrink-0 flex items-center justify-between pt-4 px-3 border-t">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={clearSettings}
+          >
+            Clear All Settings
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setAboutModalOpen(true)}
+          >
+            <Info className="mr-1.5 h-3.5 w-3.5" />
+            About OSW Studio
+          </Button>
+        </div>
+      )}
 
       <AboutModal
         open={aboutModalOpen}
