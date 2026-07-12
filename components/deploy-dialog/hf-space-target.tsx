@@ -16,13 +16,23 @@ import { hasPublishScope, loginHF, checkHFCapabilities } from '@/lib/auth/hf-aut
 import { configManager } from '@/lib/config/storage';
 
 type PublishMode = 'update' | 'new';
-type Status = 'idle' | 'needsScope' | 'publishing' | 'done' | 'error';
+type Status = 'idle' | 'needsScope' | 'staleAuth' | 'publishing' | 'done' | 'error';
 
 const PHASE_LABEL: Record<PublishProgress['phase'], string> = {
   compiling: 'Compiling site...',
   creating: 'Creating Space...',
   uploading: 'Uploading files...',
 };
+
+/**
+ * A valid HuggingFace username (repo namespace): alphanumeric + hyphens, no spaces.
+ * A connection made before publishing was supported stored the display name (e.g.
+ * "Ot St") here instead, which isn't a usable namespace — so we treat anything that
+ * doesn't match as a stale connection that needs reconnecting.
+ */
+function isValidHfUsername(username: string | undefined): username is string {
+  return !!username && /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,94}[a-zA-Z0-9])?$/.test(username);
+}
 
 /**
  * The "HuggingFace Space" deployment target body — the form + actions, rendered inside the
@@ -98,8 +108,11 @@ export function HFSpaceTarget({ projectId, onClose }: { projectId: string; onClo
   async function handleGrantPermission() {
     // Stash the open project so studio-app can restore it after the OAuth round-trip
     // (the redirect returns to the app root without ?project=). Mirrors chat-panel's HF sign-in.
+    // The resume flag additionally tells the workspace to reopen Deploy on return, so a grant
+    // or reconnect drops the user straight back here instead of leaving them in the workspace.
     try {
       sessionStorage.setItem('hf_oauth_return_project', projectId);
+      sessionStorage.setItem('hf_oauth_resume_deploy', projectId);
     } catch {}
     const caps = await checkHFCapabilities();
     if (caps.oauthAvailable && caps.clientId) {
@@ -117,9 +130,16 @@ export function HFSpaceTarget({ projectId, onClose }: { projectId: string; onClo
     }
 
     const auth = configManager.getHFAuth();
-    if (!auth?.access_token || !auth.username) {
-      setErrorMsg('Not connected to HuggingFace, or the connection is missing your username. Reconnect and try again.');
+    if (!auth?.access_token) {
+      setErrorMsg('Not connected to HuggingFace. Reconnect and try again.');
       setStatus('error');
+      return;
+    }
+    // A connection made before publishing was supported stored the display name as the
+    // username, which can't be a Space namespace. Detect it up front and guide a reconnect
+    // instead of letting createRepo 403.
+    if (!isValidHfUsername(auth.username)) {
+      setStatus('staleAuth');
       return;
     }
 
@@ -165,15 +185,26 @@ export function HFSpaceTarget({ projectId, onClose }: { projectId: string; onClo
         setStatus('error');
         return;
       }
-      // A 403/401 here means the token lacks the create-Space permission — e.g. a pasted token
-      // (whose scopes we can't inspect up front, so hasPublishScope() passes optimistically) or a
-      // stale OAuth grant. Route to the grant-permission prompt instead of showing a raw API error.
       const statusCode = (e as { statusCode?: number })?.statusCode;
-      if (statusCode === 403 || statusCode === 401) {
+      const raw = e instanceof Error ? e.message : 'Publish failed';
+      // 401 = the token is invalid/expired → reconnecting is the fix, so prompt for it.
+      if (statusCode === 401) {
         setStatus('needsScope');
         return;
       }
-      setErrorMsg(e instanceof Error ? e.message : 'Publish failed');
+      // 403 = authenticated but refused. If it's the "namespace" refusal, the stored connection
+      // is stale (display name where a username belongs) — guide a reconnect. Otherwise surface
+      // the real reason (usually a taken name) rather than looping back to the grant prompt.
+      if (statusCode === 403) {
+        if (!isValidHfUsername(auth.username) || /namespace/i.test(raw)) {
+          setStatus('staleAuth');
+          return;
+        }
+        setErrorMsg(`HuggingFace refused the request (403). Check that your token has write access and that "${slug}" is a valid, available Space name under your account. (${raw})`);
+        setStatus('error');
+        return;
+      }
+      setErrorMsg(raw);
       setStatus('error');
     }
   }
@@ -209,6 +240,17 @@ export function HFSpaceTarget({ projectId, onClose }: { projectId: string; onClo
           <p className="text-xs text-muted-foreground">
             If you grant it and this keeps asking, the deployment may not yet be configured
             for publishing.
+          </p>
+        </div>
+      ) : status === 'staleAuth' ? (
+        <div className="grid gap-3 py-4 text-sm">
+          <p>
+            Your HuggingFace connection is out of date and can&apos;t publish a Space — it&apos;s
+            missing your account username. Reconnect to HuggingFace to refresh it, then publish.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            This happens for connections made before publishing was added. Reconnecting only needs
+            to be done once.
           </p>
         </div>
       ) : (
@@ -329,6 +371,13 @@ export function HFSpaceTarget({ projectId, onClose }: { projectId: string; onClo
               Cancel
             </Button>
             <Button onClick={handleGrantPermission}>Grant permission on HuggingFace</Button>
+          </>
+        ) : status === 'staleAuth' ? (
+          <>
+            <Button variant="outline" onClick={handleClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleGrantPermission}>Reconnect HuggingFace</Button>
           </>
         ) : (
           <>

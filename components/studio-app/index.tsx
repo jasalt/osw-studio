@@ -100,8 +100,10 @@ function StudioInner() {
       try {
         const oauthResult = await oauthHandleRedirectIfPresent();
         if (oauthResult) {
-          const username = oauthResult.userInfo?.name
-            || oauthResult.userInfo?.preferred_username
+          // Use the HF username (preferred_username), NOT the display name (`name`): it's the
+          // namespace for repo/Space creation (e.g. "otst", not "Ot St"). Falling back to the
+          // display name builds an invalid namespace and 403s on createRepo.
+          const username = oauthResult.userInfo?.preferred_username
             || oauthResult.userInfo?.sub;
           configManager.setHFAuth({
             access_token: oauthResult.accessToken,

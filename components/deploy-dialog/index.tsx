@@ -68,6 +68,7 @@ export function DeployDialog({ open, projectId, onOpenChange }: DeployDialogProp
     if (isHFSpace) {
       try {
         sessionStorage.setItem('hf_oauth_return_project', projectId);
+        sessionStorage.setItem('hf_oauth_resume_deploy', projectId);
       } catch {}
       const caps = await checkHFCapabilities();
       if (caps.oauthAvailable && caps.clientId) {

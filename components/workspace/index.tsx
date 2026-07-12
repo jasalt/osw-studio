@@ -87,6 +87,18 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
   const placedBlocks = useWorkspaceStore(s => s.placedBlocks);
   const paletteOpen = useWorkspaceStore(s => s.paletteOpen);
   const [publishOpen, setPublishOpen] = useState(false);
+
+  // After an OAuth round-trip started from Deploy (grant/reconnect), reopen the Deploy dialog
+  // for this project so the user lands back where they left off instead of in the workspace.
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('hf_oauth_resume_deploy') === project.id) {
+        sessionStorage.removeItem('hf_oauth_resume_deploy');
+        setPublishOpen(true);
+      }
+    } catch { /* sessionStorage unavailable */ }
+  }, [project.id]);
+
   const lastFocusSignatureRef = useRef<{ signature: string; timestamp: number } | null>(null);
   const previewRef = useRef<MultipagePreviewHandle>(null);
   const generatingRef = useRef(false);

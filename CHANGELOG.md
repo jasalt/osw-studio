@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.86.2 - 2026-07-12
+
+### Fixes
+- **Guided reconnect for older HuggingFace connections**: A HuggingFace connection made before publishing was added stored your display name where your username belongs, so publishing a Space failed with a raw "403 Forbidden". The Deploy dialog now detects this and prompts you to reconnect HuggingFace once, rather than showing the error.
+- **Reconnecting returns you to Deploy**: After you grant permission or reconnect HuggingFace from the Deploy dialog, it reopens automatically when you come back, instead of leaving you in the workspace.
+
+## v1.86.1 - 2026-07-12
+
+### Fixes
+- **Publishing to a Hugging Face Space works**: Publishing failed with a "403 Forbidden" that kept asking to re-grant permission even after it was granted. The Space was being created under your display name instead of your HuggingFace username — not a valid location — and the resulting error was misread as a missing permission, causing the loop. It now uses your username, and a genuine refusal shows the actual reason instead of bouncing back to the permission prompt. Reconnect HuggingFace once to pick up the fix.
+
 ## v1.86.0 - 2026-07-12
 
 ### Deploy
