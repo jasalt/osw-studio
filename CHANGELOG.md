@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.87.0 - 2026-07-13
+
+### Preview
+- **In-app navigation is respected**: The live preview no longer hijacks links that the app handles itself, so client-side routers (React/Vue/Svelte) and hash-based routing work instead of reloading or dead-ending. Plain multi-page links still navigate, and the Back/Forward buttons now move through history correctly (Back previously jumped straight back to the latest page).
+- **External links open safely**: Clicking an external link in the preview now prompts to open it in a new tab (with `noopener`/`noreferrer`), instead of silently navigating the preview away or opening a tab with no protection.
+- **Recovers from a lost preview**: If the preview navigates somewhere it can't serve — a form submit, a script redirect, a meta refresh — it now notices the frame is no longer showing your project, tries a reload, and if that doesn't help shows a "Preview navigated away — Reload preview" prompt, instead of going silently blank until your next edit.
+- **A stalled compile can't wedge the preview**: A compile that hangs (for example waiting on a component-compiler download) now times out and surfaces an error, instead of freezing every later preview update.
+- **Read-only commands don't reload the preview**: While the agent works, only commands that actually change files reload the preview. Read-only commands (search, grep, cat, listing files) no longer trigger a needless recompile.
+
+### Fixes
+- **Mobile voice input no longer duplicates words**: On phones, the browser speech-to-text repeated finalized words (e.g. "Testing 1 2 3" came out as "Testing TestingTesting TestingTestingTesting 1"). Each word is now transcribed once.
+- **Local `curl` no longer asks for web-access permission**: In Ask permission mode, a local preview fetch that was piped or redirected (e.g. `curl -s localhost | head`) was misread as an external request and prompted for Web access. Local fetches are recognized as local again and run without a prompt; only genuinely external URLs ask.
+
 ## v1.86.2 - 2026-07-12
 
 ### Fixes

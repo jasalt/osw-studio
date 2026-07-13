@@ -6,6 +6,21 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.87.0 - Preview Reliability (2026-07-13)
+
+The live preview is now sturdier. In-app navigation works with client-side routers instead of reloading or dead-ending, it recovers when a form submit or script sends it off to another page instead of going silently blank, and it stops recompiling on read-only commands while the agent works. Couple QoL fixes to round it out: mobile voice input no longer duplicates words, and a local `curl` no longer asks for web-access permission.
+
+### Preview
+- **Navigation respects your app**: Client-side routers (React/Vue/Svelte) and hash links work in the preview instead of being hijacked; plain multi-page links, Back/Forward, and external links all behave correctly
+- **Recovers instead of going blank**: If something navigates the preview away, it notices and offers to reload, rather than sitting broken until your next edit
+- **Fewer needless reloads**: Read-only commands (search, grep, cat) no longer trigger a preview recompile
+
+### Fixes
+- **Mobile voice input**: Phone speech-to-text no longer repeats finalized words
+- **Local curl**: A piped or redirected local preview fetch no longer prompts for web access in Ask mode
+
+---
+
 ## v1.86.0 - Deploy (2026-07-12)
 
 You can now publish a project as a static Hugging Face Space under your own account, straight from the workspace and live as soon as it finishes, with no manual export. It's one of three targets behind a new Deploy button: a Hugging Face Space, this OSW Studio instance in Server Mode, or a ZIP you can upload anywhere. The separate Project and settings buttons in the workspace header have also been merged into a single Settings dialog.

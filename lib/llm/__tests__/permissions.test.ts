@@ -24,6 +24,15 @@ describe('classifyGateKey', () => {
     expect(classifyGateKey(['curl', 'localhost/a', 'localhost/b'])).toBe('curl:local');
   });
 
+  it('ignores tokens after a pipe or redirect (they belong to another command)', () => {
+    // The gated segment isn't split on pipes, so it includes the piped command's tokens;
+    // those must not be read as (external) URLs — otherwise "|" becomes "http://|".
+    expect(classifyGateKey(['curl', '-s', 'localhost', '|', 'head', '-n', '30'])).toBe('curl:local');
+    expect(classifyGateKey(['curl', 'localhost', '>', 'out.html'])).toBe('curl:local');
+    // A genuinely external curl piped into something local is still external.
+    expect(classifyGateKey(['curl', '-s', 'https://example.com', '|', 'grep', 'x'])).toBe('curl:external');
+  });
+
   it('splits sqlite3 and sed by read vs write facet', () => {
     expect(classifyGateKey(['sqlite3', 'db', 'SELECT * FROM t'])).toBe('sqlite3:read');
     expect(classifyGateKey(['sqlite3', 'db', 'INSERT INTO t VALUES(1)'])).toBe('sqlite3:write');

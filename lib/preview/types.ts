@@ -43,6 +43,7 @@ export type ConsoleLevel = 'log' | 'warn' | 'error' | 'info' | 'debug';
 
 export type PreviewMessage =
   | { type: 'navigate'; path: string }
+  | { type: 'preview:external'; href: string }
   | { type: 'reload' }
   | { type: 'error'; error: string }
   | { type: 'selector-selection'; payload: FocusContextPayload }

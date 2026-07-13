@@ -74,6 +74,11 @@ export function extractCurlUrls(args: string[]): string[] {
   const urls: string[] = [];
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
+    // Stop at a shell operator: a pipe, redirect, or chain token means the following tokens
+    // belong to another command, not curl. Without this, `curl localhost | head` reads "|"
+    // and "head" as URLs and misclassifies a local fetch as external ("http://|"). (&&/||/;
+    // are already split out upstream, but included here for safety.)
+    if (a === '|' || a === '||' || a === '&&' || a === ';' || /^(?:[12&]?>>?|<)$/.test(a)) break;
     if (takesValue.has(a)) { i++; continue; }
     if (a.startsWith('-')) continue;
     urls.push(a);

@@ -61,13 +61,20 @@ export function useSpeechRecognition() {
     finalRef.current = '';
     setInterim('');
     rec.onresult = (e) => {
+      // Rebuild the full transcript from the complete results list each event (assignment),
+      // rather than appending only the newly-changed results from resultIndex. Several mobile
+      // browsers re-fire onresult for an already-final result without advancing resultIndex, so
+      // incremental appending ("+=") duplicated finalized text ("Testing" → "TestingTesting" →
+      // …). Recomputing from all results is idempotent and immune to that re-firing.
+      let finalText = '';
       let interimText = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const res = e.results[i];
         const txt = res[0]?.transcript ?? '';
-        if (res.isFinal) finalRef.current += txt;
+        if (res.isFinal) finalText += txt;
         else interimText += txt;
       }
+      finalRef.current = finalText;
       setInterim(interimText);
     };
     rec.onerror = () => { /* errors surface as an empty final transcript */ };

@@ -9,6 +9,8 @@ import {
   PreviewHostMessage
 } from '@/lib/preview/types';
 import { vfs } from '@/lib/vfs';
+import { PreviewLifecycle } from '@/lib/preview/preview-lifecycle';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   RefreshCw,
@@ -69,6 +71,21 @@ const DEVICE_SIZES: Record<DeviceSize, { width?: string; height?: string; maxHei
   desktop: { width: '100%', height: '100%', maxHeight: '900px', maxWidth: '1440px' },
   responsive: { width: '100%', height: '100%' }
 };
+
+// Watchdog for an *asynchronous* compile stall (e.g. a hung CDN fetch for an SFC compiler): reject
+// so the catch clears the in-flight flag and shows an error instead of freezing recompiles forever.
+// (A synchronous main-thread hang can't be timed out — the event loop is blocked; that's the
+// heartbeat's job, not this.)
+const COMPILE_TIMEOUT_MS = 30000;
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
 
 function generatePlacementScript(): string {
   return `<script>(function() {
@@ -384,6 +401,9 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
   const [navigationHistory, setNavigationHistory] = useState<string[]>(['/']);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [iframeReady, setIframeReady] = useState(false);
+  // The preview "escaped": the frame navigated somewhere that isn't the document we wrote (a form
+  // submit, window.location, meta refresh, etc.). Drives the recovery overlay.
+  const [escaped, setEscaped] = useState(false);
   const [selectorActive, setSelectorActive] = useState(false);
   const [draggingBlock, setDraggingBlock] = useState<PlacementBlockInfo | null>(null);
   const [paletteVisible, setPaletteVisible] = useState(true);
@@ -426,10 +446,45 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
   }, [placementActive]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Mirror iframeReady into a ref so functions captured in stale closures (e.g. the memoized
+  // compileAndLoadInternal, which holds an old loadPage) read the *current* readiness rather than a
+  // stale `false` from an early render — otherwise their loadPage defers forever.
+  const iframeReadyRef = useRef(false);
+  // Stable ref callback: an inline `ref={(el) => ...}` gets a new identity every render, so React
+  // detaches (null) + reattaches (node) on every re-render, which made `iframeReady` oscillate.
+  // A stable callback only runs on real mount/unmount.
+  const setIframeEl = useCallback((el: HTMLIFrameElement | null) => {
+    iframeRef.current = el;
+    iframeReadyRef.current = !!el;
+    setIframeReady(!!el);
+  }, []);
   const serverRef = useRef<VirtualServer | null>(null);
   const compiledProjectRef = useRef<CompiledProject | null>(null);
   const activePathRef = useRef<string>('/');
   const pendingLoadPath = useRef<string | null>(null);
+  // Per-load handshake / escape recovery. lifecycleRef holds the pure decision logic;
+  // loadIdCounterRef mints monotonic ids; loadPageRef lets the stable escape handler reach the
+  // latest loadPage closure (for the auto-reload).
+  const lifecycleRef = useRef(new PreviewLifecycle());
+  const loadIdCounterRef = useRef(0);
+  const loadPageRef = useRef<((path: string, compiled?: CompiledProject, isRecovery?: boolean) => void) | null>(null);
+  // Set true once we've successfully read our own marker from the frame. Guards escape detection:
+  // we only trust a "contentWindow read threw" as a real cross-origin escape once we know reads
+  // normally work — so if they never do (unexpected sandbox behaviour), escape detection is inert
+  // and can never break a working preview.
+  const markerReadableRef = useRef(false);
+
+  // Respond to a confident escape signal (the load-event marker check found the frame is no longer
+  // our document): one bounded auto-reload, then the recovery overlay. Stable — safe to call from
+  // the load handler.
+  const handleEscapeSignal = useCallback((loadId: number) => {
+    const action = lifecycleRef.current.onEscapeSignal(loadId);
+    if (action === 'auto-reload') {
+      loadPageRef.current?.(activePathRef.current || '/', undefined, true);
+    } else if (action === 'escaped') {
+      setEscaped(true);
+    }
+  }, []);
   const selectorActiveRef = useRef(false);
 
   const postMessageToIframe = useCallback((message: PreviewHostMessage) => {
@@ -542,16 +597,46 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
     }
     const handleLoad = () => {
       postMessageToIframe({ type: 'selector-toggle', active: selectorActiveRef.current });
+      // Verify, on the load event, that the frame still holds the document we wrote. contentWindow
+      // is stable and same-origin here (unlike the very-early postMessage ack, which can race), so
+      // reading our marker is the reliable readiness signal. Escape ONLY on a confident signal —
+      // reading contentWindow throws (cross-origin: the frame navigated to an external site), or a
+      // *different-numbered* marker is present. A missing marker mid-transition is treated as OK so
+      // a normal load can never be mistaken for an escape.
+      const expected = lifecycleRef.current.loadId;
+      if (expected === 0) return; // initial about:blank load, before we've written any document
+
+      try {
+        const marker = (iframeRef.current?.contentWindow as unknown as { __oswPreview?: { loadId?: number } })?.__oswPreview;
+        const markerLoadId = marker?.loadId;
+        if (markerLoadId === expected) {
+          // Our current document loaded — ready.
+          markerReadableRef.current = true;
+          lifecycleRef.current.onAck(expected);
+          setEscaped(false);
+        } else if (typeof markerLoadId === 'number') {
+          // A different load's marker: still one of our documents (a stale/rapid load), not an
+          // external escape — reads work, so record that, but don't recover.
+          markerReadableRef.current = true;
+        }
+        // else: readable window with no marker yet (our doc still settling) → do nothing.
+      } catch {
+        // contentWindow read threw → cross-origin → the frame navigated to an external site. Only
+        // act on this once we've proven reads normally work, so an unexpected sandbox that always
+        // throws can't be mistaken for a perpetual escape.
+        if (markerReadableRef.current) handleEscapeSignal(expected);
+      }
     };
     iframe.addEventListener('load', handleLoad);
     return () => {
       iframe.removeEventListener('load', handleLoad);
     };
-  }, [iframeReady, postMessageToIframe]);
+  }, [iframeReady, postMessageToIframe, handleEscapeSignal]);
 
   useEffect(() => {
     activePathRef.current = activePath;
   }, [activePath]);
+
 
   useEffect(() => {
     if (iframeReady && pendingLoadPath.current && compiledProjectRef.current) {
@@ -605,7 +690,7 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
       const server = new VirtualServer(vfs, projectId, { deploymentId: deploymentId || undefined, entryPoint, runtime });
       serverRef.current = server;
 
-      const compiled = await server.compileProject();
+      const compiled = await withTimeout(server.compileProject(), COMPILE_TIMEOUT_MS, 'Compile');
 
       // A newer compile started while we were awaiting — discard this result
       if (gen !== compileGeneration.current) return;
@@ -729,7 +814,7 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
   }, [projectId, scheduleCompile]);
 
 
-  const loadPage = (path: string, compiled?: CompiledProject) => {
+  const loadPage = (path: string, compiled?: CompiledProject, isRecovery = false) => {
     const projectToUse = compiled || compiledProjectRef.current || compiledProject;
 
     if (!projectToUse) {
@@ -743,7 +828,7 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
       postMessageToIframe({ type: 'selector-toggle', active: false });
     }
 
-    if (!iframeRef.current || !iframeReady) {
+    if (!iframeRef.current || !iframeReadyRef.current) {
       pendingLoadPath.current = path;
       return;
     }
@@ -852,38 +937,48 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
           }
 
           document.addEventListener('click', function(e) {
+            // Respect app-handled navigation: a client router (react-router, vue-router,
+            // svelte Link) calls preventDefault at/near the link, which bubbles to us already
+            // marked handled. Never hijack those — that is what broke framework routing.
+            if (e.defaultPrevented) return;
             const target = e.target && e.target.closest ? e.target.closest('a') : null;
-            if (target && target.getAttribute) {
-              const href = target.getAttribute('href');
+            if (!target || !target.getAttribute) return;
+            const href = target.getAttribute('href');
+            if (!href) return;
 
-              if (!href) {
-                return;
-              }
-
-              if (href.startsWith('#')) {
-                e.preventDefault();
-                const targetId = href.substring(1);
-                const targetElement = document.getElementById(targetId);
-                if (targetElement) {
-                  targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-                return;
-              }
-
-              const isExternal = href.startsWith('http://') || href.startsWith('https://') || href.startsWith('//');
-              if (!isExternal) {
-                if (isInIframe) {
-                  e.preventDefault();
-                  window.parent.postMessage({
-                    type: 'navigate',
-                    path: resolveInternalPath(href)
-                  }, '*');
-                }
+            // Hash links: a srcdoc document resolves '#x' against the PARENT's base URL, so letting
+            // the browser navigate would load the parent app into the frame. Instead, set the hash
+            // on the current document — this scrolls to '#section' and fires hashchange for a hash
+            // router, with no navigation. (A router that handles the click itself already
+            // preventDefaulted above, so we don't reach here for those.)
+            if (href.charAt(0) === '#') {
+              e.preventDefault();
+              var id = href.length > 1 ? href.slice(1) : '';
+              var scrollEl = id ? document.getElementById(id) : null;
+              if (scrollEl) {
+                scrollEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
               } else {
-                e.preventDefault();
-                window.open(href, '_blank');
+                // No matching element — likely a hash-router route (e.g. #/about); set the hash to
+                // fire hashchange so the router responds. No navigation in either case.
+                try { window.location.hash = href; } catch (e) { /* best-effort */ }
               }
+              return;
             }
+            // Native schemes and downloads — let the browser handle them.
+            if (/^(mailto:|tel:|javascript:)/i.test(href) || target.hasAttribute('download')) return;
+
+            if (!isInIframe) return;
+
+            // External: don't let the frame navigate away (that replaces the preview). Hand off
+            // to the host, which confirms and opens a new tab with noopener,noreferrer.
+            if (/^(https?:)?\\/\\//i.test(href)) {
+              e.preventDefault();
+              window.parent.postMessage({ type: 'preview:external', href: href }, '*');
+              return;
+            }
+            // Internal, not app-handled → host serves the file (no server behind srcdoc).
+            e.preventDefault();
+            window.parent.postMessage({ type: 'navigate', path: resolveInternalPath(href) }, '*');
           });
 
           const selectorState = {
@@ -1119,10 +1214,18 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
     // not just the partial map baked into the page during compilation.
     const vfsMapJson = JSON.stringify(Object.fromEntries(projectToUse.blobUrls)).replace(/</g, '\\u003c');
     const vfsMapScript = `<script>window.__oswVfsBlobUrls = ${vfsMapJson};</script>`;
+
+    // Per-load handshake: stamp the document with a fresh loadId marker in <head> (runs during
+    // parse, before app JS). On the iframe's load event the host reads this marker to confirm the
+    // frame still holds the document it wrote; if it navigated away, we recover.
+    const loadId = ++loadIdCounterRef.current;
+    lifecycleRef.current.beginLoad(loadId, isRecovery);
+    const markerScript = `<script>window.__oswPreview={loadId:${loadId}};</script>`;
+    const headInject = markerScript + vfsMapScript;
     if (processedHtml.includes('<head>')) {
-      processedHtml = processedHtml.replace('<head>', '<head>' + vfsMapScript);
+      processedHtml = processedHtml.replace('<head>', '<head>' + headInject);
     } else {
-      processedHtml = vfsMapScript + processedHtml;
+      processedHtml = headInject + processedHtml;
     }
 
     // Clear stale runtime errors before loading new content —
@@ -1131,19 +1234,26 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
     iframeRef.current.srcdoc = processedHtml;
     setActivePath(normalizedPath);
     activePathRef.current = normalizedPath;
-    
+  };
+
+  // Keep a ref to the latest loadPage so stable callbacks (escape timer, message handler) can call it.
+  loadPageRef.current = loadPage;
+
+  // Push a new entry (truncating any forward history). Kept separate from loadPage so that
+  // Back/Forward (which re-render a page without changing history) don't re-append — the old
+  // bug where loadPage always pushed made Back immediately return to the end.
+  const pushHistory = useCallback((path: string) => {
+    const normalized = path.startsWith('/') ? path : '/' + path;
     setHistoryIndex(currentIndex => {
-      setNavigationHistory(currentHistory => {
-        const newHistory = [...currentHistory.slice(0, currentIndex + 1), normalizedPath];
-        return newHistory;
-      });
+      setNavigationHistory(currentHistory => [...currentHistory.slice(0, currentIndex + 1), normalized]);
       return currentIndex + 1;
     });
-  };
+  }, []);
 
   const handleNavigation = useCallback((path: string) => {
     loadPage(path);
-  }, [compiledProject]);
+    pushHistory(path);
+  }, [compiledProject, pushHistory]);
 
   const handleBack = () => {
     if (historyIndex > 0) {
@@ -1163,6 +1273,7 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
 
   const handleHome = () => {
     loadPage('/');
+    pushHistory('/');
   };
 
   const handleRefresh = () => {
@@ -1193,6 +1304,25 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
 
       if (data.type === 'navigate' && data.path) {
         handleNavigation(data.path);
+        return;
+      }
+
+      if (data.type === 'preview:external' && data.href) {
+        // External link from the preview. The iframe runs untrusted content, so validate the scheme
+        // before opening — only http(s) web links, never javascript:/data:/etc. (which window.open
+        // would execute/render). Then confirm and open a new tab from the host context with
+        // noopener,noreferrer so the target gets no window.opener handle and no referrer.
+        let url: URL;
+        try { url = new URL(data.href, window.location.href); } catch { return; }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+        const href = url.href;
+        toast('Open external link?', {
+          description: url.host,
+          action: {
+            label: 'Open in new tab',
+            onClick: () => { window.open(href, '_blank', 'noopener,noreferrer'); },
+          },
+        });
         return;
       }
 
@@ -1577,6 +1707,23 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
           onClose={() => { setLocalPaletteOpen(false); setTimeout(() => onPlacementToggle?.(), 0); }}
           collapsed={!localPaletteOpen || !paletteVisible}
         />
+        {escaped && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div className="max-w-xs rounded-lg border border-border bg-card p-4 text-center shadow-lg">
+              <p className="text-sm font-medium">Preview navigated away</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                A link, form, or script sent the preview to another page.
+              </p>
+              <Button
+                size="sm"
+                className="mt-3"
+                onClick={() => loadPageRef.current?.(activePathRef.current || '/', undefined, false)}
+              >
+                Reload preview
+              </Button>
+            </div>
+          </div>
+        )}
         <div
           className={cn(
             "bg-white mx-auto transition-all duration-300",
@@ -1595,17 +1742,7 @@ const MultipagePreviewComponent = forwardRef<MultipagePreviewHandle, MultipagePr
           onDragLeave={handlePlacementDragLeave}
         >
           <iframe
-            ref={(el) => {
-              iframeRef.current = el;
-              if (el && !iframeReady) {
-                // Use setTimeout to ensure iframe document is ready
-                setTimeout(() => {
-                  setIframeReady(true);
-                }, 0);
-              } else if (!el && iframeReady) {
-                setIframeReady(false);
-              }
-            }}
+            ref={setIframeEl}
             className={cn("w-full h-full", !isFullscreen && "rounded-lg")}
             sandbox="allow-scripts allow-same-origin allow-forms"
             title="Preview"

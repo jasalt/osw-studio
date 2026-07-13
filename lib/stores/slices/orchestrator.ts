@@ -537,8 +537,11 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       get().addDebugEvent(event, data, projectId);
       const isViewingThis = get().projectId === projectId;
       if (event === 'tool_status' && data?.status === 'completed' && isViewingThis) {
+        // Mark the session dirty on any tool completion, but do NOT force a preview recompile here:
+        // a read-only command (rg, grep, cat, ls, …) must not reload the preview. Actual file writes
+        // dispatch 'filesChanged' from the VFS, which the preview already listens to, so writes still
+        // recompile — only reads stop triggering a needless reload.
         get().markDirty();
-        get().bumpRefreshTrigger();
       }
       if (event === 'usage' && data?.totalCost != null && isViewingThis) {
         set({ projectCost: data.totalCost });
