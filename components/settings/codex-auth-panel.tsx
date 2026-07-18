@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ExternalLink, Loader2, LogIn } from 'lucide-react';
+import { Loader2, LogIn } from 'lucide-react';
 import { ConnectionBadge } from '@/components/settings/connection-badge';
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
@@ -28,7 +28,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
   );
   const [login, setLogin] = useState<CodexLoginInfo | null>(null);
   const [redirectUrl, setRedirectUrl] = useState('');
-  const [manualCallbackExpected, setManualCallbackExpected] = useState(false);
+  const [isCompletingRedirect, setIsCompletingRedirect] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const auth = configManager.getCodexAuth();
@@ -42,7 +42,6 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
 
   // Reconcile localStorage vs HttpOnly cookie on mount
   useEffect(() => {
-    setManualCallbackExpected(!['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname));
     let cancelled = false;
 
     async function reconcile() {
@@ -79,6 +78,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
     setIsAuthenticated(true);
     setLogin(null);
     setRedirectUrl('');
+    setIsCompletingRedirect(false);
     setIsLoading(false);
     toast.success('Connected to ChatGPT. Tokens will refresh automatically.');
     track('connection_added', { provider: 'openai-codex' });
@@ -130,11 +130,11 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
   };
 
   const handleManualCallback = async () => {
-    setIsLoading(true);
+    setIsCompletingRedirect(true);
     try {
       finishLogin(await completeCodexLogin(redirectUrl.trim()));
     } catch (error) {
-      setIsLoading(false);
+      setIsCompletingRedirect(false);
       toast.error(error instanceof Error ? error.message : 'Failed to complete ChatGPT login');
     }
   };
@@ -142,6 +142,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
   const handleCancelLogin = async () => {
     setLogin(null);
     setRedirectUrl('');
+    setIsCompletingRedirect(false);
     setIsLoading(false);
     await disconnectCodex().catch(() => {});
   };
@@ -190,58 +191,48 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
     <div className="space-y-3">
       <Label>ChatGPT Authentication</Label>
       <p className="text-xs text-muted-foreground">
-        Use your ChatGPT Plus/Pro subscription instead of an API key.
-        Tokens are created and refreshed automatically once connected.
+        Login to your ChatGPT Plus/Pro subscription in browser instead of using an API key. Tokens are created and refreshed automatically once connected. No Codex CLI or device authorization is required.
       </p>
 
-      {manualCallbackExpected && !login && (
+      {!login && (
         <div className="p-3 border rounded-md bg-muted/50 text-xs text-muted-foreground space-y-1">
           <p className="font-medium text-foreground">HuggingFace / remote installation</p>
           <p>
-            After ChatGPT approval, the localhost redirect tab will fail to load. Copy its full address-bar URL; a field to paste it here will appear after you start sign-in.
+            After ChatGPT approval, the localhost redirect tab will fail to load. Copy its full address-bar URL into a field shown below here after you have started the sign-in.
           </p>
         </div>
       )}
 
       {login ? (
-        <div className="p-3 border rounded-md bg-muted/50 space-y-3 text-center">
+        <div className="p-3 border rounded-md bg-muted/50 space-y-3">
           <p className="text-xs text-muted-foreground">
-            Complete the ChatGPT login in your browser. No Codex CLI or device authorization is required.
+            If automatic redirection to OSW Studio fails after completing the ChatGPT login in the other browser tab, copy it's full redirect URL from the browser address bar into the field below.
           </p>
-          <Button asChild className="w-full gap-2">
-            <a href={login.authorizationUrl} target="_blank" rel="noopener noreferrer">
-              Open ChatGPT sign-in <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </Button>
-          {login.manualCallback ? (
-            <div className="space-y-2 text-left">
-              <p className="text-xs text-muted-foreground">
-                After approval, the ChatGPT tab will fail to open localhost. Copy its full address-bar URL and paste it here.
-              </p>
-              <Label htmlFor="codex-redirect-url" className="text-xs">Browser redirect URL</Label>
-              <Input
-                id="codex-redirect-url"
-                value={redirectUrl}
-                onChange={(event) => setRedirectUrl(event.target.value)}
-                placeholder="http://localhost:1455/auth/callback?code=…"
-                disabled={isLoading}
-              />
-              <Button
-                className="w-full"
-                onClick={handleManualCallback}
-                disabled={isLoading || !redirectUrl.trim()}
-              >
-                {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Complete sign-in
-              </Button>
-            </div>
-          ) : (
+          {!login.manualCallback && (
             <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
               Waiting for authorization…
             </div>
           )}
-          <Button size="sm" variant="ghost" onClick={handleCancelLogin}>Cancel</Button>
+          <Label htmlFor="codex-redirect-url" className="text-xs">Browser redirect URL</Label>
+          <Input
+            id="codex-redirect-url"
+            value={redirectUrl}
+            onChange={(event) => setRedirectUrl(event.target.value)}
+            placeholder="http://localhost:1455/auth/callback?code=…"
+            disabled={isCompletingRedirect}
+          />
+          <Button
+            className="w-full"
+            onClick={handleManualCallback}
+            disabled={isCompletingRedirect || !redirectUrl.trim()}
+          >
+            {isCompletingRedirect && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Complete sign-in
+          </Button>
+          <div className="text-center">
+            <Button size="sm" variant="ghost" onClick={handleCancelLogin}>Cancel</Button>
+          </div>
         </div>
       ) : (
         <Button onClick={handleLogin} disabled={isLoading} className="w-full gap-2">
