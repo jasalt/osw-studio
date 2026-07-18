@@ -18,7 +18,7 @@ class ScriptRunner {
    * Gathers text files from VFS and sends them to the worker.
    * If already running, aborts the previous execution first.
    */
-  async execute(projectId: string, runtime: ScriptRuntime, entryPoint: string): Promise<void> {
+  async execute(projectId: string, runtime: ScriptRuntime, entryPoint: string, inlineSource?: string): Promise<void> {
     // Abort any running execution
     if (this.running) {
       this.abort();
@@ -51,6 +51,14 @@ class ScriptRunner {
       if (typeof file.content === 'string') {
         files[file.path] = file.content;
       }
+    }
+
+    // Inline execution (python -c '<code>' or `python - << 'EOF'`): inject the source
+    // under a synthetic entry point so the worker (which resolves via files[entryPoint])
+    // runs it. No VFS mutation — the file exists only in this payload. Project modules
+    // remain importable because all VFS files are still gathered above.
+    if (typeof inlineSource === 'string') {
+      files[entryPoint] = inlineSource;
     }
 
     // Begin error tracking

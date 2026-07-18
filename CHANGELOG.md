@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.87.2 - 2026-07-19
+
+### AI Orchestration
+- **AI file edits containing HTML entities are no longer corrupted**: When the AI wrote code that contained HTML entities — for example an HTML-escaping helper built on `&amp;`/`&lt;` — the content was decoded as it was saved, silently turning that code into a no-op. Content the AI writes to a file is now saved exactly as written; only the command around it is decoded.
+- **Reliable multi-file writes in a single step**: When the AI created several files at once and one file's contents had an odd number of quote characters, the files that followed could be merged together or dropped. Each file is now written correctly.
+- **Inline Python and Lua snippets run**: `python -c "..."` and scripts piped in on standard input previously failed with "Entry point not found". They now execute.
+- **Clearer errors when the Python or Lua runtime can't load**: The Python and Lua runtimes download on first use. If that download fails — the browser is offline, or the source is blocked — the AI now gets a clear "runtime unavailable" message telling it to write the script out instead of a cryptic error, and a failed optional-package download no longer aborts an otherwise-working Python script.
+
 ## v1.87.1 - 2026-07-19
 
 ### Fixes

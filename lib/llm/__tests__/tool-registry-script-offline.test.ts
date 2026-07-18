@@ -1,0 +1,72 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const mockScriptExecute = vi.fn();
+
+vi.mock('@/lib/vfs', () => ({
+  getActiveVFS: () => ({
+    init: vi.fn(),
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+    listFiles: vi.fn().mockResolvedValue([]),
+    listDirectories: vi.fn().mockResolvedValue([]),
+    hasServerContext: () => false,
+    getRuntimeDeploymentId: () => null,
+    refreshServerContext: vi.fn(),
+  }),
+}));
+
+vi.mock('@/lib/vfs/cli-shell', () => ({
+  vfsShell: { execute: vi.fn().mockResolvedValue({ success: true, stdout: '' }) },
+}));
+
+vi.mock('@/lib/scripting/script-runner', () => ({
+  scriptRunner: { execute: (...args: any[]) => mockScriptExecute(...args) },
+}));
+
+vi.mock('@/lib/utils', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+function bashToolCall(command: string, id = 'tc-1') {
+  return { id, type: 'function' as const, function: { name: 'bash', arguments: JSON.stringify({ command }) } };
+}
+
+function setOnline(value: boolean) {
+  Object.defineProperty(window.navigator, 'onLine', { value, configurable: true });
+}
+
+describe('python/lua fast-fail when offline', () => {
+  let registry: any;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const mod = await import('../tool-registry');
+    registry = new mod.ToolRegistry();
+  });
+
+  afterEach(() => {
+    setOnline(true);
+  });
+
+  it('python3: returns an actionable error and does not spin up the worker when offline', async () => {
+    setOnline(false);
+
+    const result = await registry.execute(bashToolCall('python3 /main.py'), 'test-project', {});
+
+    expect(result).toContain('unavailable');
+    expect(result.toLowerCase()).toContain('offline');
+    expect(result.toLowerCase()).toContain('do not retry');
+    expect(mockScriptExecute).not.toHaveBeenCalled();
+  });
+
+  it('lua: returns an actionable error when offline', async () => {
+    setOnline(false);
+
+    const result = await registry.execute(bashToolCall('lua /main.lua'), 'test-project', {});
+
+    expect(result).toContain('Lua runtime');
+    expect(result.toLowerCase()).toContain('offline');
+    expect(mockScriptExecute).not.toHaveBeenCalled();
+  });
+});
