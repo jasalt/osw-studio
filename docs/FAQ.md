@@ -39,7 +39,7 @@ The application itself is **free and open source** (MIT license). However:
 
 - **Cloud providers** (OpenAI, Anthropic, etc.): Yes, get key from provider
 - **HuggingFace**: Free tier with $0.10/month credits — create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with "Inference Providers" permission. On HF Spaces, OAuth sign-in is also available (no token needed).
-- **ChatGPT subscription** (Plus/Pro): No API key needed — authenticate with your ChatGPT session via the Codex CLI. See [Getting Started](?doc=getting-started) for setup.
+- **ChatGPT subscription** (Plus/Pro): No API key needed, uses interactive ChatGPT sign-in.
 - **Local providers** (Ollama, LM Studio, llama.cpp, mesh-llm): No, run models locally for free
 
 ### Is my data private?

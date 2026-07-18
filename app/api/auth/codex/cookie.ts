@@ -1,5 +1,7 @@
 export const CODEX_COOKIE_NAME = 'osw_codex_rt';
+export const CODEX_LOGIN_COOKIE_NAME = 'osw_codex_login';
 export const CODEX_COOKIE_MAX_AGE = 90 * 24 * 60 * 60; // 90 days
+export const CODEX_LOGIN_COOKIE_MAX_AGE = 10 * 60;
 
 export function codexCookieOptions(maxAge = CODEX_COOKIE_MAX_AGE) {
   return {

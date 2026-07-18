@@ -2,12 +2,20 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ExternalLink, Loader2, Terminal, TriangleAlert } from 'lucide-react';
+import { ExternalLink, Loader2, LogIn } from 'lucide-react';
 import { ConnectionBadge } from '@/components/settings/connection-badge';
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
-import { parseCodexAuthJson, connectCodex, disconnectCodex, checkCodexStatus } from '@/lib/auth/codex-auth';
+import {
+  type CodexLoginInfo,
+  startCodexLogin,
+  completeCodexLogin,
+  pollCodexLogin,
+  disconnectCodex,
+  checkCodexStatus,
+} from '@/lib/auth/codex-auth';
 import { track } from '@/lib/telemetry';
 
 interface CodexAuthPanelProps {
@@ -18,7 +26,9 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(() =>
     !!configManager.getCodexAuth()
   );
-  const [pasteValue, setPasteValue] = useState('');
+  const [login, setLogin] = useState<CodexLoginInfo | null>(null);
+  const [redirectUrl, setRedirectUrl] = useState('');
+  const [manualCallbackExpected, setManualCallbackExpected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const auth = configManager.getCodexAuth();
@@ -32,6 +42,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
 
   // Reconcile localStorage vs HttpOnly cookie on mount
   useEffect(() => {
+    setManualCallbackExpected(!['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname));
     let cancelled = false;
 
     async function reconcile() {
@@ -42,14 +53,12 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
         const localAuth = configManager.getCodexAuth();
 
         if (localAuth && !hasCookie) {
-          // localStorage present but cookie gone (e.g., expired) → stale
           configManager.clearCodexAuth();
           if (!cancelled) {
             setIsAuthenticated(false);
             dispatchAuthEvent(false);
           }
         } else if (!localAuth && hasCookie) {
-          // Orphaned cookie, no localStorage → clean up
           await disconnectCodex();
           if (!cancelled) {
             setIsAuthenticated(false);
@@ -65,27 +74,76 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
     return () => { cancelled = true; };
   }, [dispatchAuthEvent]);
 
-  const handlePasteToken = async () => {
+  const finishLogin = useCallback((auth: NonNullable<ReturnType<typeof configManager.getCodexAuth>>) => {
+    configManager.setCodexAuth(auth);
+    setIsAuthenticated(true);
+    setLogin(null);
+    setRedirectUrl('');
+    setIsLoading(false);
+    toast.success('Connected to ChatGPT. Tokens will refresh automatically.');
+    track('connection_added', { provider: 'openai-codex' });
+    dispatchAuthEvent(true);
+  }, [dispatchAuthEvent]);
+
+  useEffect(() => {
+    if (!login || login.manualCallback) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      try {
+        const auth = await pollCodexLogin();
+        if (cancelled) return;
+        if (!auth) {
+          timer = setTimeout(poll, 1000);
+          return;
+        }
+
+        finishLogin(auth);
+      } catch (error) {
+        if (cancelled) return;
+        setLogin(null);
+        setIsLoading(false);
+        toast.error(error instanceof Error ? error.message : 'ChatGPT login failed');
+      }
+    };
+
+    timer = setTimeout(poll, 1000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [login, finishLogin]);
+
+  const handleLogin = async () => {
     setIsLoading(true);
     try {
-      const parsed = parseCodexAuthJson(pasteValue);
-
-      // Send to server — stores refresh_token in HttpOnly cookie
-      const serverResult = await connectCodex(parsed);
-
-      // Store only non-sensitive fields in localStorage
-      configManager.setCodexAuth(serverResult);
-      setIsAuthenticated(true);
-      setPasteValue('');
-      toast.success('Token saved! Tokens will refresh automatically.');
-      track('connection_added', { provider: 'openai-codex' });
-      dispatchAuthEvent(true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Invalid JSON';
-      toast.error(msg);
-    } finally {
+      const nextLogin = await startCodexLogin();
+      setLogin(nextLogin);
+      setIsLoading(!nextLogin.manualCallback);
+      window.open(nextLogin.authorizationUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
       setIsLoading(false);
+      toast.error(error instanceof Error ? error.message : 'Failed to start ChatGPT login');
     }
+  };
+
+  const handleManualCallback = async () => {
+    setIsLoading(true);
+    try {
+      finishLogin(await completeCodexLogin(redirectUrl.trim()));
+    } catch (error) {
+      setIsLoading(false);
+      toast.error(error instanceof Error ? error.message : 'Failed to complete ChatGPT login');
+    }
+  };
+
+  const handleCancelLogin = async () => {
+    setLogin(null);
+    setRedirectUrl('');
+    setIsLoading(false);
+    await disconnectCodex().catch(() => {});
   };
 
   const handleDisconnect = async () => {
@@ -114,31 +172,9 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
     return `${hrs}h ${mins % 60}m`;
   };
 
-  const warningBanner = (
-    <div className="p-2.5 border border-yellow-600/30 rounded-md bg-yellow-950/20 text-xs text-yellow-200/80 space-y-1">
-      <div className="flex items-start gap-2">
-        <TriangleAlert className="h-3.5 w-3.5 text-yellow-500 mt-0.5 shrink-0" />
-        <div>
-          <p>
-            <span className="font-medium text-yellow-400">Use at your own risk.</span>{' '}
-            This routes requests through an unofficial backend using your ChatGPT session token. Your token is sent to ChatGPT servers but the usage is outside the intended Codex CLI.
-          </p>
-          <p className="mt-1">
-            OpenAI may restrict or revoke access to this endpoint at any time. For reliable, long-term use consider an{' '}
-            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-yellow-400 hover:underline">OpenAI API key</a>{' '}
-            instead.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-
-  // --- Authenticated state ---
   if (isAuthenticated && auth) {
     return (
       <div className="space-y-3">
-        {warningBanner}
-
         <ConnectionBadge
           method="ChatGPT"
           extra={auth.user_email}
@@ -150,72 +186,69 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
     );
   }
 
-  // --- Unauthenticated state ---
   return (
     <div className="space-y-3">
       <Label>ChatGPT Authentication</Label>
       <p className="text-xs text-muted-foreground">
         Use your ChatGPT Plus/Pro subscription instead of an API key.
-        Tokens refresh automatically once connected.
+        Tokens are created and refreshed automatically once connected.
       </p>
 
-      {warningBanner}
-
-      <div className="p-3 border rounded-md bg-muted/50 space-y-3">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Terminal className="h-4 w-4" />
-          Setup Instructions
+      {manualCallbackExpected && !login && (
+        <div className="p-3 border rounded-md bg-muted/50 text-xs text-muted-foreground space-y-1">
+          <p className="font-medium text-foreground">HuggingFace / remote installation</p>
+          <p>
+            After ChatGPT approval, the localhost redirect tab will fail to load. Copy its full address-bar URL; a field to paste it here will appear after you start sign-in.
+          </p>
         </div>
+      )}
 
-        <ol className="text-xs text-muted-foreground space-y-2 list-decimal list-inside">
-          <li>
-            Install the{' '}
-            <a
-              href="https://github.com/openai/codex"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline inline-flex items-center gap-0.5"
-            >
-              Codex CLI <ExternalLink className="h-2.5 w-2.5" />
+      {login ? (
+        <div className="p-3 border rounded-md bg-muted/50 space-y-3 text-center">
+          <p className="text-xs text-muted-foreground">
+            Complete the ChatGPT login in your browser. No Codex CLI or device authorization is required.
+          </p>
+          <Button asChild className="w-full gap-2">
+            <a href={login.authorizationUrl} target="_blank" rel="noopener noreferrer">
+              Open ChatGPT sign-in <ExternalLink className="h-3.5 w-3.5" />
             </a>
-            {': '}
-            <code className="bg-muted px-1 rounded">npm i -g @openai/codex</code>
-          </li>
-          <li>
-            Run <code className="bg-muted px-1 rounded">codex login</code> and follow the browser prompts
-          </li>
-          <li>
-            Copy your token by running:<br />
-            <code className="bg-muted px-1 rounded select-all">cat ~/.codex/auth.json | pbcopy</code>
-            <span className="text-muted-foreground/60 ml-1">(macOS)</span>
-            <br />
-            <code className="bg-muted px-1 rounded select-all">cat ~/.codex/auth.json | xclip -sel c</code>
-            <span className="text-muted-foreground/60 ml-1">(Linux)</span>
-          </li>
-          <li>
-            Paste below with <code className="bg-muted px-1 rounded">Cmd+V</code> / <code className="bg-muted px-1 rounded">Ctrl+V</code>
-          </li>
-        </ol>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="codex-token" className="text-xs">Auth Token JSON</Label>
-        <textarea
-          id="codex-token"
-          className="w-full h-24 text-xs font-mono p-2 rounded-md border bg-background resize-none"
-          placeholder={'{\n  "access_token": "ey...",\n  "refresh_token": "v1.ey...",\n  "expires_at": 1234567890\n}'}
-          value={pasteValue}
-          onChange={(e) => setPasteValue(e.target.value)}
-        />
-        <Button
-          size="sm"
-          onClick={handlePasteToken}
-          disabled={!pasteValue.trim() || isLoading}
-        >
-          {isLoading && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-          Save Token
+          </Button>
+          {login.manualCallback ? (
+            <div className="space-y-2 text-left">
+              <p className="text-xs text-muted-foreground">
+                After approval, the ChatGPT tab will fail to open localhost. Copy its full address-bar URL and paste it here.
+              </p>
+              <Label htmlFor="codex-redirect-url" className="text-xs">Browser redirect URL</Label>
+              <Input
+                id="codex-redirect-url"
+                value={redirectUrl}
+                onChange={(event) => setRedirectUrl(event.target.value)}
+                placeholder="http://localhost:1455/auth/callback?code=…"
+                disabled={isLoading}
+              />
+              <Button
+                className="w-full"
+                onClick={handleManualCallback}
+                disabled={isLoading || !redirectUrl.trim()}
+              >
+                {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Complete sign-in
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Waiting for authorization…
+            </div>
+          )}
+          <Button size="sm" variant="ghost" onClick={handleCancelLogin}>Cancel</Button>
+        </div>
+      ) : (
+        <Button onClick={handleLogin} disabled={isLoading} className="w-full gap-2">
+          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+          Sign in with ChatGPT
         </Button>
-      </div>
+      )}
     </div>
   );
 }

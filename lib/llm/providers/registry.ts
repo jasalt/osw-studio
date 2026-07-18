@@ -240,8 +240,8 @@ export const providers: Record<BuiltInProviderId, ProviderConfig> = {
   },
   'openai-codex': {
     id: 'openai-codex',
-    name: 'Codex (ChatGPT Sub)',
-    description: 'Use your ChatGPT subscription — experimental, use at your own risk',
+    name: 'ChatGPT Subscription (Codex)',
+    description: 'Use your ChatGPT subscription.',
     apiKeyRequired: false,
     baseUrl: 'https://chatgpt.com/backend-api',
     models: codexModels,
