@@ -25,6 +25,8 @@ export async function POST(request: NextRequest) {
   const sessionId = session.userId;
   const workspaceId = body.workspaceId;
 
+  await taskManager.initialize();
+
   let taskId: string;
   try {
     taskId = taskManager.createTask(body.projectId, sessionId, body.apiKey, workspaceId);
@@ -39,6 +41,7 @@ export async function POST(request: NextRequest) {
   task.prompt = body.prompt;
   task.model = body.model;
   task.projectName = body.projectName;
+  await taskManager.updateTask(task);
 
   const port = process.env.PORT || '3000';
   const apiBaseUrl = `http://localhost:${port}`;

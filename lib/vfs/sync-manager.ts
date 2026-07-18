@@ -32,6 +32,12 @@ export interface FilesListSyncResult extends SyncResult {
   files?: VirtualFile[];
 }
 
+interface FileManifestEntry {
+  path: string;
+  updatedAt: string | Date;
+  size?: number;
+}
+
 export interface SkillSyncResult extends SyncResult {
   skill?: Skill;
   action?: 'created' | 'updated';
@@ -370,6 +376,76 @@ export class SyncManager {
         success: false,
         error: error instanceof Error ? error.message : 'Network error',
       };
+    }
+  }
+
+  /**
+   * Sync only files whose VFS revision differs from the server manifest. The
+   * first sync still sends the full project; later generations avoid sending
+   * unchanged source and binary assets over the network.
+   */
+  async pushProjectDelta(projectId: string, project: Project, files: VirtualFile[]): Promise<ProjectSyncResult> {
+    try {
+      const manifestResponse = await fetch(
+        `${this.baseUrl}${this.getApiUrl(`/sync/projects/${projectId}`)}?manifest=1`,
+      );
+
+      if (manifestResponse.status === 404) {
+        return this.pushSingleProject(projectId, project, files);
+      }
+      if (!manifestResponse.ok) {
+        const errorData = await manifestResponse.json().catch(() => ({}));
+        return { success: false, error: errorData.error || `HTTP ${manifestResponse.status}` };
+      }
+
+      const manifestData = await manifestResponse.json() as {
+        project: Project;
+        files: FileManifestEntry[];
+      };
+      const serverProject = manifestData.project;
+      const clientLastSynced = project.lastSyncedAt ? new Date(project.lastSyncedAt).getTime() : 0;
+      const serverUpdated = new Date(serverProject.updatedAt).getTime();
+      if (clientLastSynced > 0 && serverUpdated > clientLastSynced) {
+        return { success: false, error: 'conflict' };
+      }
+
+      const serverFiles = new Map(manifestData.files.map((file) => [file.path, file]));
+      const changedFiles = files.filter((file) => {
+        const serverFile = serverFiles.get(file.path);
+        if (!serverFile) return true;
+        return new Date(serverFile.updatedAt).getTime() !== new Date(file.updatedAt).getTime()
+          || (serverFile.size ?? 0) !== (file.size ?? 0);
+      });
+      const localPaths = new Set(files.map((file) => file.path));
+      const deletedPaths = manifestData.files
+        .filter((file) => !localPaths.has(file.path))
+        .map((file) => file.path);
+      const projectChanged = new Date(project.updatedAt).getTime() !== serverUpdated;
+
+      if (changedFiles.length === 0 && deletedPaths.length === 0 && !projectChanged) {
+        return { success: true, project: serverProject };
+      }
+
+      const response = await fetch(`${this.baseUrl}${this.getApiUrl(`/sync/projects/${projectId}`)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project,
+          files: changedFiles.map(serializeFileContent),
+          deletedPaths,
+          partial: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        return { success: false, error: errorData.error || `HTTP ${response.status}` };
+      }
+
+      const data = await response.json();
+      return { success: true, project: data.project };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }
   }
 

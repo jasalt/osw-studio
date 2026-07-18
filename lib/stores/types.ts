@@ -15,7 +15,9 @@ export interface GenerationTask {
   prompt: string;
   model: string;
   startedAt: number;
-  result: 'completed' | 'failed' | null;
+  // 'unavailable' = a server task the client can no longer reattach to (expired from both the
+  // in-memory manager and the durable store); its outcome is unknown, not a success or failure.
+  result: 'completed' | 'failed' | 'unavailable' | null;
   paused: boolean;
   pausedMessage: string | null;
   orchestratorInstance: MultiAgentOrchestrator | null;

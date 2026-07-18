@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextRequest } from 'next/server';
+import type { PersistedServerTask } from '@/lib/server-generate/types';
+import { taskManager } from '@/lib/server-generate/singleton';
 
 /**
  * Route-level auth guard for /api/server-generate/*. This locks the behavior that
@@ -23,8 +25,12 @@ vi.mock('next/headers', () => ({
 // side-effect-free and post-auth logic has no real infrastructure to touch.
 vi.mock('@/lib/server-generate/singleton', () => ({
   taskManager: {
+    initialize: vi.fn(),
+    updateTask: vi.fn(),
     getTasksForSession: () => [],
     getTask: () => undefined,
+    getReattachTask: vi.fn(async () => undefined),
+    getReattachTasks: async () => [],
     createTask: () => 'task-1',
   },
   eventBus: {
@@ -125,5 +131,59 @@ describe('server-generate routes authenticate in desktop mode without a session 
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * The single-task status branch (?taskId=) must scope to the caller: it can read its
+ * own task but not another session's, otherwise a taskId leaks another user's project
+ * metadata. In desktop mode getSession() resolves to userId 'desktop'.
+ */
+describe('GET /api/server-generate/status enforces task ownership', () => {
+  function makePersistedTask(overrides: Partial<PersistedServerTask> = {}): PersistedServerTask {
+    return {
+      taskId: 't1',
+      projectId: 'p1',
+      sessionId: 'desktop',
+      status: 'completed',
+      startedAt: 1_000,
+      updatedAt: 2_000,
+      buildDeferred: false,
+      failureReason: undefined,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    process.env.OSW_DESKTOP = 'true';
+  });
+
+  it('returns 200 and the task when it belongs to the caller', async () => {
+    vi.mocked(taskManager.getReattachTask).mockResolvedValueOnce(
+      makePersistedTask({ sessionId: 'desktop' }),
+    );
+    const { GET } = await import('../status/route');
+
+    const res = await GET(makeReq({ url: 'http://localhost/api/server-generate/status?taskId=t1' }));
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ taskId: 't1', projectId: 'p1' });
+  });
+
+  it('returns 403 for a task owned by another session', async () => {
+    vi.mocked(taskManager.getReattachTask).mockResolvedValueOnce(
+      makePersistedTask({ sessionId: 'someone-else' }),
+    );
+    const { GET } = await import('../status/route');
+
+    const res = await GET(makeReq({ url: 'http://localhost/api/server-generate/status?taskId=t1' }));
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 404 for an unknown taskId', async () => {
+    vi.mocked(taskManager.getReattachTask).mockResolvedValueOnce(undefined);
+    const { GET } = await import('../status/route');
+
+    const res = await GET(makeReq({ url: 'http://localhost/api/server-generate/status?taskId=nope' }));
+    expect(res.status).toBe(404);
   });
 });

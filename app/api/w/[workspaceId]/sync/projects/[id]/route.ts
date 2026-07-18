@@ -15,6 +15,8 @@ import { logger } from '@/lib/utils';
 interface PushRequestBody {
   project: Project;
   files: (VirtualFile & { _isBinaryBase64?: boolean })[];
+  deletedPaths?: string[];
+  partial?: boolean;
 }
 
 export async function POST(
@@ -25,9 +27,9 @@ export async function POST(
     const { adapter } = await getWorkspaceContext(params);
     const { id } = await params;
     const body: PushRequestBody = await request.json();
-    const { project, files } = body;
+    const { project, files, deletedPaths = [], partial = false } = body;
 
-    if (!project || project.id !== id) {
+    if (!project || project.id !== id || !Array.isArray(files) || !Array.isArray(deletedPaths)) {
       return NextResponse.json(
         { error: 'Invalid project data' },
         { status: 400 }
@@ -61,15 +63,29 @@ export async function POST(
       await adapter.createProject(syncedProject);
     }
 
-    // Sync files - delete all existing files and recreate
-    const existingFiles = await adapter.listFiles(id);
-    for (const file of existingFiles) {
-      await adapter.deleteFile(id, file.path);
-    }
+    if (partial) {
+      for (const filePath of deletedPaths) {
+        await adapter.deleteFile(id, filePath);
+      }
+      for (const file of files) {
+        const { _isBinaryBase64, ...rest } = file;
+        const fileData = { ...rest, projectId: id };
+        const existing = await adapter.getFile(id, fileData.path);
+        if (existing) await adapter.updateFile(fileData);
+        else await adapter.createFile(fileData);
+      }
+    } else {
+      // Full sync is retained for the initial import and backward compatibility.
+      const existingFiles = await adapter.listFiles(id);
+      for (const file of existingFiles) {
+        await adapter.deleteFile(id, file.path);
+      }
 
-    for (const file of files) {
-      const { _isBinaryBase64, ...fileData } = file;
-      await adapter.createFile(fileData);
+      for (const file of files) {
+        const { _isBinaryBase64, ...rest } = file;
+        const fileData = { ...rest, projectId: id };
+        await adapter.createFile(fileData);
+      }
     }
 
     logger.debug(`[API /api/w/[workspaceId]/sync/projects/${id}] Project synced successfully`);
@@ -95,7 +111,7 @@ export async function POST(
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ workspaceId: string; id: string }> }
 ) {
   try {
@@ -111,6 +127,14 @@ export async function GET(
     }
 
     const files = await adapter.listFiles(id);
+
+    if (request.nextUrl.searchParams.get('manifest') === '1') {
+      return NextResponse.json({
+        success: true,
+        project,
+        files: files.map((file) => ({ path: file.path, updatedAt: file.updatedAt, size: file.size })),
+      });
+    }
 
     logger.debug(`[API /api/w/[workspaceId]/sync/projects/${id}] Project pulled successfully`);
 

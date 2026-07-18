@@ -155,7 +155,7 @@ export async function runServerGeneration(
         cost: session.totalCost,
       }, task.sessionId);
 
-      taskManager.completeTask(taskId, wasStopped ? 'cancelled' : (result.success ? 'completed' : 'failed'));
+      await taskManager.completeTask(taskId, wasStopped ? 'cancelled' : (result.success ? 'completed' : 'failed'));
     } catch (error) {
       if (task.status === 'cancelled' || task.status === 'stopping' || task.status === 'paused') {
         flushDirtyPaths();
@@ -165,7 +165,7 @@ export async function runServerGeneration(
           tokens: session.totalPromptTokens + session.totalCompletionTokens,
           cost: session.totalCost,
         }, task.sessionId);
-        taskManager.completeTask(taskId, 'cancelled');
+        await taskManager.completeTask(taskId, 'cancelled');
         return;
       }
 
@@ -180,7 +180,7 @@ export async function runServerGeneration(
         error: message,
       }, task.sessionId);
 
-      taskManager.completeTask(taskId, 'failed');
+      await taskManager.completeTask(taskId, 'failed');
     }
   });
 }

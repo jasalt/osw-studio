@@ -209,13 +209,16 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
     // In server mode, pull updates in the background and merge silently
     if (localLoadOk && process.env.NEXT_PUBLIC_SERVER_MODE === 'true') {
       try {
-        const { autoPullAllProjects, setAutoSyncWorkspaceId } = await import('@/lib/vfs/auto-sync');
+        const { autoPullAllProjects, pushLocalOnlyProjects, setAutoSyncWorkspaceId } = await import('@/lib/vfs/auto-sync');
         if (workspaceId) {
           setAutoSyncWorkspaceId(workspaceId);
         }
         const result = await autoPullAllProjects();
-        if (result.pulled > 0) {
-          // Silently refresh the project list with newly pulled data
+        // Reconcile local-only projects (imports, or an earlier failed push) up to the server so
+        // they become deployable without a manual Server Sync. Self-heals every load.
+        const reconcile = await pushLocalOnlyProjects(workspaceId);
+        if (result.pulled > 0 || reconcile.pushed > 0) {
+          // Silently refresh the project list with newly pulled/pushed data
           const updated = await vfs.listProjects();
           const sortedUpdated = updated.sort((a, b) =>
             b.updatedAt.getTime() - a.updatedAt.getTime()
@@ -309,6 +312,14 @@ export function ProjectManager({ onProjectSelect, hideHeader = false, hideFooter
       loadProjects();
     }
   }, []);
+
+  // Keep the new-project template picker current when a template is imported/saved/deleted
+  // (e.g. from the Templates view), without relying on a remount or a full app reload.
+  useEffect(() => {
+    const handleTemplatesChanged = () => { loadCustomTemplates(); };
+    window.addEventListener('templatesChanged', handleTemplatesChanged);
+    return () => window.removeEventListener('templatesChanged', handleTemplatesChanged);
+  }, [loadCustomTemplates]);
 
   useEffect(() => {
     if (tourRunning && tourStep !== 'create-project') {

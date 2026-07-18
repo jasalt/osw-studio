@@ -6,12 +6,17 @@ export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  await taskManager.initialize();
+
   const taskId = request.nextUrl.searchParams.get('taskId');
 
   if (taskId) {
-    const task = taskManager.getTask(taskId);
+    const task = await taskManager.getReattachTask(taskId);
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    }
+    if (task.sessionId !== session.userId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json({
       taskId: task.taskId,
@@ -19,10 +24,11 @@ export async function GET(request: NextRequest) {
       status: task.status,
       startedAt: task.startedAt,
       buildDeferred: task.buildDeferred,
+      failureReason: task.failureReason,
     });
   }
 
-  const tasks = taskManager.getTasksForSession(session.userId).map((t) => ({
+  const tasks = (await taskManager.getReattachTasks(session.userId)).map((t) => ({
     taskId: t.taskId,
     projectId: t.projectId,
     status: t.status,
@@ -31,6 +37,7 @@ export async function GET(request: NextRequest) {
     prompt: t.prompt,
     model: t.model,
     projectName: t.projectName,
+    failureReason: t.failureReason,
   }));
 
   return NextResponse.json({ tasks });
