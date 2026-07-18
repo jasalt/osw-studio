@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.87.1 - 2026-07-19
+
+### Fixes
+- **No more HuggingFace sign-in nag when another provider is connected**: On HuggingFace Spaces, the composer's onboarding button pushed "Sign in with HuggingFace" whenever the active model wasn't ready — even for users who had already connected a different provider or pasted an API key and never touched HuggingFace. The sign-in prompt now only appears when no provider is connected at all.
+- **Imported projects sync to the server automatically (Server Mode)**: An imported project (or one whose earlier push silently failed) used to stay "local only" until you manually ran Server Sync. Server Mode now reconciles local-only projects up to the server on load, so they become deployable on their own.
+- **New-deployment project list stays current (Server Mode)**: The project picker in the "New deployment" dialog previously needed a full page reload to show a freshly created or imported project. It now refreshes when you open the dialog.
+- **Imported templates appear immediately in the new-project picker**: Importing, saving, or deleting a custom template now updates the template list in the "Create New Project" dialog live, instead of only after navigating away and back.
+- **Interrupted generations resolve cleanly (Server Mode)**: If the server restarts mid-generation, that generation is now reported as a clear failure instead of appearing stuck or being mistaken for a success. Reconnecting after a generation finished still recovers its result; a generation whose status has aged out is shown as "status unknown" rather than a false success or failure.
+- **Faster generation start (Server Mode)**: Before each generation the app no longer re-uploads the entire project — it skips the upload when the server copy is already current, and otherwise sends only the files that changed or were deleted.
+- **Background task popup stops nagging once you've seen it**: A generation that finished in the background kept showing its notification on the projects list and menus even after you opened the project and viewed the result. Opening a project now dismisses its finished-task popup; still-running tasks keep showing until they complete.
+- **No stray focus outline on the analytics disclosure dialog** ([#18](https://github.com/o-stahl/osw-studio/issues/18)): When the "Anonymous Usage Analytics" dialog opened, Firefox drew a focus ring around the "Details" toggle because the dialog auto-focused its first button. The dialog no longer moves focus to a control on open, so no outline appears.
+
 ## v1.87.0 - 2026-07-13
 
 ### Preview

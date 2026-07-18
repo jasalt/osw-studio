@@ -6,6 +6,8 @@ export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  await taskManager.initialize();
+
   let taskId: string;
   try { ({ taskId } = await request.json()); } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
@@ -28,6 +30,7 @@ export async function POST(request: NextRequest) {
     task.orchestrator.stop();
   }
   task.status = 'stopping';
+  await taskManager.updateTask(task);
 
   return NextResponse.json({ ok: true, hadOrchestrator: hasOrchestrator });
 }

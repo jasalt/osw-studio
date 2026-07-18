@@ -37,6 +37,8 @@ export interface ServerTask {
   workspaceId?: string;
   status: 'running' | 'paused' | 'stopping' | 'completed' | 'failed' | 'cancelled';
   startedAt: number;
+  /** Last status-change time. Drives retention/prune so terminal tasks expire on a terminal clock. */
+  updatedAt: number;
   orchestrator: MultiAgentOrchestrator | null;
   buildDeferred: boolean;
   /** Resolve function for pending build delegation */
@@ -45,7 +47,16 @@ export interface ServerTask {
   prompt?: string;
   model?: string;
   projectName?: string;
+  /** Present when a process restart interrupted an in-flight generation. */
+  failureReason?: string;
 }
+
+/** Serializable task state. API keys and live orchestrators are never persisted. */
+export type PersistedServerTask = Pick<
+  ServerTask,
+  'taskId' | 'projectId' | 'sessionId' | 'workspaceId' | 'status' | 'startedAt' | 'updatedAt' | 'buildDeferred'
+  | 'prompt' | 'model' | 'projectName' | 'failureReason'
+>;
 
 export interface BuildResult {
   success: boolean;

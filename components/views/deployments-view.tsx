@@ -101,6 +101,32 @@ export function DeploymentsView({ onProjectSelect, workspaceId }: DeploymentsVie
     }
   };
 
+  // Refresh just the project list from the server, reconciling any local-only projects (imports,
+  // or an earlier failed push) up first so a freshly imported project appears in the "New
+  // deployment" picker without a full page reload. Runs when the Create modal is opened.
+  const refreshProjectList = async () => {
+    if (!isServerMode) return;
+    try {
+      const { pushLocalOnlyProjects } = await import('@/lib/vfs/auto-sync');
+      await pushLocalOnlyProjects(workspaceId);
+      const res = await fetch(`${apiBase}/projects?fields=id,name`);
+      if (res.status === 401) {
+        window.location.href = getLoginUrl();
+        return;
+      }
+      if (!res.ok) return;
+      setProjects(await res.json());
+    } catch (error) {
+      logger.error('[DeploymentsView] Failed to refresh project list:', error);
+    }
+  };
+
+  const handleOpenCreate = () => {
+    setShowCreateModal(true);
+    // Refresh in the background; the dropdown updates reactively when it resolves.
+    void refreshProjectList();
+  };
+
   // Helper function to update a single deployment in state (optimistic updates)
   const updateDeploymentInState = (deploymentId: string, updates: Partial<Deployment>) => {
     setDeployments(prevDeployments =>
@@ -644,7 +670,7 @@ export function DeploymentsView({ onProjectSelect, workspaceId }: DeploymentsVie
               </Popover>
 
               {/* New Deployment */}
-              <Button onClick={() => setShowCreateModal(true)} size="sm" className="gap-2">
+              <Button onClick={handleOpenCreate} size="sm" className="gap-2">
                 <Plus className="h-4 w-4" />
                 <span>New</span>
               </Button>

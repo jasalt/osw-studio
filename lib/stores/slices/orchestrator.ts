@@ -17,6 +17,7 @@ import { handleFilesChanged, cancelPendingFileSync } from '@/lib/server-generate
 import { handleBuildRequested } from '@/lib/server-generate/build-delegation-handler';
 import { playTaskCompleteSound, playTaskCompleteSoundSubtle } from '@/lib/utils/task-complete-sound';
 import { checkpointManager } from '@/lib/vfs/checkpoint';
+import { saveManager } from '@/lib/vfs/save-manager';
 import { getProjectAssignment } from '@/lib/llm/models/project-assignment';
 import type { InterviewTemplate } from '@/lib/interview/types';
 import type { ApprovalRequest, ApprovalOutcome } from '@/lib/llm/permissions';
@@ -810,6 +811,12 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     // Re-derive scalar fields for the new viewed project
     set(deriveScalarFields(get().generationTasks, projectId));
 
+    // Opening a project counts as seeing its result: implicitly dismiss a terminal (completed/
+    // failed/unavailable) background task for it, so the shelf popup doesn't reappear on the
+    // projects list / menu after the user has viewed it. No-ops for a still-running task, so live
+    // background generations keep showing until they finish.
+    get().dismissGenerationResult(projectId);
+
     // Background buffer takes priority — SSE replay may have populated it while
     // the user was on another page (e.g. project list during reattach).
     // Persist to IDB before deleting so StrictMode double-calls find fresh data.
@@ -875,6 +882,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     if (get().sseClient) return;
 
     const client = new SSEClient({
+      // A restarted server has no in-memory event buffer. Re-checking status on
+      // each successful connection turns a recovered terminal task into UI state.
+      onConnect: () => { get().reattachServerTasks(); },
       onEvent: (event, data) => {
         const projectId = data.sourceProjectId as string;
         if (event === 'files_changed') {
@@ -1030,17 +1040,32 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
       return;
     }
 
-    // Push project files to server before generation so the server VFS has current state
+    // A saved project is normally already pushed by the debounced auto-sync. Flush
+    // that pending push first, then avoid serializing the entire VFS when its sync
+    // metadata is confirmed current. Dirty projects use a server manifest and send
+    // only changed/deleted files.
     try {
+      await vfs.flushSyncTimeout(projectId);
       const { getSyncManager } = await import('@/lib/vfs/sync-manager');
       const syncMgr = getSyncManager();
       const project = await vfs.getProject(projectId);
-      const allItems = await vfs.getAllFilesAndDirectories(projectId);
-      const files = allItems.filter((f): f is import('@/lib/vfs/types').VirtualFile => !('type' in f && f.type === 'directory'));
-      if (project) {
-        const result = await syncMgr.pushSingleProject(projectId, project, files);
+      const alreadySynced = project?.syncStatus === 'synced'
+        && !!project.lastSyncedAt
+        && !!project.serverUpdatedAt
+        && !saveManager.isDirty(projectId);
+      if (project && !alreadySynced) {
+        const allItems = await vfs.getAllFilesAndDirectories(projectId);
+        const files = allItems.filter((f): f is import('@/lib/vfs/types').VirtualFile => !('type' in f && f.type === 'directory'));
+        const result = await syncMgr.pushProjectDelta(projectId, project, files);
         if (!result.success) {
           logger.warn('[ServerGen] Pre-generation sync failed:', result.error);
+        } else if (result.project) {
+          await vfs.updateProject({
+            ...project,
+            lastSyncedAt: new Date(result.project.lastSyncedAt ?? Date.now()),
+            serverUpdatedAt: new Date(result.project.serverUpdatedAt ?? result.project.updatedAt),
+            syncStatus: 'synced',
+          }, { preserveUpdatedAt: true });
         }
       }
     } catch (err) {
@@ -1226,7 +1251,11 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
             persistedInstance: null,
             serverTaskId: serverTask.taskId,
           });
-          get().addDebugEvent('task_complete', { result: serverTask.status, recovered: true }, serverTask.projectId);
+          get().addDebugEvent('task_complete', {
+            result: serverTask.status,
+            error: serverTask.failureReason,
+            recovered: true,
+          }, serverTask.projectId);
 
           if (result === 'completed') {
             try {
@@ -1238,11 +1267,19 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
         }
       }
 
-      // Clear orphaned generation tasks whose server task was already swept
+      // A task absent from both the in-memory manager and the durable store has expired past the
+      // reattach window: its outcome is unknown. A genuine restart-interrupt is surfaced as a
+      // failure via the durable row above, so reaching here means we truly cannot tell. Mark it
+      // 'unavailable' rather than claiming success or inventing a failure — and do
+      // not pull files, since their presence would not prove the generation finished.
       for (const [pid, task] of generationTasks) {
         if (task.serverTaskId && task.result === null && !serverProjectIds.has(pid)) {
-          generationTasks.set(pid, { ...task, result: 'completed' });
-          get().addDebugEvent('task_complete', { result: 'success', recovered: true }, pid);
+          generationTasks.set(pid, { ...task, result: 'unavailable' });
+          get().addDebugEvent('task_complete', {
+            result: 'unavailable',
+            error: 'Generation status expired — outcome unknown',
+            recovered: true,
+          }, pid);
         }
       }
 

@@ -1039,7 +1039,7 @@ export function ChatPanel({
                 />,
                 document.body,
               )}
-              {!providerReady && hfOAuth?.oauthAvailable && hfOAuth.clientId ? (
+              {!providerReady && !hasAnyConnectedProvider() && hfOAuth?.oauthAvailable && hfOAuth.clientId ? (
                 /* HF Space, no provider connected: one-click "Sign in with HuggingFace"
                    OAuth (primary) with a chevron that opens the Connections tab (the
                    default unconnected behavior). Not wrapped in the model-picker

@@ -35,7 +35,10 @@ export function TelemetryDisclosure({ open, onDismiss }: TelemetryDisclosureProp
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onDismiss(); }}>
-      <DialogContent className="sm:max-w-md max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto]">
+      <DialogContent
+        className="sm:max-w-md max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto]"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Anonymous Usage Analytics</DialogTitle>
           <DialogDescription>
