@@ -6,12 +6,18 @@ export interface WebSearchResult {
 }
 export interface WebSearchOpts { count?: number; markdown?: boolean; }
 export interface WebSearchAuth { key?: string; searxngUrl?: string; }
-export type WebSearchProviderId = 'tavily' | 'firecrawl' | 'brave' | 'searxng';
-export interface WebSearchProvider {
+export type WebSearchProviderId = 'duckduckgo' | 'tavily' | 'firecrawl' | 'brave' | 'searxng';
+interface WebSearchProviderBase {
   id: WebSearchProviderId;
   name: string;
-  auth: 'key' | 'url';
+  auth: 'none' | 'key' | 'url';
   nativeContent: boolean; // true if search results already include page content
+}
+export interface WebSearchProvider extends WebSearchProviderBase {
   buildRequest(query: string, opts: WebSearchOpts, auth: WebSearchAuth): { url: string; init: RequestInit };
   normalize(raw: any): WebSearchResult[];
 }
+export interface WebSearchDirectProvider extends WebSearchProviderBase {
+  search(query: string, opts: WebSearchOpts, signal: AbortSignal): Promise<WebSearchResult[]>;
+}
+export type RegisteredWebSearchProvider = WebSearchProvider | WebSearchDirectProvider;

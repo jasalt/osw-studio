@@ -2742,7 +2742,9 @@ Localhost URLs fetch compiled HTML from the preview engine; external URLs are fe
 
         const auth = provider === 'searxng'
           ? { searxngUrl: configManager.getSearxngUrl() || undefined }
-          : { key: configManager.getWebSearchKey(provider) || undefined };
+          : provider === 'duckduckgo'
+            ? {}
+            : { key: configManager.getWebSearchKey(provider) || undefined };
 
         try {
           const resp = await fetch('/api/web/search', {

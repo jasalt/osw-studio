@@ -1,6 +1,6 @@
 /**
- * Web search proxy. Runs the selected provider's search server-side with the
- * user's key, normalizes results, and returns them. Does NOT fetch page content
+ * Web search proxy. Runs the selected provider's search server-side with any
+ * required credentials, normalizes results, and returns them. Does NOT fetch page content
  * for non-native providers; the client does that via the curl --markdown path.
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -37,19 +37,23 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const signal = AbortSignal.timeout(20_000);
+    if ('search' in provider) {
+      return NextResponse.json({ results: await provider.search(query, { count, markdown }, signal) });
+    }
+
     const { url, init } = provider.buildRequest(query, { count, markdown }, auth);
     // The SearXNG endpoint is user-supplied, so guard it against SSRF. Other
     // providers use hardcoded public endpoints and need no check.
     if (provider.auth === 'url') {
       await assertPublicUrl(url);
     }
-    const resp = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+    const resp = await fetch(url, { ...init, signal });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       return NextResponse.json({ error: `provider error (${provider.name}): ${resp.status} ${text.slice(0, 200)}` }, { status: 200 });
     }
-    const raw = await resp.json();
-    const results = provider.normalize(raw);
+    const results = provider.normalize(await resp.json());
     return NextResponse.json({ results });
   } catch (e: unknown) {
     const msg = e instanceof Error ? (e.name === 'TimeoutError' ? 'timeout after 20s' : e.message) : 'search failed';

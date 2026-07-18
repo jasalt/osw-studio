@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { configManager } from '@/lib/config/storage';
+import type { WebSearchProviderId as SearchProviderId } from '@/lib/web-search/types';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,17 +30,15 @@ import { cn } from '@/lib/utils';
 // Provider metadata
 // ---------------------------------------------------------------------------
 
-type SearchProviderId = 'tavily' | 'firecrawl' | 'brave' | 'searxng';
-type SearchKeyProviderId = 'tavily' | 'firecrawl' | 'brave';
-
 interface SearchProviderMeta {
   id: SearchProviderId;
   name: string;
   help: string;
-  auth: 'key' | 'url';
+  auth: 'none' | 'key' | 'url';
 }
 
 const SEARCH_PROVIDERS: SearchProviderMeta[] = [
+  { id: 'duckduckgo', name: 'DuckDuckGo', help: 'Free web search. No API key required.', auth: 'none' },
   { id: 'tavily', name: 'Tavily', help: '1,000 searches/month free, no card required.', auth: 'key' },
   { id: 'firecrawl', name: 'Firecrawl', help: '1,000 credits/month free.', auth: 'key' },
   { id: 'brave', name: 'Brave', help: 'Paid: $5 monthly credit, card required.', auth: 'key' },
@@ -50,14 +49,16 @@ function getMeta(id: SearchProviderId): SearchProviderMeta {
   return SEARCH_PROVIDERS.find((p) => p.id === id)!;
 }
 
-/** True when a provider has stored credentials. Read inside effects/handlers only. */
+/** True when a provider is connected. Read inside effects/handlers only. */
 function isSearchConnected(id: SearchProviderId): boolean {
+  if (id === 'duckduckgo') return configManager.getWebSearchProvider() === id;
   if (id === 'searxng') return !!configManager.getSearxngUrl();
   return !!configManager.getWebSearchKey(id);
 }
 
-/** Masked credential shown on a connected card. */
+/** Masked credential shown on a connected card, when applicable. */
 function searchCred(id: SearchProviderId): string {
+  if (id === 'duckduckgo') return '';
   if (id === 'searxng') return configManager.getSearxngUrl() ?? '';
   const key = configManager.getWebSearchKey(id);
   return key ? `···${key.slice(-4)}` : '';
@@ -112,10 +113,12 @@ function SearchConnectionCard({ id, cred, active, onSetActive, onEdit, onDisconn
                 Set as active
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={onEdit}>
-              <Pencil className="h-4 w-4" />
-              Edit
-            </DropdownMenuItem>
+            {meta.auth !== 'none' && (
+              <DropdownMenuItem onSelect={onEdit}>
+                <Pencil className="h-4 w-4" />
+                Edit
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={onDisconnect} className="text-destructive focus:text-destructive">
               <Unplug className="h-4 w-4" />
               Disconnect
@@ -176,17 +179,17 @@ function ConfigureBody({ id, onSaved, onBack }: ConfigureBodyProps) {
   const [value, setValue] = useState(() =>
     id === 'searxng'
       ? configManager.getSearxngUrl() ?? ''
-      : configManager.getWebSearchKey(id) ?? ''
+      : id === 'duckduckgo' ? '' : configManager.getWebSearchKey(id) ?? ''
   );
   const [showKey, setShowKey] = useState(false);
 
   const handleSave = () => {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (meta.auth !== 'none' && !trimmed) return;
     if (id === 'searxng') {
       configManager.setSearxngUrl(trimmed);
-    } else {
-      configManager.setWebSearchKey(id as SearchKeyProviderId, trimmed);
+    } else if (id !== 'duckduckgo') {
+      configManager.setWebSearchKey(id, trimmed);
     }
     // First connected provider becomes the active one.
     if (!configManager.getWebSearchProvider()) {
@@ -225,7 +228,7 @@ function ConfigureBody({ id, onSaved, onBack }: ConfigureBodyProps) {
             </div>
           </div>
         </div>
-      ) : (
+      ) : meta.auth === 'url' ? (
         <div>
           <Label htmlFor="search-url">SearXNG instance URL</Label>
           <div className="flex gap-2 mt-2">
@@ -240,13 +243,15 @@ function ConfigureBody({ id, onSaved, onBack }: ConfigureBodyProps) {
             />
           </div>
         </div>
+      ) : (
+        <p className="text-sm">No setup required.</p>
       )}
 
       <div className="flex gap-2 justify-end pt-2">
         <Button variant="ghost" size="sm" onClick={onBack}>
           Back
         </Button>
-        <Button size="sm" onClick={handleSave} disabled={!value.trim()}>
+        <Button size="sm" onClick={handleSave} disabled={meta.auth !== 'none' && !value.trim()}>
           Save
         </Button>
       </div>
@@ -296,8 +301,8 @@ export function SearchConnectionsSection() {
     const meta = getMeta(id);
     if (id === 'searxng') {
       configManager.setSearxngUrl('');
-    } else {
-      configManager.setWebSearchKey(id as SearchKeyProviderId, '');
+    } else if (id !== 'duckduckgo') {
+      configManager.setWebSearchKey(id, '');
     }
     // If the disconnected provider was active, reassign to another connected one.
     if (configManager.getWebSearchProvider() === id) {
@@ -375,6 +380,13 @@ export function SearchConnectionsSection() {
         {drawerMode === 'choose' && (
           <ChooseBody
             onChoose={(id) => {
+              if (getMeta(id).auth === 'none') {
+                configManager.setWebSearchProvider(id);
+                toast.success(`${getMeta(id).name} is active`);
+                refresh();
+                closeDrawer();
+                return;
+              }
               setSelectedId(id);
               setDrawerMode('configure');
             }}
