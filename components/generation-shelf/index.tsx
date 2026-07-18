@@ -144,10 +144,12 @@ function GenerationShelfEntry({ task, expanded, onToggleExpand, onNavigateToProj
 
   const dotColor = task.result === 'completed' ? 'bg-green-500' :
     task.result === 'failed' ? 'bg-destructive' :
+    task.result === 'unavailable' ? 'bg-muted-foreground' :
     task.paused ? 'bg-yellow-500' : 'bg-orange-400';
 
   const verbColor = task.result === 'completed' ? 'text-green-500' :
     task.result === 'failed' ? 'text-destructive' :
+    task.result === 'unavailable' ? 'text-muted-foreground' :
     task.paused ? 'text-yellow-500' : 'text-orange-400';
 
   const handleNavigate = () => {
@@ -190,6 +192,7 @@ function GenerationShelfEntry({ task, expanded, onToggleExpand, onNavigateToProj
         <span className="text-xs text-muted-foreground truncate flex-1 min-w-0">
           {task.result === 'completed' && <><span className={verbColor}>Done</span>{usage ? ` ${totalActions} actions · $${usage.cost.toFixed(4)}` : ''}</>}
           {task.result === 'failed' && <span className={verbColor}>Error</span>}
+          {task.result === 'unavailable' && <span className={verbColor}>Status unknown</span>}
           {isActive && task.paused && <span className={verbColor}>Paused — needs attention</span>}
           {isActive && !task.paused && latestAction && <><span className={verbColor}>{latestAction.verb}</span> {latestAction.target}</>}
           {isActive && !task.paused && !latestAction && <span className={verbColor}>Starting…</span>}

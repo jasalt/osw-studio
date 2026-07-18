@@ -507,6 +507,51 @@ export async function autoPullAllProjects(onProgress?: (current: number, total: 
 }
 
 /**
+ * Push any project that exists only locally (never synced to the server) up to the server, so
+ * imports and any earlier failed push self-heal on load. This is the load-time counterpart to
+ * autoPullAllProjects (which only reconciles server→local): a project imported via .osws restore
+ * (raw IndexedDB writes) or a .json import whose push threw would otherwise sit local-only forever,
+ * invisible to the server-backed deployment picker.
+ *
+ * Local-only = neither serverUpdatedAt nor lastSyncedAt recorded. A project that was pushed and then
+ * deleted server-side keeps those stamps, so it is NOT re-pushed here. Idempotent: pushProjectToServer
+ * records the stamps on success, so a project is pushed at most once. No-op in browser mode.
+ *
+ * Deliberately NOT gated by AUTO_PULL_SESSION_KEY: a .osws restore triggers a same-session reload, so a
+ * session-once guard would skip the very reconcile the import needs.
+ */
+export async function pushLocalOnlyProjects(workspaceId?: string): Promise<{ pushed: number; errors: number }> {
+  if (process.env.NEXT_PUBLIC_SERVER_MODE !== 'true') return { pushed: 0, errors: 0 };
+  let pushed = 0;
+  let errors = 0;
+  try {
+    await vfs.init();
+    const localProjects = await vfs.listProjects();
+    const localOnly = localProjects.filter((p) => !p.serverUpdatedAt && !p.lastSyncedAt);
+    if (localOnly.length === 0) return { pushed: 0, errors: 0 };
+
+    const { pushProjectToServer } = await import('./push-project-to-server');
+    for (const project of localOnly) {
+      try {
+        await pushProjectToServer(project.id, workspaceId);
+        // pushProjectToServer stamps serverUpdatedAt on success; re-read to confirm it landed.
+        const updated = await vfs.getProject(project.id);
+        if (updated?.serverUpdatedAt) pushed++;
+        else errors++;
+      } catch (error) {
+        logger.error(`[AutoSync] Failed to push local-only project ${project.id}:`, error);
+        errors++;
+      }
+    }
+    if (pushed > 0) logger.debug(`[AutoSync] Reconciled ${pushed} local-only project(s) to server`);
+    return { pushed, errors };
+  } catch (error) {
+    logger.error('[AutoSync] Failed to reconcile local-only projects:', error);
+    return { pushed, errors };
+  }
+}
+
+/**
  * Auto-delete a project from the server (non-blocking)
  */
 export async function autoDeleteProject(projectId: string): Promise<void> {

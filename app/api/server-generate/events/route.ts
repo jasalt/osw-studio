@@ -6,6 +6,8 @@ export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) return new Response('Unauthorized', { status: 401 });
 
+  await taskManager.initialize();
+
   const sessionId = session.userId;
   const lastEventIdHeader = request.headers.get('Last-Event-ID');
   const lastEventIdParam = request.nextUrl.searchParams.get('lastEventId');

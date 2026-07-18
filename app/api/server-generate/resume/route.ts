@@ -6,6 +6,8 @@ export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  await taskManager.initialize();
+
   let taskId: string;
   try { ({ taskId } = await request.json()); } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });

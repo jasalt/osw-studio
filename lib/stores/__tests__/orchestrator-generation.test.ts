@@ -262,4 +262,23 @@ describe('orchestrator slice — concurrent generation', () => {
 
     expect(store.getState().generationTasks.has('proj-a')).toBe(true);
   });
+
+  it('loadDebugEvents clears a completed background task for the viewed project', async () => {
+    setActiveTask(store, 'proj-a', { result: 'completed' });
+    setActiveTask(store, 'proj-b', { result: 'completed' });
+
+    await store.getState().loadDebugEvents('proj-a');
+
+    // Viewing proj-a implicitly dismisses its terminal task; proj-b is untouched.
+    expect(store.getState().generationTasks.has('proj-a')).toBe(false);
+    expect(store.getState().generationTasks.has('proj-b')).toBe(true);
+  });
+
+  it('loadDebugEvents keeps a still-running task for the viewed project', async () => {
+    setActiveTask(store, 'proj-a'); // result: null (still generating)
+
+    await store.getState().loadDebugEvents('proj-a');
+
+    expect(store.getState().generationTasks.has('proj-a')).toBe(true);
+  });
 });

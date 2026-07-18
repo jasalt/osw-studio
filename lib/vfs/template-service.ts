@@ -233,6 +233,7 @@ export class TemplateService {
 
       // Background sync to server
       import('./auto-sync').then(({ autoSyncTemplate }) => autoSyncTemplate(template)).catch(() => {});
+      this.emitTemplatesChanged();
 
       logger.info('[TemplateService] Template saved successfully', { id: template.id, name: template.name });
 
@@ -306,6 +307,7 @@ export class TemplateService {
 
       // Background sync to server
       import('./auto-sync').then(({ autoSyncTemplate }) => autoSyncTemplate(template)).catch(() => {});
+      this.emitTemplatesChanged();
 
       logger.info('[TemplateService] Template imported successfully', {
         id: template.id,
@@ -316,6 +318,17 @@ export class TemplateService {
     } catch (error) {
       logger.error('[TemplateService] Failed to import template:', error);
       throw new Error(`Failed to import template: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Notify the UI that the custom-template set changed (import / save / delete), so lists that
+   * fetch templates once on mount — notably the new-project template picker in ProjectManager —
+   * can refresh without a full app reload. Guarded for non-browser (SSR) contexts.
+   */
+  private emitTemplatesChanged(): void {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('templatesChanged'));
     }
   }
 
@@ -343,6 +356,7 @@ export class TemplateService {
 
       // Background sync to server
       import('./auto-sync').then(({ autoDeleteTemplate }) => autoDeleteTemplate(id)).catch(() => {});
+      this.emitTemplatesChanged();
 
       logger.info('[TemplateService] Template deleted', { id });
     } catch (error) {
