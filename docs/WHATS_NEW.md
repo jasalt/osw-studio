@@ -9,8 +9,8 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 ## Unreleased
 
 ### Connections
-- **ChatGPT subscription browser sign-in**: Codex connections use browser PKCE login flow with automatic token creation and refresh—no Codex CLI, pasted token JSON, or device authorization setting required
-- **HuggingFace and remote login fallback**: When OpenAI's fixed localhost callback cannot reach OSW Studio, the connection panel explains this before sign-in and then accepts the full redirect URL copied from the failed ChatGPT tab
+- **ChatGPT subscription browser sign-in**: Codex connections use a browser sign-in flow with automatic token creation and refresh — no Codex CLI, pasted token JSON, or device authorization setting required. Available on local, desktop, and self-hosted installs (not on HuggingFace Spaces, which runs the app in an embedded frame that can't hold the session cookie).
+- **Remote sign-in fallback**: On a self-hosted install where OpenAI's fixed localhost callback can't reach OSW Studio, the connection panel explains this and accepts the full redirect URL copied from the ChatGPT tab.
 
 ## v1.87.0 - Preview Reliability (2026-07-13)
 

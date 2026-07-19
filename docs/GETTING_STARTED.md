@@ -46,7 +46,7 @@ If you have a ChatGPT Plus or Pro subscription you can use it instead of a separ
 1. In Settings → Connections, select **ChatGPT Subscription (Codex)**
 2. Click **Sign in with ChatGPT** and approve access in the browser window
 
-No Codex CLI or device authorization setting is required. Desktop/local installations complete automatically. On HuggingFace or another remote host, OpenAI still redirects to localhost; copy the failed ChatGPT tab's full address-bar URL into the form OSW Studio displays. OSW Studio then creates the tokens automatically. The refresh token is kept in an HttpOnly cookie (not localStorage), so client-side JS never has access to it.
+No Codex CLI or device authorization setting is required. Desktop/local installations complete automatically. On a remote or self-hosted instance, OpenAI still redirects to localhost; copy the failed ChatGPT tab's full address-bar URL into the form OSW Studio displays. OSW Studio then creates the tokens automatically. The refresh token is kept in an HttpOnly cookie (not localStorage), so client-side JS never has access to it. (ChatGPT sign-in isn't available on HuggingFace Spaces, which runs the app in an embedded frame that can't hold the session cookie.)
 
 > **Warning**: This routes through an unofficial endpoint using your ChatGPT session. OpenAI may restrict or revoke access at any time. For something more stable, use an [OpenAI API key](https://platform.openai.com/api-keys) instead.
 
