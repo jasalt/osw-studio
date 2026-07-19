@@ -5,6 +5,9 @@
 ### Connections
 - **Free DuckDuckGo web search**: DuckDuckGo is available as a search provider that needs no account or API key — select it under Connections and it becomes the active provider. It supports the same search, result-count, and page-content options as the existing providers. Because it relies on unofficial scraping, searches can be rate-limited or blocked — more so on shared or hosted instances where every user's searches come from one address — so Connections flags it as best-effort and the agent is told to retry or switch to a key-based provider when a search fails.
 
+### Providers & models
+- **Live ChatGPT (Codex) model discovery**: The model picker now fetches the current Codex catalog for the signed-in ChatGPT subscription instead of relying only on a hardcoded list, so new GPT-5.5 and GPT-5.6 models appear without an OSW Studio release — with live names, descriptions, context windows, and image support, ordered by Codex's own priority. Expired access tokens are refreshed automatically before the fetch, and if the catalog can't be reached the built-in fallback list (also updated in this release) is used.
+
 ## v1.88.0 - 2026-07-19
 
 ### Connections

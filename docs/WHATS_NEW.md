@@ -6,17 +6,6 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
-## Unreleased
-
-ChatGPT subscription models are now discovered directly from Codex, so the model picker stays current without an OSW Studio release. The picker shows the available GPT-5.5 and GPT-5.6 models with live names, descriptions, context windows, and image support, while retaining an up-to-date fallback list if discovery is unavailable.
-
-### Providers & models
-- **Live ChatGPT model discovery**: Fetches the current Codex catalog for the signed-in account and refreshes expired access tokens automatically
-- **Focused model list**: Shows GPT-5.5 and GPT-5.6 models only, ordered by Codex priority with accurate capability metadata
-- **Offline fallback**: Uses the matching built-in model list when the Codex catalog cannot be reached
-
----
-
 ## v1.88.0 - ChatGPT Sign-in (2026-07-19)
 
 Connecting a ChatGPT Plus/Pro subscription is now a browser sign-in — no Codex CLI to install and no token file to paste. Tokens are created and refreshed automatically, and the refresh token stays in an HttpOnly cookie rather than localStorage. It works on local, desktop, and self-hosted installs, but not on HuggingFace Spaces, where the app runs in an embedded frame that can't keep the session cookie.
