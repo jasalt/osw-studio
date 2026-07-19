@@ -11,14 +11,14 @@ import { logger } from '@/lib/utils';
 
 // --- Vendored Codex utilities (avoids bundling the full package with fs/path side effects) ---
 import {
-  decodeJWT,
   createCodexHeaders,
+  getCodexAccountId,
   handleErrorResponse,
   getReasoningConfig,
   getNormalizedModel,
   CODEX_BASE_URL,
-  JWT_CLAIM_PATH,
 } from './codex-utils';
+export { getCodexAccountId } from './codex-utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,24 +199,7 @@ export function buildCodexRequestBody(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Extract account ID from JWT access token
-// ---------------------------------------------------------------------------
-
-export function getCodexAccountId(accessToken: string): string {
-  const decoded = decodeJWT(accessToken);
-  if (!decoded) {
-    throw new Error('Failed to decode Codex access token');
-  }
-  const claims = decoded?.[JWT_CLAIM_PATH] as Record<string, unknown> | undefined;
-  const accountId = claims?.chatgpt_account_id as string | undefined;
-  if (!accountId) {
-    throw new Error('Failed to extract chatgpt_account_id from token');
-  }
-  return accountId;
-}
-
-// ---------------------------------------------------------------------------
-// 5. SSE Transformer: Responses API → Chat Completions format
+// 4. SSE Transformer: Responses API → Chat Completions format
 // ---------------------------------------------------------------------------
 
 /**
@@ -384,7 +367,7 @@ export function createCodexToCompletionsTransformer(): TransformStream<Uint8Arra
 }
 
 // ---------------------------------------------------------------------------
-// 6. Main handler — called from the API route
+// 5. Main handler — called from the API route
 // ---------------------------------------------------------------------------
 
 export async function handleCodexGeneration(opts: {

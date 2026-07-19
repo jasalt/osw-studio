@@ -74,6 +74,15 @@ export function decodeJWT(token: string): Record<string, unknown> | null {
   }
 }
 
+export function getCodexAccountId(accessToken: string): string {
+  const claims = decodeJWT(accessToken)?.[JWT_CLAIM_PATH] as Record<string, unknown> | undefined;
+  const accountId = claims?.chatgpt_account_id;
+  if (typeof accountId !== 'string' || !accountId) {
+    throw new Error('Failed to extract chatgpt_account_id from token');
+  }
+  return accountId;
+}
+
 /**
  * Create headers for Codex API requests.
  */
