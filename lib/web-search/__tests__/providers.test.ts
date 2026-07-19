@@ -17,6 +17,13 @@ describe('duckduckgo', () => {
     await expect(duckduckgo.search('q', { count: 1 }, AbortSignal.timeout(1000)))
       .resolves.toEqual([{ title: 'T', url: 'https://x', snippet: 'd' }]);
   });
+
+  it('maps a library failure to an actionable error', async () => {
+    const { searchDuckDuckGo } = await import('ts-duckduckgo-search');
+    vi.mocked(searchDuckDuckGo).mockRejectedValueOnce(new Error('challenge-form'));
+    await expect(duckduckgo.search('q', { count: 1 }, AbortSignal.timeout(1000)))
+      .rejects.toThrow(/switch to another search provider/);
+  });
 });
 
 describe('tavily', () => {

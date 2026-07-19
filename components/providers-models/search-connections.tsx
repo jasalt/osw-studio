@@ -10,6 +10,7 @@ import {
   Pencil,
   Unplug,
   CircleCheck,
+  TriangleAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,10 +36,12 @@ interface SearchProviderMeta {
   name: string;
   help: string;
   auth: 'none' | 'key' | 'url';
+  /** Optional reliability caveat shown in the picker and on the active card. */
+  warn?: string;
 }
 
 const SEARCH_PROVIDERS: SearchProviderMeta[] = [
-  { id: 'duckduckgo', name: 'DuckDuckGo', help: 'Free web search. No API key required.', auth: 'none' },
+  { id: 'duckduckgo', name: 'DuckDuckGo', help: 'Free web search. No API key required.', auth: 'none', warn: 'Best-effort and unofficial — searches may be rate-limited or blocked, especially on shared or hosted instances where every user shares one address. Add a key-based provider for heavier use.' },
   { id: 'tavily', name: 'Tavily', help: '1,000 searches/month free, no card required.', auth: 'key' },
   { id: 'firecrawl', name: 'Firecrawl', help: '1,000 credits/month free.', auth: 'key' },
   { id: 'brave', name: 'Brave', help: 'Paid: $5 monthly credit, card required.', auth: 'key' },
@@ -90,6 +93,15 @@ function SearchConnectionCard({ id, cred, active, onSetActive, onEdit, onDisconn
         <div className="font-semibold text-sm">{meta.name}</div>
         {cred && (
           <div className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{cred}</div>
+        )}
+        {meta.warn && (
+          <div
+            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500 mt-0.5"
+            title={meta.warn}
+          >
+            <TriangleAlert className="h-3 w-3 flex-shrink-0" />
+            <span>Best-effort — may be rate-limited</span>
+          </div>
         )}
       </div>
 
@@ -156,6 +168,12 @@ function ChooseBody({ onChoose }: { onChoose: (id: SearchProviderId) => void }) 
               <span className="font-semibold text-sm">{p.name}</span>
             </div>
             <div className="text-xs text-muted-foreground mt-0.5">{p.help}</div>
+            {p.warn && (
+              <div className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-500 mt-1.5">
+                <TriangleAlert className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                <span>{p.warn}</span>
+              </div>
+            )}
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
         </button>
