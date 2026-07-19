@@ -6,6 +6,12 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## Unreleased
+
+### Connections
+- **ChatGPT subscription browser sign-in**: Codex connections use a browser sign-in flow with automatic token creation and refresh — no Codex CLI, pasted token JSON, or device authorization setting required. Available on local, desktop, and self-hosted installs (not on HuggingFace Spaces, which runs the app in an embedded frame that can't hold the session cookie).
+- **Remote sign-in fallback**: On a self-hosted install where OpenAI's fixed localhost callback can't reach OSW Studio, the connection panel explains this and accepts the full redirect URL copied from the ChatGPT tab.
+
 ## v1.87.0 - Preview Reliability (2026-07-13)
 
 The live preview is now sturdier. In-app navigation works with client-side routers instead of reloading or dead-ending, it recovers when a form submit or script sends it off to another page instead of going silently blank, and it stops recompiling on read-only commands while the agent works. Couple QoL fixes to round it out: mobile voice input no longer duplicates words, and a local `curl` no longer asks for web-access permission.

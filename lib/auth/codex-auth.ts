@@ -1,5 +1,5 @@
 /**
- * Codex CLI OAuth — Token management for ChatGPT subscription access
+ * Codex OAuth — Interactive login and token management for ChatGPT subscription access
  *
  * The long-lived refresh_token is stored in an HttpOnly cookie (osw_codex_rt)
  * and never exposed to JavaScript. Only the short-lived access_token (~1 hour)
@@ -9,25 +9,45 @@
 import { CodexAuthData } from '@/lib/llm/providers/types';
 import { configManager } from '@/lib/config/storage';
 
-/**
- * Send the full auth payload to the server. The server stores the
- * refresh_token in an HttpOnly cookie and returns the non-sensitive fields.
- */
-export async function connectCodex(auth: CodexAuthData): Promise<CodexAuthData> {
+export interface CodexLoginInfo {
+  authorizationUrl: string;
+  manualCallback: boolean;
+}
+
+/** Start the OpenAI browser PKCE login flow. */
+export async function startCodexLogin(): Promise<CodexLoginInfo> {
   const res = await fetch('/api/auth/codex/connect', {
     method: 'POST',
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({ error: 'Login failed' }));
+  if (!res.ok) throw new Error(data.error || 'Failed to start ChatGPT login');
+  return data;
+}
+
+/** Exchange a copied browser redirect URL when localhost callback is unavailable. */
+export async function completeCodexLogin(redirectUrl: string): Promise<CodexAuthData> {
+  const res = await fetch('/api/auth/codex/connect', {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify(auth),
+    body: JSON.stringify({ redirectUrl }),
   });
+  const data = await res.json().catch(() => ({ error: 'Login failed' }));
+  if (!res.ok) throw new Error(data.error || 'Failed to complete ChatGPT login');
+  return data;
+}
 
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({ error: 'Connect failed' }));
-    throw new Error(data.error || 'Failed to connect Codex session');
-  }
-
-  // Server returns { access_token, expires_at, user_email } — no refresh_token
-  return res.json();
+/** Poll until the localhost callback creates the tokens. */
+export async function pollCodexLogin(): Promise<CodexAuthData | null> {
+  const res = await fetch('/api/auth/codex/connect', {
+    method: 'PUT',
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({ error: 'Login failed' }));
+  if (res.status === 202) return null;
+  if (!res.ok) throw new Error(data.error || 'Failed to complete ChatGPT login');
+  return data;
 }
 
 /**
@@ -98,33 +118,4 @@ export async function ensureValidCodexToken(): Promise<string> {
     configManager.clearCodexAuth();
     throw new Error('ChatGPT session expired. Please re-authenticate in Settings.');
   }
-}
-
-/**
- * Parse a pasted auth JSON (from running `codex login` locally).
- * Handles the actual ~/.codex/auth.json format where tokens are nested:
- *   { "tokens": { "access_token": "...", "refresh_token": "...", ... }, ... }
- * Also accepts a flat format with top-level access_token/refresh_token.
- */
-export function parseCodexAuthJson(json: string): CodexAuthData {
-  const parsed = JSON.parse(json);
-
-  // Codex CLI nests tokens under a "tokens" key
-  const tokens = parsed.tokens || parsed;
-  const accessToken = tokens.access_token || tokens.token;
-  const refreshToken = tokens.refresh_token;
-
-  if (!accessToken) {
-    throw new Error('Missing access_token in pasted JSON');
-  }
-  if (!refreshToken) {
-    throw new Error('Missing refresh_token in pasted JSON');
-  }
-
-  return {
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    expires_at: tokens.expires_at || parsed.expires_at || Math.floor(Date.now() / 1000) + 3600,
-    user_email: tokens.user_email || parsed.user_email || tokens.email || parsed.email,
-  };
 }
