@@ -112,7 +112,7 @@ export class ToolRegistry {
 
 Commands: cat, head, tail, ls, tree, grep, rg, find, mkdir, mv, cp, rm, touch, sed, ss, echo, wc, sort, uniq, tr, curl, search, sqlite3, python, python3, lua, preview, build, status, agent, runtime, ask.
 Pipes (cmd1 | cmd2), redirects (> file, >> file), heredocs (<< 'EOF'), chaining (&&, ||, ;), and brace expansion ({a,b,c}) are supported.
-Run scripts: python <file>, lua <file>. Show output in preview: preview <path>.
+Run scripts: python <file>, lua <file> (for computation/output only — they run in a sandbox and CANNOT edit project files; use ss or cat > for edits). Files written to /output/ persist. Show output in preview: preview <path>.
 
 Edit existing files: ss /file << 'EOF'\\nsearch\\n=======\\nreplacement\\nEOF
 Create new files: cat > /file << 'EOF'\\ncontent\\nEOF
@@ -137,7 +137,12 @@ One command at a time as a single string.`,
             return 'Error: command must be a string. Pass the complete command as a single string (e.g., "ls -la /")';
           }
 
-          let cmdString = unescapeHtmlEntities(rawCmd);
+          // NOTE: do NOT HTML-unescape the whole command here. The raw string also
+          // carries heredoc bodies (file content written via `cat >`/`ss`), and unescaping
+          // those corrupts literal entities — e.g. an escapeHtml() implementation that writes
+          // `.replace(/&/g, '&amp;')` would collapse to `.replace(/&/g, '&')`. Unescaping is
+          // applied later, only to the command portion, once the heredoc body is separated out.
+          let cmdString = rawCmd;
 
           // Newline-separated compound commands (multiple statements, possibly including
           // chained heredocs) are split here first. splitNewlineCommands is the single
@@ -206,6 +211,11 @@ One command at a time as a single string.`,
               cmdString = afterDelimiter ? beforeHeredoc + ' ' + afterDelimiter : beforeHeredoc;
             }
           }
+
+          // Unescape HTML entities on the COMMAND portion only. The heredoc body
+          // (heredocStdin) is deliberately left untouched so file content is written verbatim.
+          cmdString = unescapeHtmlEntities(cmdString);
+          if (trailingCommands) trailingCommands = unescapeHtmlEntities(trailingCommands);
 
           // Parse command string into array
           const cmdArray = parseBashCommand(cmdString);
@@ -497,10 +507,51 @@ async function executeShellSegment(
     }
 
     const sr: ScriptRuntime = command === 'lua' ? 'lua' : 'python';
-    const filePath = cmdArray[1];
-    if (!filePath) return `Error: Usage: ${command} <file>`;
 
-    const normalizedPath = filePath.startsWith('/') ? filePath : '/' + filePath;
+    // Fast-fail when the browser is known to be offline. The runtime (Pyodide/wasmoon) is
+    // fetched from a CDN on first use, so there is no point spinning up the worker and
+    // waiting for a fetch that will fail. (navigator.onLine === true is not a guarantee of
+    // reachability — the CDN could still be blocked — so the worker also reports load
+    // failures with an actionable message.)
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return `Error: ${command} is unavailable — the ${sr === 'lua' ? 'Lua' : 'Python'} runtime is downloaded from a CDN on first use and the browser is offline. Write the script to a file for the user to run later; do not retry ${command} until connectivity is restored.`;
+    }
+
+    // Resolve the program source. Preferred form is `python <file>` (the only form the
+    // system prompt documents). We also gracefully accept the shapes models reach for when
+    // they go off-script — inline code (`-c '<code>'`) and stdin (`python - << 'EOF'`) — by
+    // running the source through a synthetic entry point rather than treating `-c`/`-` as a
+    // file path (which used to produce a confusing "Entry point not found: /-c").
+    const arg1 = cmdArray[1];
+    let entryPoint: string;
+    let inlineSource: string | undefined;
+    const inlineEntry = sr === 'lua' ? '/__inline__.lua' : '/__inline__.py';
+    if (arg1 === '-c') {
+      inlineSource = cmdArray[2];
+      if (inlineSource == null) return `Error: Usage: ${command} -c '<code>'`;
+      entryPoint = inlineEntry;
+    } else if (arg1 === '-' || (arg1 === undefined && heredocStdin != null)) {
+      if (!heredocStdin) return `Error: Usage: ${command} <file>  (or pipe code via: ${command} - << 'EOF' … EOF)`;
+      inlineSource = heredocStdin;
+      entryPoint = inlineEntry;
+    } else {
+      if (!arg1) return `Error: Usage: ${command} <file>`;
+      entryPoint = arg1.startsWith('/') ? arg1 : '/' + arg1;
+    }
+
+    // Scan the source to decide whether to warn that sandbox file writes are discarded.
+    let scanSource: string | undefined = inlineSource;
+    if (scanSource == null) {
+      try {
+        const v = getActiveVFS();
+        await v.init();
+        const f = await v.readFile(projectId, entryPoint);
+        if (typeof f.content === 'string') scanSource = f.content;
+      } catch { /* missing entry point is reported by the runner below */ }
+    }
+    const writeAdvisory = scriptMayWriteFiles(scanSource, sr)
+      ? '\n\n(note: scripts run in an isolated sandbox — writes to project files are NOT saved (only stdout above and files under /output/ persist). To edit files use ss or cat >.)'
+      : '';
 
     return new Promise<string>((resolve) => {
       const output: string[] = [];
@@ -515,14 +566,17 @@ async function executeShellSegment(
             unsubscribe();
             resolved = true;
             const text = output.join('\n').trim();
-            resolve(msg.exitCode === 0
-              ? (text || 'Script completed with no output')
-              : `Error (exit ${msg.exitCode}):\n${text}`);
+            if (msg.exitCode === 0) {
+              const base = text || 'Script completed with no output';
+              resolve(base + writeAdvisory);
+            } else {
+              resolve(`Error (exit ${msg.exitCode}):\n${text}`);
+            }
             break;
         }
       });
 
-      scriptRunner.execute(projectId, sr, normalizedPath).catch((err) => {
+      scriptRunner.execute(projectId, sr, entryPoint, inlineSource).catch((err) => {
         if (!resolved) {
           unsubscribe();
           resolve(`Error: ${err}`);
@@ -633,8 +687,22 @@ function splitChainOperators(cmdArray: string[]): { args: string[]; nextOp: '&&'
 }
 
 /**
+ * Heuristic: does this script source attempt to write/delete files on disk?
+ * Used only to decide whether to append the "sandbox writes aren't saved" advisory —
+ * false positives merely add one advisory line; false negatives are the costly case, so
+ * the patterns lean broad on the filesystem-mutating APIs.
+ */
+function scriptMayWriteFiles(src: string | undefined, runtime: ScriptRuntime): boolean {
+  if (!src) return false;
+  if (runtime === 'lua') {
+    return /\bio\.open\s*\(|\bio\.write\s*\(|\bos\.(remove|rename)\s*\(/.test(src);
+  }
+  return /\bwrite_text\s*\(|\bwrite_bytes\s*\(|\bopen\s*\([^)]*,\s*['"][^'"]*[wax]|\bos\.(remove|rename|replace|mkdir|makedirs|rmdir)\s*\(|\bshutil\.\w+\s*\(|\.unlink\s*\(/.test(src);
+}
+
+/**
  * Unescape HTML entities that models sometimes emit in tool call arguments.
- * These are never valid in shell commands, so unescaping is always safe.
+ * Applied only to the command portion of a bash string — never to heredoc bodies.
  */
 function unescapeHtmlEntities(cmd: string): string {
   if (!cmd.includes('&')) return cmd;
@@ -812,7 +880,15 @@ export function splitNewlineCommands(cmdStr: string): string[] {
       // Inside a heredoc — accumulate until we hit the end delimiter
       current += '\n' + line;
       if (line.trim() === heredocDelimiter) {
+        // Heredoc closed — the command is complete. Flush it now and reset so the
+        // heredoc BODY never feeds the quote-balance heuristic below. Otherwise a body
+        // with an odd number of quotes makes hasUnbalancedQuotes(current) true and the
+        // NEXT chained heredoc command gets swallowed as a fake quote-continuation
+        // (e.g. three chained `cat > f << 'EOF'` blocks collapsing into two).
         heredocDelimiter = null;
+        const trimmed = current.trim();
+        if (trimmed && !trimmed.startsWith('#')) commands.push(trimmed);
+        current = '';
       }
       continue;
     }

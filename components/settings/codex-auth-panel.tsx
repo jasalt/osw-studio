@@ -196,7 +196,7 @@ export function CodexAuthPanel({ onAuthChange }: CodexAuthPanelProps) {
 
       {!login && (
         <div className="p-3 border rounded-md bg-muted/50 text-xs text-muted-foreground space-y-1">
-          <p className="font-medium text-foreground">HuggingFace / remote installation</p>
+          <p className="font-medium text-foreground">Remote / self-hosted installation</p>
           <p>
             After ChatGPT approval, the localhost redirect tab will fail to load. Copy its full address-bar URL into a field shown below here after you have started the sign-in.
           </p>

@@ -51,6 +51,40 @@ EOF`;
     expect(result[2]).toContain('contact');
   });
 
+  it('splits chained heredocs even when a body has an odd number of quotes (regression)', () => {
+    // A heredoc body with an odd number of quote chars used to make
+    // hasUnbalancedQuotes(current) true AFTER the heredoc closed, swallowing the next
+    // chained heredoc command (three blocks collapsing into two). The first body below
+    // has a single lone apostrophe; all three must still split cleanly.
+    const cmd = `cat > /a.js << 'EOF'
+// Eileen's first file
+EOF
+cat > /b.js << 'EOF'
+const t = 2;
+EOF
+cat > /c.js << 'EOF'
+console.log('c');
+EOF`;
+    const result = splitNewlineCommands(cmd);
+    expect(result).toHaveLength(3);
+    expect(result[0]).toContain('/a.js');
+    expect(result[1]).toContain('/b.js');
+    expect(result[2]).toContain('/c.js');
+  });
+
+  it('splits chained heredocs when a body has a single lone apostrophe (regression)', () => {
+    const cmd = `cat > /a.txt << 'EOF'
+Eileen's note
+EOF
+cat > /b.txt << 'EOF'
+second file
+EOF`;
+    const result = splitNewlineCommands(cmd);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toContain("Eileen's note");
+    expect(result[1]).toContain('second file');
+  });
+
   it('handles heredoc followed by a trailing echo', () => {
     const cmd = `cat > /file.css << 'EOF'
 body { color: red; }

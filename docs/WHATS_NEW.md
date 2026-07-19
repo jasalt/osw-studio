@@ -8,9 +8,22 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ## Unreleased
 
+The agent can now search the web for free with DuckDuckGo. Select it under Connections without creating an account or entering an API key.
+
+### Web access
+- **Free DuckDuckGo search**: DuckDuckGo is available as a search provider with no sign-up or API key required. It supports the same `search`, result-count, and page-content options as the existing providers.
+
+---
+
+## v1.88.0 - ChatGPT Sign-in (2026-07-19)
+
+Connecting a ChatGPT Plus/Pro subscription is now a browser sign-in — no Codex CLI to install and no token file to paste. Tokens are created and refreshed automatically, and the refresh token stays in an HttpOnly cookie rather than localStorage. It works on local, desktop, and self-hosted installs, but not on HuggingFace Spaces, where the app runs in an embedded frame that can't keep the session cookie.
+
 ### Connections
-- **ChatGPT subscription browser sign-in**: Codex connections use browser PKCE login flow with automatic token creation and refresh—no Codex CLI, pasted token JSON, or device authorization setting required
-- **HuggingFace and remote login fallback**: When OpenAI's fixed localhost callback cannot reach OSW Studio, the connection panel explains this before sign-in and then accepts the full redirect URL copied from the failed ChatGPT tab
+- **ChatGPT subscription browser sign-in**: Codex connections use a browser sign-in flow with automatic token creation and refresh — no Codex CLI, pasted token JSON, or device authorization setting required.
+- **Remote sign-in fallback**: On a self-hosted install where OpenAI's fixed localhost callback can't reach OSW Studio, the connection panel explains this and accepts the full redirect URL copied from the ChatGPT tab.
+
+---
 
 ## v1.87.0 - Preview Reliability (2026-07-13)
 

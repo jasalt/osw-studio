@@ -3154,6 +3154,13 @@ Alternative: Use edge functions for database access via db.query() and db.run()`
           return { stdout: '', stderr: 'ss: missing ======= separator between search and replacement\n\nUsage: ss /file << \'EOF\'\nsearch content\n=======\nreplacement content\nEOF', exitCode: 2 };
         }
 
+        // Reject no-op edits where the search and replacement are identical. This catches
+        // the case where content is silently mangled upstream (e.g. HTML-entity decoding
+        // collapsing both sides equally) and would otherwise report a false "1 replacement".
+        if (ssMode !== 'entity' && ssSearch === ssReplace) {
+          return { stdout: '', stderr: `ss: search and replacement are identical — no change to ${ssPath}`, exitCode: 2 };
+        }
+
         // Read target file
         let ssContent: string;
         try {

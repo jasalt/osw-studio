@@ -23,6 +23,16 @@ function sendFile(path, content) {
   self.postMessage({ type: 'output-file', path, content });
 }
 
+// The Python/Lua runtimes are fetched from a CDN on first use, so they fail when the
+// browser is offline or the CDN is blocked. Append a hint when we can detect offline.
+function offlineHint() {
+  try {
+    return (self.navigator && self.navigator.onLine === false) ? ' The browser appears to be offline.' : '';
+  } catch (_e) {
+    return '';
+  }
+}
+
 // ─── Python (Pyodide) ──────────────────────────────────────────────
 
 async function ensurePyodide() {
@@ -32,9 +42,12 @@ async function ensurePyodide() {
 
   try {
     importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.4/full/pyodide.js');
-  } catch (err) {
-    send('error', 'Failed to load Pyodide from CDN: ' + String(err));
-    throw err;
+  } catch (_err) {
+    throw new Error(
+      'Python runtime unavailable — failed to download the interpreter (Pyodide) from the CDN.' +
+      offlineHint() +
+      ' python3/python cannot run in this environment; write the script to a file for the user to run instead, and do not retry until connectivity is restored.'
+    );
   }
 
   try {
@@ -42,13 +55,21 @@ async function ensurePyodide() {
       stdout: (msg) => send('stdout', msg),
       stderr: (msg) => send('stderr', msg),
     });
-  } catch (err) {
-    send('error', 'Failed to initialize Pyodide: ' + String(err));
-    throw err;
+  } catch (_err) {
+    throw new Error(
+      'Python runtime unavailable — the interpreter failed to initialize.' +
+      offlineHint() +
+      ' python3/python cannot run in this environment; write the script to a file for the user to run instead.'
+    );
   }
 
-  // Pre-load micropip so users can install packages
-  await pyodide.loadPackage('micropip');
+  // Pre-load micropip so users can install packages. Non-fatal: if it can't be fetched
+  // (e.g. offline), core Python still works for scripts that don't install packages.
+  try {
+    await pyodide.loadPackage('micropip');
+  } catch (_e) {
+    send('status', 'micropip unavailable — package installation is disabled' + offlineHint());
+  }
 
   send('status', 'Python runtime ready');
   return pyodide;
@@ -142,9 +163,12 @@ async function ensureLuaFactory() {
     // Dynamic import of wasmoon from CDN
     const wasmoon = await import('https://esm.sh/wasmoon@1');
     luaFactory = new wasmoon.LuaFactory();
-  } catch (err) {
-    send('error', 'Failed to load Lua runtime: ' + String(err));
-    throw err;
+  } catch (_err) {
+    throw new Error(
+      'Lua runtime unavailable — failed to download the interpreter (wasmoon) from the CDN.' +
+      offlineHint() +
+      ' lua cannot run in this environment; write the script to a file for the user to run instead, and do not retry until connectivity is restored.'
+    );
   }
 
   send('status', 'Lua runtime ready');
@@ -240,7 +264,7 @@ self.onmessage = async function (event) {
 
       self.postMessage({ type: 'complete', exitCode: result.exitCode });
     } catch (err) {
-      send('error', String(err));
+      send('error', (err && err.message) ? err.message : String(err));
       self.postMessage({ type: 'complete', exitCode: 1 });
     }
   }
