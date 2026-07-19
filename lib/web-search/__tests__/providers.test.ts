@@ -1,8 +1,30 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { duckduckgo } from '../providers/duckduckgo';
 import { tavily } from '../providers/tavily';
 import { brave } from '../providers/brave';
 import { searxng } from '../providers/searxng';
 import { firecrawl } from '../providers/firecrawl';
+
+vi.mock('ts-duckduckgo-search', () => ({
+  searchDuckDuckGo: vi.fn(async () => [
+    { title: 'T', url: 'https://x', description: 'd' },
+  ]),
+}));
+
+describe('duckduckgo', () => {
+  it('searches without credentials and normalizes results', async () => {
+    expect(duckduckgo.auth).toBe('none');
+    await expect(duckduckgo.search('q', { count: 1 }, AbortSignal.timeout(1000)))
+      .resolves.toEqual([{ title: 'T', url: 'https://x', snippet: 'd' }]);
+  });
+
+  it('maps a library failure to an actionable error', async () => {
+    const { searchDuckDuckGo } = await import('ts-duckduckgo-search');
+    vi.mocked(searchDuckDuckGo).mockRejectedValueOnce(new Error('challenge-form'));
+    await expect(duckduckgo.search('q', { count: 1 }, AbortSignal.timeout(1000)))
+      .rejects.toThrow(/switch to another search provider/);
+  });
+});
 
 describe('tavily', () => {
   it('normalizes results and raw_content', () => {

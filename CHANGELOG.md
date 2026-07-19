@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Connections
+- **Free DuckDuckGo web search**: DuckDuckGo is available as a search provider that needs no account or API key — select it under Connections and it becomes the active provider. It supports the same search, result-count, and page-content options as the existing providers. Because it relies on unofficial scraping, searches can be rate-limited or blocked — more so on shared or hosted instances where every user's searches come from one address — so Connections flags it as best-effort and the agent is told to retry or switch to a key-based provider when a search fails.
+
 ## v1.88.0 - 2026-07-19
 
 ### Connections
