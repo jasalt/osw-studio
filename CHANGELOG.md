@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.88.0 - 2026-07-19
+
+### Connections
+- **Browser sign-in for ChatGPT subscriptions (Codex)**: Connecting a ChatGPT Plus/Pro subscription now uses a browser sign-in instead of installing the Codex CLI and pasting `auth.json`. Tokens are created and refreshed automatically, and the refresh token stays in an HttpOnly cookie, never in localStorage. Local and desktop installs complete automatically; on a self-hosted instance where OpenAI's localhost callback can't reach the app, you paste the redirect URL from the ChatGPT tab to finish. Not available on HuggingFace Spaces, which runs the app in an embedded frame that can't hold the session cookie.
+
 ## v1.87.2 - 2026-07-19
 
 ### AI Orchestration

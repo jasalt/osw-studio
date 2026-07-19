@@ -6,11 +6,15 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
-## Unreleased
+## v1.88.0 - ChatGPT Sign-in (2026-07-19)
+
+Connecting a ChatGPT Plus/Pro subscription is now a browser sign-in — no Codex CLI to install and no token file to paste. Tokens are created and refreshed automatically, and the refresh token stays in an HttpOnly cookie rather than localStorage. It works on local, desktop, and self-hosted installs, but not on HuggingFace Spaces, where the app runs in an embedded frame that can't keep the session cookie.
 
 ### Connections
-- **ChatGPT subscription browser sign-in**: Codex connections use a browser sign-in flow with automatic token creation and refresh — no Codex CLI, pasted token JSON, or device authorization setting required. Available on local, desktop, and self-hosted installs (not on HuggingFace Spaces, which runs the app in an embedded frame that can't hold the session cookie).
+- **ChatGPT subscription browser sign-in**: Codex connections use a browser sign-in flow with automatic token creation and refresh — no Codex CLI, pasted token JSON, or device authorization setting required.
 - **Remote sign-in fallback**: On a self-hosted install where OpenAI's fixed localhost callback can't reach OSW Studio, the connection panel explains this and accepts the full redirect URL copied from the ChatGPT tab.
+
+---
 
 ## v1.87.0 - Preview Reliability (2026-07-13)
 
