@@ -10,7 +10,7 @@
 import { configManager } from '@/lib/config/storage';
 import { ProviderId, ProviderModel, InputModality, OutputModality } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
-import { getAvailableModels } from '@/lib/llm/llm-client';
+import { getAvailableModels, normalizeModelEntry } from '@/lib/llm/llm-client';
 import {
   fetchAvailableModels,
 } from '@/lib/llm/models-api';
@@ -167,24 +167,7 @@ export async function loadProviderModels(provider: ProviderId): Promise<Provider
       }
     } else if (providerConfig.supportsModelDiscovery) {
       const modelEntries = await getAvailableModels(apiKey || undefined, provider, providerConfig.baseUrl);
-      loadedModels = modelEntries.map((entry) => {
-        const id = typeof entry === 'string' ? entry : entry.id;
-        const contextLength =
-          typeof entry === 'object' && entry.contextLength ? entry.contextLength : 128000;
-        const inputModalities =
-          typeof entry === 'object' && entry.inputModalities
-            ? (entry.inputModalities as InputModality[])
-            : undefined;
-        return {
-          id,
-          name: id.split('/').pop() || id,
-          contextLength,
-          supportsFunctions: true,
-          ...(inputModalities
-            ? { inputModalities, supportsVision: inputModalities.includes('image') }
-            : {}),
-        };
-      });
+      loadedModels = modelEntries.map((entry) => normalizeModelEntry(entry, 128000));
     } else if (providerConfig.models) {
       loadedModels = providerConfig.models;
     }

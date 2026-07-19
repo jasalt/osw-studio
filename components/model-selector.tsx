@@ -28,7 +28,7 @@ import {
 import { configManager } from '@/lib/config/storage';
 import { ProviderId, ProviderModel } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
-import { getAvailableModels } from '@/lib/llm/llm-client';
+import { getAvailableModels, normalizeModelEntry } from '@/lib/llm/llm-client';
 import {
   fetchAvailableModels,
   formatModelPrice
@@ -211,20 +211,7 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
       } else if (providerConfig.supportsModelDiscovery) {
         // Try to discover models (we know API key exists at this point)
         const modelEntries = await getAvailableModels(apiKey || undefined, currentProvider);
-        loadedModels = modelEntries.map(entry => {
-          const id = typeof entry === 'string' ? entry : entry.id;
-          const contextLength = typeof entry === 'object' && entry.contextLength ? entry.contextLength : 32000;
-          const inputModalities = typeof entry === 'object' && entry.inputModalities
-            ? entry.inputModalities as import('@/lib/llm/providers/types').InputModality[]
-            : undefined;
-          return {
-            id,
-            name: id.split('/').pop() || id,
-            contextLength,
-            supportsFunctions: true,
-            ...(inputModalities ? { inputModalities, supportsVision: inputModalities.includes('image') } : {}),
-          };
-        });
+        loadedModels = modelEntries.map(entry => normalizeModelEntry(entry, 32000));
       } else if (providerConfig.models) {
         // Use hardcoded models
         loadedModels = providerConfig.models;

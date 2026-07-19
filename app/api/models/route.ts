@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
 import { assertPublicHttpUrl } from '@/lib/llm/providers/url-safety';
+import { CODEX_BASE_URL, createCodexHeaders, getCodexAccountId } from '@/lib/llm/codex-utils';
 import { logger } from '@/lib/utils';
+import pkg from '@/package.json';
+import type { ModelEntry } from '@/lib/llm/llm-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,7 +32,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ models: [] });
     }
 
-    let models: Array<string | { id: string; contextLength?: number; inputModalities?: string[] }> = [];
+    let models: ModelEntry[] = [];
 
     try {
       switch (provider) {
@@ -77,7 +80,6 @@ export async function POST(request: NextRequest) {
           break;
 
         case 'openai':
-        case 'openai-codex':
           const openaiResponse = await fetch('https://api.openai.com/v1/models', {
             headers: {
               'Authorization': `Bearer ${apiKey}`
@@ -88,6 +90,34 @@ export async function POST(request: NextRequest) {
             models = openaiData.data?.map((model: { id: string }) => model.id) || [];
           }
           break;
+
+        case 'openai-codex': {
+          const headers = createCodexHeaders(undefined, getCodexAccountId(apiKey), apiKey);
+          headers.set('accept', 'application/json');
+          const codexResponse = await fetch(
+            `${CODEX_BASE_URL}/codex/models?client_version=${encodeURIComponent(pkg.version)}`,
+            { headers },
+          );
+          if (!codexResponse.ok) throw new Error(`Codex models returned HTTP ${codexResponse.status}`);
+
+          const codexData = await codexResponse.json();
+          models = (codexData.models || [])
+            // Hardcoded 5.5/5.6-series gate — drop when the catalog's
+            // visibility/priority alone is enough to hide unwanted series.
+            .filter((model: any) => model.visibility === 'list' && /^gpt-5\.[56]/.test(model.slug) && model.slug)
+            .sort((a: any, b: any) => (a.priority ?? 0) - (b.priority ?? 0))
+            .map((model: any) => ({
+              id: model.slug,
+              name: model.display_name || model.slug,
+              description: model.description,
+              contextLength: model.context_window ?? model.max_context_window,
+              supportsFunctions: true,
+              supportsVision: (model.input_modalities || ['text', 'image']).includes('image'),
+              inputModalities: model.input_modalities || ['text', 'image'],
+              outputModalities: ['text'],
+            }));
+          break;
+        }
 
         case 'groq':
           const groqResponse = await fetch('https://api.groq.com/openai/v1/models', {
@@ -250,7 +280,7 @@ export async function POST(request: NextRequest) {
       logger.error(`Error fetching models for ${provider}:`, error);
       // Fall back to hardcoded models if available
       if (providerConfig.models) {
-        models = providerConfig.models.map(m => m.id);
+        models = providerConfig.models;
       }
     }
 

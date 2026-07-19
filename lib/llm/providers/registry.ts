@@ -2,78 +2,44 @@ import { ProviderId, BuiltInProviderId, ProviderConfig, ProviderModel, InputModa
 export type { OutputModality } from './types';
 import { getCustomProviders } from './custom-providers';
 
+// Mirrors the visibility:'list' models served by GET /backend-api/codex/models,
+// in priority order. Used as the fallback when the catalog fetch fails.
 const codexModels: ProviderModel[] = [
   {
-    id: 'gpt-5.3-codex',
-    name: 'GPT-5.3 Codex',
-    description: 'Most capable agentic coding model',
+    id: 'gpt-5.6-sol',
+    name: 'GPT-5.6-Sol',
+    description: 'Latest frontier agentic coding model.',
     contextLength: 272000,
-    maxTokens: 128000,
     supportsFunctions: true,
     supportsVision: true,
+    inputModalities: ['text', 'image'],
   },
   {
-    id: 'gpt-5.2-codex',
-    name: 'GPT-5.2 Codex',
-    description: 'Frontier agentic coding model',
+    id: 'gpt-5.6-terra',
+    name: 'GPT-5.6-Terra',
+    description: 'Balanced agentic coding model for everyday work.',
     contextLength: 272000,
-    maxTokens: 128000,
     supportsFunctions: true,
     supportsVision: true,
+    inputModalities: ['text', 'image'],
   },
   {
-    id: 'gpt-5.2',
-    name: 'GPT-5.2',
-    description: 'General purpose frontier model',
+    id: 'gpt-5.6-luna',
+    name: 'GPT-5.6-Luna',
+    description: 'Fast and affordable agentic coding model.',
     contextLength: 272000,
-    maxTokens: 128000,
     supportsFunctions: true,
     supportsVision: true,
+    inputModalities: ['text', 'image'],
   },
   {
-    id: 'gpt-5.1-codex',
-    name: 'GPT-5.1 Codex',
-    description: 'Optimized for coding tasks',
+    id: 'gpt-5.5',
+    name: 'GPT-5.5',
+    description: 'Frontier model for complex coding, research, and real-world work.',
     contextLength: 272000,
-    maxTokens: 128000,
     supportsFunctions: true,
     supportsVision: true,
-  },
-  {
-    id: 'gpt-5.1-codex-mini',
-    name: 'GPT-5.1 Codex Mini',
-    description: 'Fast and lightweight coding model',
-    contextLength: 272000,
-    maxTokens: 128000,
-    supportsFunctions: true,
-    supportsVision: true,
-  },
-  {
-    id: 'gpt-5.1',
-    name: 'GPT-5.1',
-    description: 'Broad world knowledge, general reasoning',
-    contextLength: 272000,
-    maxTokens: 128000,
-    supportsFunctions: true,
-    supportsVision: true,
-  },
-  {
-    id: 'gpt-5-codex',
-    name: 'GPT-5 Codex',
-    description: 'Legacy codex model',
-    contextLength: 272000,
-    maxTokens: 128000,
-    supportsFunctions: true,
-    supportsVision: true,
-  },
-  {
-    id: 'codex-mini-latest',
-    name: 'Codex Mini',
-    description: 'Fast lightweight codex model',
-    contextLength: 272000,
-    maxTokens: 128000,
-    supportsFunctions: true,
-    supportsVision: true,
+    inputModalities: ['text', 'image'],
   },
 ];
 
@@ -245,6 +211,7 @@ export const providers: Record<BuiltInProviderId, ProviderConfig> = {
     apiKeyRequired: false,
     baseUrl: 'https://chatgpt.com/backend-api',
     models: codexModels,
+    supportsModelDiscovery: true,
     supportsFunctions: true,
     supportsStreaming: true,
     usesOAuth: true
@@ -452,7 +419,7 @@ export function getDefaultModel(provider: ProviderId): string {
     case 'openai':
       return 'gpt-4o-mini';
     case 'openai-codex':
-      return 'gpt-5.3-codex';
+      return 'gpt-5.6-sol';
     case 'anthropic':
       return 'claude-haiku-4-5-20251001';
     case 'groq':

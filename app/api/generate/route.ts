@@ -247,7 +247,7 @@ Habits:
 
       return handleCodexGeneration({
         messages: chatMessages,
-        model: model || 'gpt-5.3-codex',
+        model: model || getDefaultModel('openai-codex'),
         tools: validTools?.length > 0 ? validTools : undefined,
         accessToken: apiKey,
         signal: request.signal,

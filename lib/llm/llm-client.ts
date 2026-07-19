@@ -1,5 +1,5 @@
 
-import { ProviderId } from './providers/types';
+import { ProviderId, ProviderModel } from './providers/types';
 import { getProvider } from './providers/registry';
 import { configManager } from '../config/storage';
 import { apiFetch } from '../api/backend-status';
@@ -30,18 +30,42 @@ export async function validateApiKey(apiKey: string, provider: ProviderId): Prom
   }
 }
 
-export type ModelEntry = string | { id: string; contextLength?: number; inputModalities?: string[] };
+export type ModelEntry = string | (Pick<ProviderModel, 'id'> & Partial<Omit<ProviderModel, 'id'>>);
+
+export function normalizeModelEntry(entry: ModelEntry, defaultContextLength: number): ProviderModel {
+  if (typeof entry === 'string') {
+    return {
+      id: entry,
+      name: entry.split('/').pop() || entry,
+      contextLength: defaultContextLength,
+      supportsFunctions: true,
+    };
+  }
+
+  return {
+    ...entry,
+    name: entry.name || entry.id.split('/').pop() || entry.id,
+    contextLength: entry.contextLength || defaultContextLength,
+    supportsFunctions: entry.supportsFunctions ?? true,
+    supportsVision: entry.supportsVision ?? entry.inputModalities?.includes('image'),
+  };
+}
 
 export async function getAvailableModels(apiKey?: string, provider?: ProviderId, baseUrl?: string): Promise<ModelEntry[]> {
   const currentProvider = provider || configManager.getSelectedProvider() || 'openrouter';
   const providerConfig = getProvider(currentProvider);
-  const key = apiKey || configManager.getProviderApiKey(currentProvider);
+  let key = apiKey || configManager.getProviderApiKey(currentProvider);
 
   if (!providerConfig.supportsModelDiscovery && providerConfig.models) {
-    return providerConfig.models.map(m => m.id);
+    return providerConfig.models;
   }
 
   try {
+    if (currentProvider === 'openai-codex' && typeof window !== 'undefined') {
+      const { ensureValidCodexToken } = await import('@/lib/auth/codex-auth');
+      key = await ensureValidCodexToken();
+    }
+
     const body: Record<string, string | null> = {
       apiKey: key,
       provider: currentProvider
@@ -56,12 +80,12 @@ export async function getAvailableModels(apiKey?: string, provider?: ProviderId,
     });
 
     if (!response.ok) {
-      return providerConfig.models?.map(m => m.id) || [];
+      return providerConfig.models || [];
     }
 
     const { models } = await response.json();
     return models || [];
   } catch {
-    return providerConfig.models?.map(m => m.id) || [];
+    return providerConfig.models || [];
   }
 }
