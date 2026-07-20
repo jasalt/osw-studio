@@ -6,6 +6,18 @@ Welcome to OSW Studio! This page highlights the latest features and updates.
 
 ---
 
+## v1.89.0 - Free Web Search (2026-07-20)
+
+The agent can now search the web with no setup: DuckDuckGo is a built-in provider that needs no account or API key. For ChatGPT subscription users, the model picker also keeps itself current — it pulls the available GPT-5.5 and GPT-5.6 models straight from Codex instead of a fixed list.
+
+### Connections
+- **Free DuckDuckGo search**: Pick DuckDuckGo under Connections and web search is active — no account, no API key. It's best-effort and unofficial, so it can be rate-limited (more so on shared or hosted instances); Connections says as much, and you can switch to a key-based provider anytime.
+
+### Providers & models
+- **Live ChatGPT model discovery**: For a connected ChatGPT subscription, the picker fetches the current Codex catalog — model names, context windows, and image support — so new GPT-5.5 and GPT-5.6 models show up without an OSW Studio update, with a built-in fallback list when the catalog can't be reached.
+
+---
+
 ## v1.88.0 - ChatGPT Sign-in (2026-07-19)
 
 Connecting a ChatGPT Plus/Pro subscription is now a browser sign-in — no Codex CLI to install and no token file to paste. Tokens are created and refreshed automatically, and the refresh token stays in an HttpOnly cookie rather than localStorage. It works on local, desktop, and self-hosted installs, but not on HuggingFace Spaces, where the app runs in an embedded frame that can't keep the session cookie.

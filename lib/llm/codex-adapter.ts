@@ -18,7 +18,6 @@ import {
   getNormalizedModel,
   CODEX_BASE_URL,
 } from './codex-utils';
-export { getCodexAccountId } from './codex-utils';
 
 // ---------------------------------------------------------------------------
 // Types

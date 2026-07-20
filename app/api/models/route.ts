@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ProviderId } from '@/lib/llm/providers/types';
+import { ProviderId, InputModality } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
 import { assertPublicHttpUrl } from '@/lib/llm/providers/url-safety';
 import { CODEX_BASE_URL, createCodexHeaders, getCodexAccountId } from '@/lib/llm/codex-utils';
 import { logger } from '@/lib/utils';
 import pkg from '@/package.json';
 import type { ModelEntry } from '@/lib/llm/llm-client';
+
+// Shape of an entry in GET /backend-api/codex/models (only the fields we read).
+interface CodexCatalogModel {
+  slug?: string;
+  display_name?: string;
+  description?: string;
+  context_window?: number;
+  max_context_window?: number;
+  input_modalities?: InputModality[];
+  visibility?: string;
+  priority?: number;
+}
+
+const CODEX_DEFAULT_MODALITIES: InputModality[] = ['text', 'image'];
 
 export async function POST(request: NextRequest) {
   try {
@@ -101,19 +115,21 @@ export async function POST(request: NextRequest) {
           if (!codexResponse.ok) throw new Error(`Codex models returned HTTP ${codexResponse.status}`);
 
           const codexData = await codexResponse.json();
-          models = (codexData.models || [])
+          const catalog: CodexCatalogModel[] = codexData.models || [];
+          models = catalog
             // Hardcoded 5.5/5.6-series gate — drop when the catalog's
             // visibility/priority alone is enough to hide unwanted series.
-            .filter((model: any) => model.visibility === 'list' && /^gpt-5\.[56]/.test(model.slug) && model.slug)
-            .sort((a: any, b: any) => (a.priority ?? 0) - (b.priority ?? 0))
-            .map((model: any) => ({
+            .filter((model): model is CodexCatalogModel & { slug: string } =>
+              model.visibility === 'list' && !!model.slug && /^gpt-5\.[56]/.test(model.slug))
+            .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+            .map((model) => ({
               id: model.slug,
               name: model.display_name || model.slug,
               description: model.description,
               contextLength: model.context_window ?? model.max_context_window,
               supportsFunctions: true,
-              supportsVision: (model.input_modalities || ['text', 'image']).includes('image'),
-              inputModalities: model.input_modalities || ['text', 'image'],
+              supportsVision: (model.input_modalities ?? CODEX_DEFAULT_MODALITIES).includes('image'),
+              inputModalities: model.input_modalities ?? CODEX_DEFAULT_MODALITIES,
               outputModalities: ['text'],
             }));
           break;

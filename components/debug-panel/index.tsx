@@ -224,7 +224,7 @@ export function DebugPanel({ events, onClear, onClose }: DebugPanelProps) {
               <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Export to JSON file" onClick={handleExport}>
                 <Download className="h-3 w-3" />
               </Button>
-              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Clear all events" onClick={handleClear}>
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" title="Clear all events — also clears the chat, which is built from the same event log" onClick={handleClear}>
                 <Trash2 className="h-3 w-3" />
               </Button>
             </div>
